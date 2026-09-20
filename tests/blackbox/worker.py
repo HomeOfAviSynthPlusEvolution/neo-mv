@@ -13,6 +13,7 @@ from pathlib import Path
 import platform
 import struct
 import sys
+import threading
 import traceback
 
 from cases import build
@@ -23,6 +24,40 @@ import flow_cases
 import interpolation_cases
 import depan_cases
 from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys
+
+
+def explicit_plugin_environment(vs):
+    """Create a fresh public VS environment without automatic plugin loading."""
+    class Policy(vs.EnvironmentPolicy):
+        def on_policy_registered(self, api):
+            self.api = api
+            self.environment = api.create_environment(int(vs.CoreCreationFlags.DISABLE_AUTO_LOADING))
+            self.local = threading.local()
+
+        def get_current_environment(self):
+            return getattr(self.local, "current", self.environment)
+
+        def set_environment(self, environment):
+            previous = self.get_current_environment()
+            self.local.current = environment
+            return previous
+
+        def on_policy_cleared(self):
+            self.api.destroy_environment(self.environment)
+
+    policy = Policy()
+    vs.register_policy(policy)
+    return policy  # Keep the policy alive until this worker exits.
+
+
+def verify_explicit_plugin(plugin, requested, expected_hash):
+    requested = requested.resolve()
+    loaded = Path(plugin.plugin_path).resolve()
+    actual_hash = digest_file(loaded)
+    if loaded != requested or actual_hash != expected_hash or digest_file(requested) != expected_hash:
+        raise ValueError(f"explicit reference binary mismatch: requested {requested} ({expected_hash}), "
+                         f"loaded {loaded} ({actual_hash})")
+    return dict(path=str(requested), sha256=expected_hash, selection="explicit; autoload disabled")
 
 
 def configure_kernel(backend, requested, plugin=None):
@@ -99,6 +134,8 @@ def main():
     parser.add_argument("--backend", choices=["neo", "mvu"], required=True)
     parser.add_argument("--kernel", required=True)
     parser.add_argument("--plugin", type=Path)
+    parser.add_argument("--mvu-plugin", type=Path)
+    parser.add_argument("--mvu-plugin-sha256")
     parser.add_argument("--case", choices=BY_ID, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--threads", type=int, choices=[1, 4], required=True)
@@ -110,6 +147,8 @@ def main():
                   backend=args.backend, status="error", stage="environment")
     try:
         import vapoursynth as vs
+        explicit_reference = args.backend == "mvu" and args.mvu_plugin is not None
+        policy = explicit_plugin_environment(vs) if explicit_reference else None
         core = vs.core
         core.num_threads = args.threads
         package_vs = importlib.metadata.version("VapourSynth")
@@ -126,6 +165,10 @@ def main():
             core.std.LoadPlugin(path=str(args.plugin.resolve()))
             plugin = core.neomv
         else:
+            if explicit_reference:
+                if not args.mvu_plugin_sha256:
+                    raise ValueError("explicit reference requires the runner's binary digest")
+                core.std.LoadPlugin(path=str(args.mvu_plugin.resolve()))
             plugin = core.mvu
             if plugin.version.major != int(args.mvu_version):
                 raise ValueError(f"loaded MVU version mismatch: {plugin.version}")
@@ -139,6 +182,9 @@ def main():
             vs_package=package_vs, mvu_package=package_mvu, core=str(core),
             plugin_path=str(loaded), plugin_sha256=loaded_hash,
             plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
+        if explicit_reference:
+            result["environment"]["reference_request"] = verify_explicit_plugin(
+                plugin, args.mvu_plugin, args.mvu_plugin_sha256)
         if spec.get("phase") == 5 and spec["params"].get("info"):
             renderer = core.text
             renderer_path = Path(renderer.plugin_path).resolve() if renderer.plugin_path else None
@@ -160,8 +206,15 @@ def main():
             for name, node in prepared.items():
                 frames = []
                 for n in range(spec["length"]):
-                    with node.get_frame(n) as frame:
-                        frames.append(dict(frame=n, **snapshot(frame, keys)))
+                    try:
+                        acquired = node.get_frame(n)
+                    except vs.Error as error:
+                        if n not in spec.get("input_error_frames", {}).get(name, []):
+                            raise
+                        frames.append(dict(frame=n, error=dict(type=type(error).__name__, message=str(error))))
+                    else:
+                        with acquired as frame:
+                            frames.append(dict(frame=n, **snapshot(frame, keys)))
                 if name == "clip":
                     result["input_video"] = video_info(node)
                     result["inputs"] = frames

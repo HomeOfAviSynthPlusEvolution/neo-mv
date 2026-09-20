@@ -2,12 +2,15 @@
 import copy
 from enum import Enum, IntEnum
 import hashlib
+from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from cases import CASES
 from protocol import SCHEMA, compare, digest_json, validate_result
-from worker import configure_kernel, property_value, snapshot
+from worker import configure_kernel, explicit_plugin_environment, property_value, snapshot, verify_explicit_plugin
 from render_cases import CASES as RENDER_CASES
 from mask_cases import CASES as MASK_CASES
 from flow_cases import CASES as FLOW_CASES
@@ -505,7 +508,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_depan_fixture_inventory_is_bounded_and_names_all_public_entries(self):
         self.assertGreaterEqual(len(DEPAN_CASES), 40)
-        self.assertLessEqual(len(DEPAN_CASES), 60)
+        self.assertLessEqual(len(DEPAN_CASES), 80)
         self.assertEqual({item["operation"] for item in DEPAN_CASES}, {"DepanAnalyse", "DepanCompensate"})
         for spec in DEPAN_CASES:
             with self.subTest(case=spec["id"]):
@@ -516,6 +519,121 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(member, 0)
                     self.assertGreaterEqual(n, 0)
                     self.assertLess(n, spec["length"])
+
+    def test_declared_mask_failure_matches_only_its_exact_negative_contract(self):
+        spec, reference = self.depan_result(next(item for item in DEPAN_CASES
+                                                if item["id"] == "depan.analyse.ineligible_mask_error"))
+        failed = reference["auxiliary_inputs"][-1]["frames"]
+        error = dict(type="Error", message="blackbox mask dependency failure")
+        failed[2] = dict(frame=2, error=error)
+        for record in reference["records"]:
+            if record["frame"] == 2:
+                identity = {key: record[key] for key in ("request", "member", "frame")}
+                record.clear()
+                record.update(**identity, error=error)
+        validate_result(reference, spec, "mvu")
+        original = copy.deepcopy(reference)
+        candidate = copy.deepcopy(reference)
+        for record in candidate["records"]:
+            if "error" in record:
+                record["error"] = dict(type="Error", message="Different host prefix: blackbox mask dependency failure")
+        validate_result(candidate, spec, "mvu")
+        self.assertEqual(compare(reference, candidate, spec), ("pass", None))
+        self.assertEqual(reference, original)
+        self.assertTrue(candidate["records"][0]["error"]["message"].startswith("Different host prefix"))
+        undeclared_spec = dict(spec)
+        del undeclared_spec["expected_output_errors"]
+        self.assertEqual(compare(reference, reference, undeclared_spec)[0], "difference")
+        self.assertEqual(compare(reference, reference)[0], "difference")
+        for change in ("empty_sentinel", "duplicate", "unrequested", "no_injection"):
+            invalid_spec = copy.deepcopy(spec)
+            if change == "empty_sentinel":
+                invalid_spec["expected_output_errors"][0]["sentinel"] = ""
+            elif change == "duplicate":
+                invalid_spec["expected_output_errors"] *= 2
+            elif change == "unrequested":
+                invalid_spec["expected_output_errors"][0]["member"] = 9
+            else:
+                del invalid_spec["input_error_frames"]
+            invalid_result = dict(reference, case_sha256=digest_json(invalid_spec))
+            with self.subTest(contract=change), self.assertRaises(ValueError):
+                validate_result(invalid_result, invalid_spec, "mvu")
+        for change in ("success", "unrelated", "other_frame", "other_member", "other_pixels"):
+            broken = copy.deepcopy(candidate)
+            record = broken["records"][0]
+            if change == "success":
+                _, successful = self.depan_result(spec)
+                broken["records"] = successful["records"]
+            elif change == "unrelated":
+                record["error"]["message"] = "unrelated failure"
+            elif change == "other_frame":
+                record = broken["records"][1]
+                identity = {key: record[key] for key in ("request", "member", "frame")}
+                record.clear()
+                record.update(**identity, error=error)
+            elif change == "other_member":
+                record["member"] = 1
+            else:
+                broken["records"][1]["planes"][0]["data"] = "ff"
+            with self.subTest(change=change):
+                self.assertEqual(compare(reference, broken, spec)[0], "difference")
+                # Both sides succeeding or failing in the same wrong way must
+                # also fail the declared negative contract.
+                if change in ("success", "unrelated", "other_frame"):
+                    self.assertEqual(compare(broken, broken, spec)[0], "difference")
+        for change in ("undeclared", "success", "pixels", "empty_error"):
+            broken = copy.deepcopy(reference)
+            frames = broken["auxiliary_inputs"][-1]["frames"]
+            if change == "undeclared":
+                frames[1] = dict(frame=1, error=error)
+            elif change == "success":
+                frames[2] = dict(copy.deepcopy(frames[0]), frame=2)
+            elif change == "pixels":
+                frames[2]["planes"] = frames[0]["planes"]
+            else:
+                frames[2]["error"] = {}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_result(broken, spec, "mvu")
+
+    def test_explicit_reference_requires_actual_path_and_unchanged_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            requested = Path(directory) / "reference.dll"
+            variant = Path(directory) / "variant.dll"
+            requested.write_bytes(b"baseline fixture")
+            variant.write_bytes(requested.read_bytes())
+            digest = hashlib.sha256(requested.read_bytes()).hexdigest()
+            plugin = SimpleNamespace(plugin_path=str(requested))
+            identity = verify_explicit_plugin(plugin, requested, digest)
+            self.assertEqual(identity["sha256"], digest)
+            # Identical bytes at another path still violate explicit selection.
+            with self.assertRaises(ValueError):
+                verify_explicit_plugin(SimpleNamespace(plugin_path=str(variant)), requested, digest)
+            requested.write_bytes(b"replacement fixture")
+            with self.assertRaises(ValueError):
+                verify_explicit_plugin(plugin, requested, digest)
+        observed = copy.deepcopy(self.result)
+        observed["environment"].update(plugin_path="baseline.dll", reference_request=dict(
+            path="baseline.dll", sha256="hash", selection="explicit; autoload disabled"))
+        validate_result(observed, self.spec, "mvu")
+        for field, value in [("path", "variant.dll"), ("sha256", "different"), ("selection", "auto")]:
+            broken = copy.deepcopy(observed)
+            broken["environment"]["reference_request"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_result(broken, self.spec, "mvu")
+
+    def test_explicit_environment_disables_autoload_before_core_access(self):
+        environment = object()
+        api = SimpleNamespace(create_environment=Mock(return_value=environment), destroy_environment=Mock())
+        vs = SimpleNamespace(EnvironmentPolicy=object, CoreCreationFlags=SimpleNamespace(DISABLE_AUTO_LOADING=2))
+        vs.register_policy = lambda policy: policy.on_policy_registered(api)
+        policy = explicit_plugin_environment(vs)
+        api.create_environment.assert_called_once_with(2)
+        self.assertIs(policy.get_current_environment(), environment)
+        self.assertIs(policy.set_environment(None), environment)
+        self.assertIsNone(policy.get_current_environment())
+        self.assertIsNone(policy.set_environment(environment))
+        policy.on_policy_cleared()
+        api.destroy_environment.assert_called_once_with(environment)
 
 
 if __name__ == "__main__":

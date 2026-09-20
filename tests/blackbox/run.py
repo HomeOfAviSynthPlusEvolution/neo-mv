@@ -40,6 +40,8 @@ def execute(spec, backend, args, directory):
                "--kernel", args.neo_kernel if backend == "neo" else "auto"]
     if backend == "neo":
         command += ["--plugin", str(args.plugin)]
+    elif args.mvu_plugin is not None:
+        command += ["--mvu-plugin", str(args.mvu_plugin), "--mvu-plugin-sha256", args.mvu_plugin_sha256]
     environment = os.environ.copy()
     if backend == "neo":
         # Set before process startup: Windows CRTs can cache separate environments.
@@ -61,6 +63,12 @@ def execute(spec, backend, args, directory):
             return dict(status="worker_error", returncode=process.returncode,
                         stage=result.get("stage"), error=result.get("error"), command=command), None
         validate_result(result, spec, backend)
+        if backend == "mvu" and args.mvu_plugin is not None:
+            env = result["environment"]
+            if Path(env["plugin_path"]).resolve() != args.mvu_plugin or \
+                    env["plugin_sha256"] != args.mvu_plugin_sha256 or \
+                    env.get("reference_request", {}).get("sha256") != args.mvu_plugin_sha256:
+                raise ValueError("worker did not observe the requested reference binary")
     except (ValueError, TypeError, KeyError, AttributeError) as error:
         return dict(status="invalid_result", message=str(error), command=command), None
     return dict(status="ok", result=output.name, command=command), result
@@ -86,6 +94,8 @@ def write_report(directory, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plugin", type=Path, help="candidate plugin built from neo-mv")
+    parser.add_argument("--mvu-plugin", type=Path,
+                        help="explicit reference binary; disables reference autoload and verifies its path and hash")
     parser.add_argument("--case", action="append", choices=BY_ID, dest="cases", help="repeat to select cases")
     parser.add_argument("--list", action="store_true", help="list cases without importing VS")
     phase = parser.add_mutually_exclusive_group()
@@ -116,6 +126,11 @@ def main():
     if not 0 < args.timeout <= 300:
         parser.error("--timeout must be in (0,300]")
     args.plugin = args.plugin.resolve()
+    if args.mvu_plugin is not None:
+        if not args.mvu_plugin.is_file():
+            parser.error("--mvu-plugin must name an existing reference binary")
+        args.mvu_plugin = args.mvu_plugin.resolve()
+        args.mvu_plugin_sha256 = digest_file(args.mvu_plugin)
     args.output_root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=args.output_root.resolve()))
     report = dict(schema=SCHEMA, status="incomplete", started_utc=datetime.now(timezone.utc).isoformat(),
@@ -124,6 +139,9 @@ def main():
                   expected=dict(vs=args.vs_version, mvu=args.mvu_version), threads=args.threads,
                   harness_sha256={p.name: digest_file(p) for p in sorted(Path(__file__).parent.glob("*.py"))},
                   selected_cases=selected, cases=[])
+    if args.mvu_plugin is not None:
+        report["reference"] = dict(path=str(args.mvu_plugin), sha256=args.mvu_plugin_sha256,
+                                   selection="explicit; autoload disabled")
     print(f"Report directory: {directory}", flush=True)
     write_report(directory, report)
     for spec in selected:

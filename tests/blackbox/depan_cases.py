@@ -1,5 +1,7 @@
 """Phase-5 fixtures built exclusively from public Analysis and Depan properties."""
 
+MASK_FAILURE_SENTINEL = "blackbox mask dependency failure"
+
 
 def case(name, operation="DepanAnalyse", *, format="GRAY8", params=None, **extra):
     defaults = dict(zoom=False, rot=False) if operation == "DepanAnalyse" else dict(offset=1, subpixel=2)
@@ -33,6 +35,26 @@ CASES = [
     case("analyse.temporal_positive", delta=1, frame_vectors=True),
     case("analyse.temporal_negative", delta=-1, frame_vectors=True),
     case("analyse.info", params=dict(info=True)),
+    # Frame zero retains the creation descriptor. Later frames are independent
+    # public fields; the filter must retain only creation d/T1/T2.
+    *[case(f"analyse.current_delta_{label}", current_metadata=dict(DeltaFrame=value), frame_vectors=True)
+      for label, value in [("positive", 1), ("zero", 0)]],
+    case("analyse.current_delta_missing", current_missing=["DeltaFrame"], frame_vectors=True),
+    case("analyse.current_delta_saved_positive", delta=1,
+         current_metadata=dict(DeltaFrame=-1), frame_vectors=True),
+    case("analyse.current_hpad", current_metadata=dict(HPad=17)),
+    case("analyse.current_pel", current_metadata=dict(Pel=4)),
+    case("analyse.current_pel_missing", current_missing=["Pel"], current_sad=[-1]*4),
+    case("analyse.current_grid", current_metadata=dict(NBlkX=3, Width=24, RealWidth=24)),
+    case("analyse.current_grid_short_arrays", current_metadata=dict(NBlkX=3, Width=24, RealWidth=24),
+         current_array_count=4),
+    case("analyse.current_grid_saved_t2", current_metadata=dict(NBlkX=3, Width=24, RealWidth=24),
+         current_sad=[401, 401, 401, 0, 0, 0]),
+    case("analyse.current_depth_saved_t1", current_metadata=dict(BitsPerSample=10), current_sad=[500]*4),
+    case("analyse.ineligible_mask_error", missing=True, input_error_frames=dict(mask=[2]),
+         expected_output_errors=[dict(member=0, frame=2, sentinel=MASK_FAILURE_SENTINEL)]),
+    case("analyse.scene_mask_error", sad=401, input_error_frames=dict(mask=[2]),
+         expected_output_errors=[dict(member=0, frame=2, sentinel=MASK_FAILURE_SENTINEL)]),
     *[case(f"compensate.{fmt}.mode{mode}", "DepanCompensate", format=fmt,
            params=dict(subpixel=mode), width=16, height=12)
       for fmt in ["GRAY8", "YUV420P10", "YUV444P16"] for mode in [0, 1, 2]],
@@ -120,17 +142,28 @@ def prepare(vs, core, spec):
 
         def vectors(n, f):
             out = f.copy()
+            current = dict(metadata)
+            if n != 0:
+                current.update(spec.get("current_metadata", {}))
+                for key, value in current.items():
+                    out.props["MVUtensilsAnalysis" + key] = value
+                for key in spec.get("current_missing", []):
+                    del out.props["MVUtensilsAnalysis" + key]
             if not spec["missing"]:
                 pattern = [(1, -3), (0, 0), (4, 2), (-2, 1)]
                 values = []
-                for i in range(nx*ny):
+                count = current["NBlkX"] * current["NBlkY"]
+                if n != 0:
+                    count = spec.get("current_array_count", count)
+                for i in range(count):
                     x, y = pattern[i % len(pattern)]
                     if spec.get("frame_vectors"):
                         x += n
                         y -= n
                     values.append(packed_vector(x, y))
                 out.props["MVUtensilsAnalysisVectors"] = values
-                out.props["MVUtensilsAnalysisSAD"] = [spec["sad"]] * (nx*ny)
+                out.props["MVUtensilsAnalysisSAD"] = (spec.get("current_sad", [spec["sad"]]*count)
+                                                       if n != 0 else [spec["sad"]]*count)
             out.props["_Field"] = n % 2  # Opposite carrier parity must not select the output parity.
             return out
 
@@ -139,6 +172,13 @@ def prepare(vs, core, spec):
             value = {"zero": 0, "one": 1, "weighted": 128}[spec["mask"]]
             inputs["mask"] = core.std.BlankClip(width=spec["width"], height=spec["height"], format=vs.GRAY8,
                                                 length=spec["length"], color=[value])
+            if spec.get("input_error_frames", {}).get("mask"):
+                def failing_mask(n, f):
+                    if n in spec["input_error_frames"]["mask"]:
+                        raise vs.Error(MASK_FAILURE_SENTINEL)
+                    return f.copy()
+                mask = inputs["mask"]
+                inputs["mask"] = core.std.ModifyFrame(mask, mask, failing_mask)
     else:
         def motion(n, f):
             out = f.copy()

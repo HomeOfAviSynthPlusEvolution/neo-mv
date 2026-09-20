@@ -61,6 +61,20 @@ def validate_snapshot(record):
 
 def validate_result(result, spec, backend):
     """Fail closed: absent, duplicate or truncated observations are not equality."""
+    expected_errors = spec.get("expected_output_errors", [])
+    error_targets = set()
+    for expected in expected_errors:
+        if set(expected) != {"member", "frame", "sentinel"} or \
+                spec.get("phase") != 5 or spec.get("operation") != "DepanAnalyse" or \
+                type(expected["member"]) is not int or type(expected["frame"]) is not int or \
+                not isinstance(expected["sentinel"], str) or not expected["sentinel"] or \
+                [expected["member"], expected["frame"]] not in spec["requests"] or \
+                expected["frame"] not in spec.get("input_error_frames", {}).get("mask", []):
+            raise ValueError("invalid injected output error contract")
+        target = (expected["member"], expected["frame"])
+        if target in error_targets:
+            raise ValueError("duplicate injected output error contract")
+        error_targets.add(target)
     if result.get("schema") != SCHEMA or result.get("case_id") != spec["id"]:
         raise ValueError("wrong result schema or case ID")
     if result.get("backend") != backend or result.get("status") != "ok":
@@ -113,10 +127,24 @@ def validate_result(result, spec, backend):
             if not item.get("video") or [f.get("frame") for f in item.get("frames", [])] != list(range(spec["length"])):
                 raise ValueError("incomplete auxiliary video")
             for frame in item["frames"]:
-                validate_snapshot(frame)
+                declared_error = frame["frame"] in spec.get("input_error_frames", {}).get(item["name"], [])
+                if declared_error:
+                    validate_error(frame.get("error"))
+                    if "planes" in frame or "properties" in frame:
+                        raise ValueError("failed input also contains successful pixels")
+                else:
+                    if "error" in frame:
+                        raise ValueError("undeclared auxiliary input failure")
+                    validate_snapshot(frame)
     env = result.get("environment", {})
     if not env.get("plugin_sha256") or not env.get("core") or not env.get("kernel"):
         raise ValueError("missing runtime provenance")
+    if "reference_request" in env:
+        requested = env["reference_request"]
+        if backend != "mvu" or requested.get("path") != env.get("plugin_path") or \
+                requested.get("sha256") != env["plugin_sha256"] or \
+                requested.get("selection") != "explicit; autoload disabled":
+            raise ValueError("explicit reference identity differs from loaded binary")
     if spec.get("phase") == 5 and spec["params"].get("info"):
         renderer = env.get("text_renderer", {})
         if renderer.get("entry") != "text.FrameProps" or \
@@ -216,13 +244,30 @@ def compare(reference, candidate, spec=None):
         return "difference", dict(path="/creation", reference=reference.get("creation_error", "success"),
                                   candidate=candidate.get("creation_error", "success"))
     left_records, right_records, known = mask_range_observations(reference, candidate, spec)
+    left_records, right_records = list(left_records), list(right_records)
     for index, (left, right) in enumerate(zip(reference["records"], candidate["records"])):
-        if "error" in left or "error" in right:
+        expected = next((item for item in (spec or {}).get("expected_output_errors", [])
+                         if (item["member"], item["frame"]) == (left["member"], left["frame"])), None)
+        if expected is not None:
+            sentinel = expected["sentinel"]
+            matches = all((record["member"], record["frame"]) == (expected["member"], expected["frame"])
+                          and isinstance(record.get("error", {}).get("message"), str)
+                          and sentinel in record["error"]["message"] for record in (left, right))
+            if matches:
+                # Only declared negative fixtures may accept their injected
+                # failure. Keep original errors intact in the worker reports;
+                # differing host prefixes are not part of this contract.
+                left_records[index] = dict(left_records[index], error=dict(expected_sentinel=sentinel))
+                right_records[index] = dict(right_records[index], error=dict(expected_sentinel=sentinel))
+                continue
+        if expected is not None or "error" in left or "error" in right:
             difference = dict(path=f"/records/{index}/error", reference=left.get("error", "success"),
                               candidate=right.get("error", "success"),
                               request={key: left[key] for key in ("request", "member", "frame")})
             if known:
                 difference["known_differences"] = known
+            if expected is not None:
+                difference["expected_error"] = expected
             return "difference", difference
     for field, left, right in (("outputs", reference["outputs"], candidate["outputs"]),
                                ("records", left_records, right_records)):
