@@ -48,17 +48,21 @@ inline BlockRegion analysis_block(const AnalysisMetadata& m, int bx, int by) {
           m.block_height};
 }
 
-inline CandidateDomain analysis_domain(const AnalysisMetadata& m, BlockRegion block) {
+inline CandidateDomain analysis_domain(const AnalysisMetadata& m, BlockRegion block, int bound_pad_x = -1,
+                                       int bound_pad_y = -1) {
+  const auto hp = bound_pad_x < 0 ? m.pad_x : bound_pad_x;
+  const auto vp = bound_pad_y < 0 ? m.pad_y : bound_pad_y;
   const auto p = std::int64_t(m.pel);
-  return {-p * (std::int64_t(block.x) + m.pad_x), -p * (std::int64_t(block.y) + m.pad_y),
-          p * (std::int64_t(m.width) + m.pad_x - block.x - block.width),
-          p * (std::int64_t(m.height) + m.pad_y - block.y - block.height)};
+  return {-p * (std::int64_t(block.x) + hp), -p * (std::int64_t(block.y) + vp),
+          p * (std::int64_t(m.width) + hp - block.x - block.width),
+          p * (std::int64_t(m.height) + vp - block.y - block.height)};
 }
 
 // Geometry-only admission. Finest grids use ceil; coarser grids are supplied
 // by the multilevel planner. No known unsafe candidate may reach evaluation.
 inline void validate_motion_layer(const AnalysisMetadata& m, const SamplingGeometry& g, bool finest,
-                                  std::initializer_list<MotionVector> seeds = {}) {
+                                  std::initializer_list<MotionVector> seeds = {}, int bound_pad_x = -1,
+                                  int bound_pad_y = -1) {
   if (!valid_analysis_metadata(m) || !geometry_detail::block_pair(m.block_width, m.block_height) || g.pel != m.pel ||
       g.ratio_x != m.ratio_x || g.ratio_y != m.ratio_y || g.chroma != m.chroma || g.planes[0].pad_x != m.pad_x ||
       g.planes[0].pad_y != m.pad_y || m.overlap_x % m.ratio_x || m.overlap_y % m.ratio_y)
@@ -75,15 +79,16 @@ inline void validate_motion_layer(const AnalysisMetadata& m, const SamplingGeome
   for (int k = 0; k < (m.chroma ? 3 : 1); ++k) {
     const auto& plane = g.planes[k];
     const int rx = k == 0 ? 1 : m.ratio_x, ry = k == 0 ? 1 : m.ratio_y;
-    if (m.width % rx || m.height % ry || plane.pad_x != m.pad_x / rx || plane.pad_y != m.pad_y / ry ||
-        plane.current.width != std::int64_t(m.width) / rx + 2 * std::int64_t(plane.pad_x) ||
-        plane.current.height != std::int64_t(m.height) / ry + 2 * std::int64_t(plane.pad_y))
+    if (plane.pad_x != m.pad_x / rx || plane.pad_y != m.pad_y / ry ||
+        ((finest || k == 0) && (m.width % rx || m.height % ry ||
+                                plane.current.width != std::int64_t(m.width) / rx + 2 * std::int64_t(plane.pad_x) ||
+                                plane.current.height != std::int64_t(m.height) / ry + 2 * std::int64_t(plane.pad_y))))
       throw std::invalid_argument("inconsistent logical Super extent");
   }
   for (int by = 0; by < m.blocks_y; ++by)
     for (int bx = 0; bx < m.blocks_x; ++bx) {
       const auto block = analysis_block(m, bx, by);
-      validate_sampling_domain(g, block, analysis_domain(m, block), seeds);
+      validate_sampling_domain(g, block, analysis_domain(m, block, bound_pad_x, bound_pad_y), seeds);
     }
 }
 

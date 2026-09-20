@@ -43,6 +43,11 @@ void mapping() {
   MotionFixture<std::uint8_t> small(4, 4, 4, 4);
   CHECK(recalculate_detail::map(old, small.metadata, 0, 0, {-4, -4, 4, 4}, true).x == 0);
   CHECK(recalculate_detail::map(old, small.metadata, 0, 0, {-4, -4, 4, 4}, false).x == -3);
+  old.metadata.block_height = 2;
+  old.grid.values = {{{-1, 0}, 0}, {{-1, 0}, 0}, {{-1, 0}, 0}, {{0, 0}, 0}};
+  // sx=3, sy=2, dx=dy=1: omitting the inner truncation would give zero.
+  CHECK(recalculate_detail::map(old, small.metadata, 0, 0, {-4, -4, 4, 4}, true).x == -1);
+  old.grid.values[0].vector.x = -3;
   // Negative centre displacement is truncated before indices are clamped.
   old.metadata.block_width = old.metadata.block_height = 16;
   CHECK(recalculate_detail::map(old, small.metadata, 0, 0, {-4, -4, 4, 4}, true).x == -3);

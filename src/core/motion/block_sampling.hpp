@@ -119,16 +119,10 @@ inline void validate_sampling_domain(const SamplingGeometry& geometry, BlockRegi
     sampling_detail::domain(geometry, block, sampling_detail::singleton(seed));
 }
 
-// Direct evaluation also rejects an unsafe vector before any sample read.
-// Future Analyse/Recalculate callers must additionally admit the entire Omega
-// at creation; this per-call check is not a replacement for that precondition.
 template <class T>
-BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
-                       BlockMetric metric) {
-  validate_sampling_domain(g, b, sampling_detail::singleton(vector));
-  if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
-      (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
-    throw std::invalid_argument("invalid block error metric or SATD dimensions");
+void validate_sampling_frames(const SamplingGeometry& g, const SamplingFrames<T>& frames) {
+  if (g.pel != 1 && g.pel != 2 && g.pel != 4)
+    throw std::invalid_argument("invalid frame phase count");
   const int count = g.chroma ? 3 : 1;
   // All enabled frame views must conform before any metric reads a pixel.
   const auto conform = [](auto view, PhaseExtent extent) {
@@ -141,6 +135,19 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
     for (int a = 0; a < g.pel * g.pel; ++a)
       conform(frames.reference[k][a], g.planes[k].reference[a]);
   }
+}
+
+// Direct evaluation rejects an unsafe vector before any sample read. Callers
+// must additionally admit the entire Omega at creation.
+template <class T>
+BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
+                       BlockMetric metric) {
+  validate_sampling_domain(g, b, sampling_detail::singleton(vector));
+  if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
+      (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
+    throw std::invalid_argument("invalid block error metric or SATD dimensions");
+  validate_sampling_frames(g, frames);
+  const int count = g.chroma ? 3 : 1;
   std::array<std::int64_t, 3> errors{};
   for (int k = 0; k < count; ++k) {
     const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;

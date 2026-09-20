@@ -10,8 +10,8 @@ struct MotionFixture {
   std::array<std::vector<T>, 3> source;
   std::array<std::array<std::vector<T>, 16>, 3> reference;
 
-  MotionFixture(int width, int height, int block_width, int block_height, int pad = 4, int pel = 1,
-                bool chroma = false) {
+  MotionFixture(int width, int height, int block_width, int block_height, int pad = 4, int pel = 1, bool chroma = false,
+                int chroma_ratio = 2) {
     auto& m = metadata;
     m.width = m.real_width = width;
     m.height = m.real_height = height;
@@ -22,15 +22,16 @@ struct MotionFixture {
     m.pad_x = m.pad_y = pad;
     m.pel = pel;
     m.levels = 1;
+    m.delta = 1;
     m.chroma = chroma;
-    m.ratio_x = m.ratio_y = chroma ? 2 : 1;
+    m.ratio_x = m.ratio_y = chroma ? chroma_ratio : 1;
     m.bits = std::is_same_v<T, float> ? 32 : sizeof(T) == 1 ? 8 : 16;
     geometry.pel = pel;
     geometry.ratio_x = m.ratio_x;
     geometry.ratio_y = m.ratio_y;
     geometry.chroma = chroma;
     for (int k = 0; k < (chroma ? 3 : 1); ++k) {
-      const int ratio = k == 0 ? 1 : 2;
+      const int ratio = k == 0 ? 1 : chroma_ratio;
       auto& g = geometry.planes[k];
       g.pad_x = g.pad_y = pad / ratio;
       g.current = {width / ratio + 2 * g.pad_x, height / ratio + 2 * g.pad_y};
