@@ -23,6 +23,15 @@ For eligible input, run the [magnitude operator](kernel-vector-length.md) and th
 
 Construct the result's property map with exactly one public entry: `_Range`, integer, one element with value 1, meaning full sample range in this interface. No input frame properties, Analysis arrays, Super data, color matrix tags or scene flags are copied. The key and value are fixed; do not substitute `_ColorRange` or derive this value from a host enumeration. A host may manage its own non-property frame bookkeeping.
 
+The two property names have opposite numeric conventions:
+
+| Property | Full range | Limited range |
+| --- | --- | --- |
+| `_Range` | 1 | 0 |
+| `_ColorRange` (deprecated) | 0 | 1 |
+
+This output uses the first convention. `_Range=[0]` therefore labels limited range and is not an alternative encoding of this mask's full-range declaration. A compatibility alias exposed by a host is not a second property to emit. In particular, a constant whose value is 0 under a legacy API definition cannot be written unchanged under `_Range` to declare full range. This property declaration does not rescale or clip the mask samples, including a permitted float scval outside [0,1].
+
 This output/property rule and the shared mask contract also apply to SADMask and OcclusionMask. Writable output storage must be independent of all inputs. Frame order and simultaneous filter instances must not affect pixels or properties.
 
 ## End-to-end examples
