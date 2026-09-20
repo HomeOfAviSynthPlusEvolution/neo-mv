@@ -1,13 +1,13 @@
 """One case and one implementation per process; only public API observations.
 
-Kernel selection belongs in configure_kernel(), never in fixture generation or
-comparison. A future Highway adapter must force and query the real target before
-returning its execution identity. It must not silently fall back to scalar.
+Each fresh process selects its backend before loading neo-mv, then queries the
+loaded plugin's actual dispatch target. SIMD requests must not pass as scalar.
 """
 import argparse
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 import platform
 import struct
@@ -18,17 +18,25 @@ from cases import ANALYSIS_KEYS, BY_ID, SUPER_KEYS, build
 from protocol import SCHEMA, digest_file, digest_json
 
 
-def configure_kernel(backend, requested):
+def configure_kernel(backend, requested, plugin=None):
     if backend == "mvu":
         if requested != "auto":
             raise ValueError("reference supports only its native automatic selection")
         return {"requested": "auto", "effective": "auto", "target": None}
-    if requested != "scalar":
-        raise ValueError("Highway selection is reserved but not implemented; no scalar fallback")
-    # The current neo-mv binary has only scalar kernels. Replace this adapter
-    # with actual force/query calls when runtime dispatch is introduced.
-    return {"requested": "scalar", "effective": "scalar", "target": None,
-            "selection": "scalar-only implementation"}
+    if requested not in ("scalar", "highway") or plugin is None:
+        raise ValueError("candidate requires a loaded plugin and scalar or highway selection")
+    info = plugin.KernelInfo()
+    effective, target = info["backend"], info["target"]  # KernelInfo returns UTF-8 data as str.
+    if not isinstance(effective, str) or not isinstance(target, str):
+        raise ValueError("kernel identity must contain UTF-8 strings")
+    if effective != requested or not target:
+        raise ValueError(f"kernel mismatch: requested {requested}, got {info}")
+    if requested == "highway" and target in ("scalar", "SCALAR", "EMU128"):
+        raise ValueError(f"SIMD requested but got non-SIMD target {target}")
+    if requested == "scalar" and target != "scalar":
+        raise ValueError(f"scalar requested but got target {target}")
+    return dict(requested=requested, effective=effective, target=target,
+                selection="NEO_MV_KERNEL + loaded plugin KernelInfo")
 
 
 def video_info(node):
@@ -94,16 +102,18 @@ def main():
             raise ValueError(f"package mismatch: VS={package_vs}, MVU={package_mvu}")
         if core.core_version.release_major != int(args.vs_version) or core.core_version.release_minor != 0:
             raise ValueError(f"loaded core mismatch: {core.core_version}")
-        kernel = configure_kernel(args.backend, args.kernel)
         if args.backend == "neo":
             if args.plugin is None:
                 raise ValueError("candidate DLL path required")
+            if os.environ.get("NEO_MV_KERNEL") != args.kernel:
+                raise ValueError("worker must start with NEO_MV_KERNEL matching --kernel")
             core.std.LoadPlugin(path=str(args.plugin.resolve()))
             plugin = core.neomv
         else:
             plugin = core.mvu
             if plugin.version.major != int(args.mvu_version):
                 raise ValueError(f"loaded MVU version mismatch: {plugin.version}")
+        kernel = configure_kernel(args.backend, args.kernel, plugin)
         loaded = Path(plugin.plugin_path).resolve()
         loaded_hash = digest_file(loaded)
         if args.backend == "neo" and loaded_hash != digest_file(args.plugin):

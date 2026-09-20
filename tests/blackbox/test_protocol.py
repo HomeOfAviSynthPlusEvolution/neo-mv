@@ -65,9 +65,20 @@ class ProtocolTests(unittest.TestCase):
         candidate["records"][0]["properties"]["MVUtensilsAnalysisVectors"]["values"] = [-8589934589]
         self.assertEqual(compare(self.result, candidate)[1]["candidate"], -8589934589)
 
-    def test_unimplemented_simd_cannot_pass_as_scalar(self):
+    def test_simd_cannot_pass_as_scalar(self):
+        class Plugin:
+            def __init__(self, backend, target):
+                self.info = dict(backend=backend, target=target)
+            def KernelInfo(self):
+                return self.info
+        for backend, target in [("scalar", "scalar"), ("highway", "SCALAR"),
+                                ("highway", "EMU128"), ("highway", "")]:
+            with self.subTest(backend=backend, target=target), self.assertRaises(ValueError):
+                configure_kernel("neo", "highway", Plugin(backend, target))
+        self.assertEqual(configure_kernel("neo", "highway", Plugin("highway", "AVX2"))["target"], "AVX2")
+        self.assertEqual(configure_kernel("neo", "scalar", Plugin("scalar", "scalar"))["effective"], "scalar")
         with self.assertRaises(ValueError):
-            configure_kernel("neo", "highway")
+            configure_kernel("neo", "scalar", Plugin("highway", "AVX2"))
 
     def test_corrupt_encoded_properties_fail(self):
         for kind, value in [("data", "not hex"), ("float64", "00")]:

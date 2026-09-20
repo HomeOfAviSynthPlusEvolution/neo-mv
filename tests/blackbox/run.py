@@ -8,6 +8,7 @@ import argparse
 from collections import Counter
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -38,11 +39,15 @@ def execute(spec, backend, args, directory):
                "--kernel", args.neo_kernel if backend == "neo" else "auto"]
     if backend == "neo":
         command += ["--plugin", str(args.plugin)]
+    environment = os.environ.copy()
+    if backend == "neo":
+        # Set before process startup: Windows CRTs can cache separate environments.
+        environment["NEO_MV_KERNEL"] = args.neo_kernel
     # File redirection avoids buffering arbitrary host diagnostics in memory.
     with output.with_suffix(".stdout.log").open("wb") as stdout, \
          output.with_suffix(".stderr.log").open("wb") as stderr:
         try:
-            process = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=args.timeout)
+            process = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=args.timeout, env=environment)
         except subprocess.TimeoutExpired:
             return dict(status="timeout", command=command), None
         except OSError as error:
@@ -86,8 +91,8 @@ def main():
     parser.add_argument("--output-root", type=Path, default=Path(__file__).resolve().parents[2] / "build" / "blackbox")
     parser.add_argument("--vs-version", default="79")
     parser.add_argument("--mvu-version", default="8")
-    parser.add_argument("--neo-kernel", choices=["scalar"], default="scalar",
-                        help="explicit execution path; Highway will be enabled only with force/query support")
+    parser.add_argument("--neo-kernel", choices=["scalar", "highway"], default="scalar",
+                        help="select and query the loaded candidate backend; highway requires a real SIMD target")
     args = parser.parse_args()
     if args.list:
         for spec in CASES:

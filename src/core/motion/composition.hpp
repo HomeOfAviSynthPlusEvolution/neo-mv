@@ -2,6 +2,7 @@
 
 #include "core/motion/analysis_field.hpp"
 #include "core/motion/search.hpp"
+#include "kernels/scalar.hpp"
 
 namespace neo_mv {
 

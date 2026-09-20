@@ -2,6 +2,7 @@
 import gc
 import importlib.util
 import math
+import os
 from pathlib import Path
 import vapoursynth as vs
 
@@ -9,6 +10,14 @@ core = vs.core
 core.num_threads = 4
 core.std.LoadPlugin(path=plugin)
 mv = core.neomv
+selected = mv.KernelInfo()
+expected_kernel = globals().get("kernel", "scalar")
+assert selected["backend"] == expected_kernel, selected
+assert selected["target"], selected
+# Once selected, later environment changes must not change existing graphs or
+# the backend selected for new graphs in this loaded plugin.
+os.environ["NEO_MV_KERNEL"] = "invalid-after-initialization"
+assert mv.KernelInfo() == selected
 P = "MVUtensils"
 
 

@@ -1,0 +1,379 @@
+#include "highway/rows.hpp"
+#include "core/motion/block_metric.hpp"
+#include <algorithm>
+#include <limits>
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "highway/rows.cpp"
+#include "hwy/foreach_target.h"
+#include "hwy/highway.h"
+HWY_BEFORE_NAMESPACE();
+namespace neo_mv::simd::detail {
+namespace HWY_NAMESPACE {
+namespace hn = hwy::HWY_NAMESPACE;
+std::int64_t Target() {
+  return HWY_TARGET;
+}
+template <class T> using Wide = std::conditional_t<std::is_same_v<T, float>, float, std::int32_t>;
+template <class D, class V> void finite(D d, V v) {
+  if constexpr (std::is_same_v<hn::TFromD<D>, float>)
+    if (!hn::AllTrue(d, hn::IsFinite(v)))
+      throw std::invalid_argument("non-finite SIMD sample/intermediate");
+}
+template <class T> void Extract(const T *p, T *out, int count, int pel, int phase) {
+  const hn::ScalableTag<T> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= count - n; x += n) {
+    auto a = hn::Zero(d), b = a, c = a, e = a;
+    if (pel == 2)
+      hn::LoadInterleaved2(d, p + pel * x, a, b);
+    else
+      hn::LoadInterleaved4(d, p + pel * x, a, b, c, e);
+    hn::StoreU(phase == 0 ? a : phase == 1 ? b : phase == 2 ? c : e, d, out + x);
+  }
+  for (; x < count; ++x)
+    out[x] = p[pel * x + phase];
+}
+template <class T> void Scan(const T *p, int count, std::int64_t maximum) {
+  const hn::ScalableTag<T> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= count - n; x += n) {
+    auto v = hn::LoadU(d, p + x);
+    if constexpr (std::is_same_v<T, float>)
+      finite(d, v);
+    else if (!hn::AllTrue(d, hn::Le(v, hn::Set(d, T(maximum)))))
+      throw std::invalid_argument("sample exceeds bit depth");
+  }
+  for (; x < count; ++x) {
+    if constexpr (std::is_same_v<T, float>) {
+      if (!std::isfinite(p[x]))
+        throw std::invalid_argument("non-finite sample");
+    } else if (p[x] > maximum)
+      throw std::invalid_argument("sample exceeds bit depth");
+  }
+}
+template <class T> void Copy(const T *p, T *q, int count) {
+  const hn::ScalableTag<T> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= count - n; x += n)
+    hn::StoreU(hn::LoadU(d, p + x), d, q + x);
+  for (; x < count; ++x)
+    q[x] = p[x];
+}
+template <class T> void Fill(T v, T *q, int count) {
+  const hn::ScalableTag<T> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= count - n; x += n)
+    hn::StoreU(hn::Set(d, v), d, q + x);
+  for (; x < count; ++x)
+    q[x] = v;
+}
+template <class T, class D> auto LoadWide(D d, const T *p, int step) {
+  const hn::Rebind<T, D> narrow;
+  auto v = hn::Zero(narrow);
+  if (step == 1)
+    v = hn::LoadU(narrow, p);
+  else {
+    auto unused = v;
+    hn::LoadInterleaved2(narrow, p, v, unused);
+  }
+  if constexpr (std::is_same_v<T, float>)
+    return v;
+  else
+    return hn::PromoteTo(d, v);
+}
+template <class D, class V> auto Calculate(D d, V a, V b, V c, V e, V f, V g, Formula op, std::int64_t maximum) {
+  using A = hn::TFromD<D>;
+  auto v = a;
+  int shift = 1;
+  switch (op) {
+  case Formula::average:
+    v = hn::Add(a, b);
+    break;
+  case Formula::four_average:
+    v = hn::Add(hn::Add(hn::Add(a, b), c), e);
+    shift = 2;
+    break;
+  case Formula::reduce4:
+    v = hn::Add(hn::Add(a, hn::Mul(hn::Set(d, A(3)), hn::Add(b, c))), e);
+    shift = 3;
+    break;
+  case Formula::reduce6:
+    v = hn::Add(
+        a, hn::Add(hn::Add(g, hn::Mul(hn::Set(d, A(10)), hn::Add(c, e))), hn::Mul(hn::Set(d, A(5)), hn::Add(b, f))));
+    shift = 5;
+    break;
+  case Formula::sharp4h:
+  case Formula::sharp4v:
+    if constexpr (std::is_same_v<A, float>) {
+      auto ends = op == Formula::sharp4v ? hn::Sub(hn::Neg(a), e) : hn::Neg(hn::Add(a, e));
+      v = hn::Add(ends, hn::Mul(hn::Set(d, A(9)), hn::Add(b, c)));
+    } else
+      v = hn::Sub(hn::Sub(hn::Mul(hn::Set(d, A(9)), hn::Add(b, c)), a), e);
+    shift = 4;
+    break;
+  case Formula::sharp6:
+    if constexpr (std::is_same_v<A, float>)
+      v = hn::Add(
+          a, hn::Add(g, hn::Mul(hn::Set(d, A(5)), hn::Sub(hn::Mul(hn::Set(d, A(4)), hn::Add(c, e)), hn::Add(b, f)))));
+    else
+      v = hn::Sub(hn::Add(hn::Add(a, g), hn::Mul(hn::Set(d, A(20)), hn::Add(c, e))),
+                  hn::Mul(hn::Set(d, A(5)), hn::Add(b, f)));
+    shift = 5;
+    break;
+  }
+  if constexpr (std::is_same_v<A, float>) {
+    finite(d, v);
+    return hn::Mul(v, hn::Set(d, 1.0f / float(1 << shift)));
+  } else
+    return hn::Min(hn::Max(hn::ShiftRightSame(hn::Add(v, hn::Set(d, 1 << (shift - 1))), shift), hn::Zero(d)),
+                   hn::Set(d, static_cast<A>(maximum)));
+}
+template <class T, class D>
+void FormulaChunk(D d, const T *const *p, int step, T *out, Formula op, std::int64_t maximum) {
+  const hn::Rebind<T, D> narrow;
+  auto a = LoadWide(d, p[0], step), b = LoadWide(d, p[1], step), c = hn::Zero(d), e = c, f = c, g = c;
+  if (op != Formula::average) {
+    c = LoadWide(d, p[2], step);
+    e = LoadWide(d, p[3], step);
+  }
+  if (op == Formula::reduce6 || op == Formula::sharp6) {
+    f = LoadWide(d, p[4], step);
+    g = LoadWide(d, p[5], step);
+  }
+  auto v = Calculate(d, a, b, c, e, f, g, op, maximum);
+  if constexpr (std::is_same_v<T, float>)
+    hn::StoreU(v, narrow, out);
+  else
+    hn::StoreU(hn::DemoteTo(narrow, v), narrow, out);
+}
+template <class T> void FormulaRow(const T *const *p, int step, T *out, int count, Formula op, std::int64_t maximum) {
+  const hn::ScalableTag<Wide<T>> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  const int nt = op == Formula::average ? 2 : ((op == Formula::reduce6 || op == Formula::sharp6) ? 6 : 4);
+  const T *taps[6]{};
+  for (; x <= count - n; x += n) {
+    for (int j = 0; j < nt; ++j)
+      taps[j] = p[j] + x * step;
+    FormulaChunk(d, taps, step, out + x, op, maximum);
+  }
+  const hn::CappedTag<Wide<T>, 1> one;
+  for (; x < count; ++x) {
+    for (int j = 0; j < nt; ++j)
+      taps[j] = p[j] + x * step;
+    FormulaChunk(one, taps, 1, out + x, op, maximum);
+  }
+}
+template <class V> void Hadamard(V &a, V &b, V &c, V &d) {
+  const auto ab = hn::Add(a, b), cd = hn::Add(c, d), am = hn::Sub(a, b), cm = hn::Sub(c, d);
+  a = hn::Add(ab, cd);
+  b = hn::Add(am, cm);
+  c = hn::Sub(ab, cd);
+  d = hn::Sub(am, cm);
+}
+template <class T, class D>
+std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
+  const hn::Rebind<T, D> narrow;
+  const int n = int(hn::Lanes(d));
+  using A = Wide<T>;
+  std::int64_t total = 0;
+  float ftotal = 0;
+  HWY_ALIGN A sums[4][hn::MaxLanes(d)];
+  auto append = [&](A s) {
+    if constexpr (std::is_same_v<T, float>)
+      ftotal += s; // Nonnegative terms: overflow cannot recover; encode checks the final sum.
+    else
+      total = metric_detail::accumulate(total, std::int64_t(s));
+  };
+  if (!satd) {
+    for (int y = 0; y < h; ++y) {
+      const T *ar = a + y * as;
+      const T *br = b + y * bs;
+      int x = 0;
+      for (; x <= w - n; x += n) {
+        auto av = LoadWide(d, ar + x, 1), bv = LoadWide(d, br + x, 1);
+        finite(d, av);
+        finite(d, bv);
+        auto diff = hn::Abs(hn::Sub(av, bv));
+        finite(d, diff);
+        if constexpr (std::is_same_v<T, float>) {
+          hn::StoreU(diff, d, sums[0]);
+          for (int i = 0; i < n; ++i)
+            append(sums[0][i]);
+        } else
+          append(hn::ReduceSum(d, diff));
+      }
+      for (; x < w; ++x)
+        append(metric_detail::magnitude(
+            metric_detail::subtract(metric_detail::finite(A(ar[x])), metric_detail::finite(A(br[x])))));
+    }
+  } else {
+    for (int y = 0; y < h; y += 4) {
+      int x = 0;
+      for (; x <= w - 4 * n; x += 4 * n) {
+        auto r00 = hn::Zero(d), r01 = r00, r02 = r00, r03 = r00, r10 = r00, r11 = r00, r12 = r00, r13 = r00;
+        auto r20 = r00, r21 = r00, r22 = r00, r23 = r00, r30 = r00, r31 = r00, r32 = r00, r33 = r00;
+#define NEO_ROW(J, A0, A1, A2, A3)                                                                                     \
+  {                                                                                                                    \
+    auto a0 = hn::Zero(narrow), a1 = a0, a2 = a0, a3 = a0, b0 = a0, b1 = a0, b2 = a0, b3 = a0;                         \
+    hn::LoadInterleaved4(narrow, a + (y + J) * as + x, a0, a1, a2, a3);                                                \
+    hn::LoadInterleaved4(narrow, b + (y + J) * bs + x, b0, b1, b2, b3);                                                \
+    if constexpr (std::is_same_v<T, float>) {                                                                          \
+      finite(d, a0);                                                                                                   \
+      finite(d, a1);                                                                                                   \
+      finite(d, a2);                                                                                                   \
+      finite(d, a3);                                                                                                   \
+      finite(d, b0);                                                                                                   \
+      finite(d, b1);                                                                                                   \
+      finite(d, b2);                                                                                                   \
+      finite(d, b3);                                                                                                   \
+      A0 = hn::Sub(a0, b0);                                                                                            \
+      A1 = hn::Sub(a1, b1);                                                                                            \
+      A2 = hn::Sub(a2, b2);                                                                                            \
+      A3 = hn::Sub(a3, b3);                                                                                            \
+    } else {                                                                                                           \
+      A0 = hn::Sub(hn::PromoteTo(d, a0), hn::PromoteTo(d, b0));                                                        \
+      A1 = hn::Sub(hn::PromoteTo(d, a1), hn::PromoteTo(d, b1));                                                        \
+      A2 = hn::Sub(hn::PromoteTo(d, a2), hn::PromoteTo(d, b2));                                                        \
+      A3 = hn::Sub(hn::PromoteTo(d, a3), hn::PromoteTo(d, b3));                                                        \
+    }                                                                                                                  \
+    Hadamard(A0, A1, A2, A3);                                                                                          \
+    finite(d, A0);                                                                                                     \
+    finite(d, A1);                                                                                                     \
+    finite(d, A2);                                                                                                     \
+    finite(d, A3);                                                                                                     \
+  }
+        NEO_ROW(0, r00, r01, r02, r03)
+        NEO_ROW(1, r10, r11, r12, r13)
+        NEO_ROW(2, r20, r21, r22, r23)
+        NEO_ROW(3, r30, r31, r32, r33)
+#undef NEO_ROW
+#define NEO_COL(I, A0, A1, A2, A3)                                                                                     \
+  Hadamard(A0, A1, A2, A3);                                                                                            \
+  {                                                                                                                    \
+    auto s = hn::Add(hn::Add(hn::Add(hn::Abs(A0), hn::Abs(A1)), hn::Abs(A2)), hn::Abs(A3));                            \
+    finite(d, s);                                                                                                      \
+    hn::StoreU(s, d, sums[I]);                                                                                         \
+  }
+            NEO_COL(0, r00, r10, r20, r30) NEO_COL(1, r01, r11, r21, r31) NEO_COL(2, r02, r12, r22, r32)
+                NEO_COL(3, r03, r13, r23, r33)
+#undef NEO_COL
+                    for (int i = 0; i < n; ++i) {
+          if constexpr (std::is_same_v<T, float>)
+            for (int c = 0; c < 4; ++c)
+              append(sums[c][i]);
+          else
+            append((sums[0][i] + sums[1][i] + sums[2][i] + sums[3][i]) / 2);
+        }
+      }
+      for (; x < w; x += 4) {
+        using S = std::conditional_t<std::is_same_v<T, float>, float, std::int64_t>;
+        std::array<std::array<S, 4>, 4> r{};
+        for (int j = 0; j < 4; ++j) {
+          for (int i = 0; i < 4; ++i)
+            r[j][i] = metric_detail::subtract(metric_detail::finite(S(a[(y + j) * as + x + i])),
+                                              metric_detail::finite(S(b[(y + j) * bs + x + i])));
+          r[j] = metric_detail::hadamard(r[j]);
+        }
+        S cell = 0;
+        for (int c = 0; c < 4; ++c) {
+          auto col = metric_detail::hadamard<S>({r[0][c], r[1][c], r[2][c], r[3][c]});
+          auto s = metric_detail::add(
+              metric_detail::add(metric_detail::add(metric_detail::magnitude(col[0]), metric_detail::magnitude(col[1])),
+                                 metric_detail::magnitude(col[2])),
+              metric_detail::magnitude(col[3]));
+          if constexpr (std::is_same_v<T, float>)
+            append(s);
+          else
+            cell += s;
+        }
+        if constexpr (!std::is_same_v<T, float>)
+          append(static_cast<A>(cell / 2));
+      }
+    }
+    if constexpr (std::is_same_v<T, float>)
+      ftotal *= 0.5f;
+  }
+  if constexpr (std::is_same_v<T, float>)
+    return encode_float_error(ftotal);
+  else
+    return total;
+}
+template <class T>
+std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
+  // Narrow SATD lanes for small blocks so even one cell uses the vector kernel.
+  if (satd) {
+    if (w < 8)
+      return MetricWithTag(hn::CappedTag<Wide<T>, 1>{}, a, as, b, bs, w, h, satd);
+    if (w < 16)
+      return MetricWithTag(hn::CappedTag<Wide<T>, 2>{}, a, as, b, bs, w, h, satd);
+    if (w < 32)
+      return MetricWithTag(hn::CappedTag<Wide<T>, 4>{}, a, as, b, bs, w, h, satd);
+    if (w < 64)
+      return MetricWithTag(hn::CappedTag<Wide<T>, 8>{}, a, as, b, bs, w, h, satd);
+  }
+  return MetricWithTag(hn::ScalableTag<Wide<T>>{}, a, as, b, bs, w, h, satd);
+}
+#define NEO_IMPL(T, S)                                                                                                 \
+  void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
+    Extract(p, q, n, pel, phase);                                                                                      \
+  }                                                                                                                    \
+  void Scan##S(const T *p, int n, std::int64_t m) {                                                                    \
+    Scan(p, n, m);                                                                                                     \
+  }                                                                                                                    \
+  void Copy##S(const T *p, T *q, int n) {                                                                              \
+    Copy(p, q, n);                                                                                                     \
+  }                                                                                                                    \
+  void Fill##S(T v, T *p, int n) {                                                                                     \
+    Fill(v, p, n);                                                                                                     \
+  }                                                                                                                    \
+  void Formula##S(const T *const *p, int step, T *q, int n, Formula op, std::int64_t m) {                              \
+    FormulaRow(p, step, q, n, op, m);                                                                                  \
+  }                                                                                                                    \
+  std::int64_t Metric##S(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool s) {         \
+    return Metric(a, as, b, bs, w, h, s);                                                                              \
+  }
+NEO_IMPL(std::uint8_t, U8) NEO_IMPL(std::uint16_t, U16) NEO_IMPL(float, F32)
+#undef NEO_IMPL
+} // namespace HWY_NAMESPACE
+} // namespace neo_mv::simd::detail
+HWY_AFTER_NAMESPACE();
+#if HWY_ONCE
+namespace neo_mv::simd::detail {
+HWY_EXPORT(Target);
+const char *target_name() {
+  return hwy::TargetName(HWY_DYNAMIC_DISPATCH(Target)());
+}
+#define NEO_EXPORT(T, S)                                                                                               \
+  HWY_EXPORT(Extract##S);                                                                                              \
+  HWY_EXPORT(Scan##S);                                                                                                 \
+  HWY_EXPORT(Copy##S);                                                                                                 \
+  HWY_EXPORT(Fill##S);                                                                                                 \
+  HWY_EXPORT(Formula##S);                                                                                              \
+  HWY_EXPORT(Metric##S);                                                                                               \
+  void extract(const T *p, T *q, int n, int pel, int phase) {                                                          \
+    HWY_DYNAMIC_DISPATCH(Extract##S)(p, q, n, pel, phase);                                                             \
+  }                                                                                                                    \
+  void scan(const T *p, int n, std::int64_t m) {                                                                       \
+    HWY_DYNAMIC_DISPATCH(Scan##S)(p, n, m);                                                                            \
+  }                                                                                                                    \
+  void copy(const T *p, T *q, int n) {                                                                                 \
+    HWY_DYNAMIC_DISPATCH(Copy##S)(p, q, n);                                                                            \
+  }                                                                                                                    \
+  void fill(T v, T *p, int n) {                                                                                        \
+    HWY_DYNAMIC_DISPATCH(Fill##S)(v, p, n);                                                                            \
+  }                                                                                                                    \
+  void formula(const T *const *p, int s, T *q, int n, Formula f, std::int64_t m) {                                     \
+    HWY_DYNAMIC_DISPATCH(Formula##S)(p, s, q, n, f, m);                                                                \
+  }                                                                                                                    \
+  std::int64_t metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool s) {            \
+    return HWY_DYNAMIC_DISPATCH(Metric##S)(a, as, b, bs, w, h, s);                                                     \
+  }
+NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
+#undef NEO_EXPORT
+} // namespace neo_mv::simd::detail
+#endif

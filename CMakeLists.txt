@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 project(neo_mv VERSION 0.1.0 LANGUAGES CXX)
 
 option(NEO_MV_BUILD_VAPOURSYNTH "Build the VapourSynth plugin" ON)
+option(NEO_MV_ENABLE_HIGHWAY "Build Highway pixel kernels and runtime dispatch" ON)
 # The core-only build uses the standalone view header without the DS2 runtime.
 # Override FETCHCONTENT_SOURCE_DIR_DUALSYNTH2 to use an existing checkout.
 include(FetchContent)
@@ -32,11 +33,38 @@ else()
   target_compile_options(neo_mv_core INTERFACE -fno-fast-math -ffp-contract=off)
 endif()
 
+if(NEO_MV_ENABLE_HIGHWAY)
+  set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+  set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
+  set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(HWY_FORCE_STATIC_LIBS ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(highway
+    URL https://github.com/google/highway/archive/refs/tags/1.4.0.tar.gz
+    URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(highway)
+  add_library(neo_mv_highway STATIC src/highway/rows.cpp)
+  target_link_libraries(neo_mv_highway PUBLIC neo_mv_core hwy)
+  target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ALL_ATTAINABLE)
+  set_target_properties(neo_mv_highway hwy PROPERTIES POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+  option(NEO_MV_HWY_SCALAR_ONLY "Build only Highway's portable scalar target" OFF)
+  if(NEO_MV_HWY_SCALAR_ONLY)
+    target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ONLY_SCALAR)
+  endif()
+endif()
+
 include(CTest)
 if(NEO_MV_BUILD_VAPOURSYNTH)
   include(cmake/VapourSynth.cmake)
-  add_library(neo_mv_vs MODULE src/plugin/vapoursynth/entry.cpp src/plugin/vapoursynth/properties.cpp)
+  add_library(neo_mv_vs MODULE src/plugin/vapoursynth/entry.cpp src/plugin/vapoursynth/properties.cpp
+    src/kernels/selection.cpp)
   target_link_libraries(neo_mv_vs PRIVATE neo_mv_core DualSynth::dualsynth)
+  target_compile_definitions(neo_mv_vs PRIVATE NEO_MV_ENABLE_HIGHWAY=$<BOOL:${NEO_MV_ENABLE_HIGHWAY}>)
+  if(NEO_MV_ENABLE_HIGHWAY)
+    target_link_libraries(neo_mv_vs PRIVATE neo_mv_highway)
+  endif()
   target_include_directories(neo_mv_vs SYSTEM PRIVATE "${NEO_MV_VS_INCLUDE_DIR}")
   if(MSVC)
     target_compile_options(neo_mv_vs PRIVATE /W4)
@@ -46,7 +74,8 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
   if(MINGW)
     target_link_options(neo_mv_vs PRIVATE -static -static-libgcc -static-libstdc++)
   endif()
-  set_target_properties(neo_mv_vs PROPERTIES PREFIX "" OUTPUT_NAME "neo-mv")
+  set_target_properties(neo_mv_vs PROPERTIES PREFIX "" OUTPUT_NAME "neo-mv"
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
   if(BUILD_TESTING)
     option(NEO_MV_TEST_VAPOURSYNTH "Run tests using an installed vspipe of the matching architecture" ON)
     find_program(NEO_MV_VSPIPE_EXECUTABLE vspipe)
@@ -58,10 +87,24 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
         --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/acceptance.vpy" --)
       set_tests_properties(vs.acceptance PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE)
+      set_tests_properties(vs.acceptance PROPERTIES ENVIRONMENT "NEO_MV_KERNEL=scalar")
+      if(NEO_MV_ENABLE_HIGHWAY)
+        add_test(NAME vs.acceptance.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>" --arg "kernel=highway"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/acceptance.vpy" --)
+        set_tests_properties(vs.acceptance.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=highway")
+      endif()
     endif()
   endif()
 endif()
 if(BUILD_TESTING)
+  if(NEO_MV_ENABLE_HIGHWAY)
+    add_executable(neo_mv_highway_tests tests/highway/differential.cpp)
+    target_link_libraries(neo_mv_highway_tests PRIVATE neo_mv_highway)
+    add_test(NAME core.highway COMMAND neo_mv_highway_tests)
+    set_tests_properties(core.highway PROPERTIES LABELS "spec" TIMEOUT 180 RUN_SERIAL TRUE)
+  endif()
   foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field scene_classification recalculate analyse super)
     add_executable(neo_mv_${operator}_tests tests/core/test_${operator}.cpp)
     target_link_libraries(neo_mv_${operator}_tests PRIVATE neo_mv_core)
@@ -90,5 +133,12 @@ if(BUILD_TESTING)
       --plugin "$<TARGET_FILE:neo_mv_vs>"
       --output-root "${CMAKE_CURRENT_BINARY_DIR}/blackbox")
     set_tests_properties(blackbox.smoke PROPERTIES LABELS "blackbox" RUN_SERIAL TRUE TIMEOUT 1200)
+    if(NEO_MV_ENABLE_HIGHWAY AND NOT NEO_MV_HWY_SCALAR_ONLY)
+      add_test(NAME blackbox.highway COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/blackbox/run.py" --neo-kernel highway
+        --plugin "$<TARGET_FILE:neo_mv_vs>"
+        --output-root "${CMAKE_CURRENT_BINARY_DIR}/blackbox")
+      set_tests_properties(blackbox.highway PROPERTIES LABELS "blackbox" RUN_SERIAL TRUE TIMEOUT 1200)
+    endif()
   endif()
 endif()

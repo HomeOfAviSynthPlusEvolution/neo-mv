@@ -1,5 +1,9 @@
 #pragma once
 #include "super_payload.hpp"
+#include "kernels/selection.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/kernels.hpp"
+#endif
 
 namespace neo_mv::ds2 {
 template <class T>
@@ -34,7 +38,7 @@ SuperPlan<T> super_plan(const ds::VideoInitContext& ctx) {
   return {p, ds::bits_per_sample(info.format.sample_format), args.integer("sharp", 2), args.integer("rfilter", 1),
           external};
 }
-template <class T>
+template <class T, class Kernels>
 struct SuperRuntime final : Runtime {
   const SuperPlan<T> plan;
   const std::string prefix;
@@ -59,15 +63,15 @@ struct SuperRuntime final : Runtime {
     validate_frame(src.frame, source);
     std::array<span2d::Plane<const T>, 3> inputs{}, pel{};
     for (int k = 0; k < src.frame.plane_count; ++k)
-      inputs[k] = plane<T>(src.frame.plane(k));
+      inputs.at(k) = plane<T>(src.frame.plane(k));
     std::optional<ds::RequestedVideoFrame> extra;
     if (external && plan.params().pel > 1) {
       extra = frame(ctx.frames, 1, ctx.output_frame);
       validate_frame(extra->frame, *external);
       for (int k = 0; k < extra->frame.plane_count; ++k)
-        pel[k] = plane<T>(extra->frame.plane(k));
+        pel.at(k) = plane<T>(extra->frame.plane(k));
     }
-    SuperPyramid<T> pyramid(plan, inputs, pel);
+    SuperPyramid<T> pyramid(plan, inputs, pel, Kernels{});
     require(ctx.frame_factory != nullptr, "Super requires frame factory");
     publish_super(pyramid, *ctx.frame_factory, properties(ctx.dst), prefix, source.format.sample_format);
   }
@@ -106,7 +110,7 @@ inline void target_axes(AnalysisMetadata& m, Params args) {
   m.blocks_x = geometry_detail::dimension((std::int64_t(m.real_width) - o[0] + sx - 1) / sx);
   m.blocks_y = geometry_detail::dimension((std::int64_t(m.real_height) - o[1] + sy - 1) / sy);
 }
-template <class T>
+template <class T, class Kernels>
 struct AnalyseRuntime final : Runtime {
   std::string prefix;
   SuperPlan<T> plan;
@@ -151,13 +155,13 @@ struct AnalyseRuntime final : Runtime {
         if (top != other_top)
           shift = top ? metadata.pel / 2 : -metadata.pel / 2;
       }
-      field.grid = analyse_vectors(metadata, geometry, frames, controls, shift);
+      field.grid = analyse_vectors<T, Kernels>(metadata, geometry, frames, controls, shift);
       field.state = FieldState::complete;
     }
     write_field(properties(ctx.dst), field, prefix);
   }
 };
-template <class T>
+template <class T, class Kernels>
 struct RecalculateRuntime final : Runtime {
   const std::string prefix;
   SuperPlan<T> plan;
@@ -223,7 +227,7 @@ struct RecalculateRuntime final : Runtime {
     }
     auto borrowed = sample_frames(current, ref, target.chroma);
     AnalysisField output{target, FieldState::complete,
-                         recalculate_vectors(input, target, geometry, borrowed.front(), controls)};
+                         recalculate_vectors<T, Kernels>(input, target, geometry, borrowed.front(), controls)};
     write_field(properties(ctx.dst), output, prefix);
   }
 };
@@ -260,23 +264,32 @@ struct Filter {
   struct State {
     std::shared_ptr<const Runtime> runtime;
   };
-  template <class T>
-  static std::shared_ptr<const Runtime> make(ds::VideoInitContext& ctx) {
+  template <class T, class Kernels>
+  static std::shared_ptr<const Runtime> make_with_kernels(ds::VideoInitContext& ctx) {
     if constexpr (Op == Operation::Super)
-      return std::make_shared<SuperRuntime<T>>(ctx);
+      return std::make_shared<SuperRuntime<T, Kernels>>(ctx);
     else {
       validate_format(ctx.inputs[0]);
       auto first = frame(*ctx.frames, 0, 0);
       FrameSuper<T> payload(first.frame, ctx.inputs[0], Params{*ctx.params}.prefix());
       if constexpr (Op == Operation::Analyse)
-        return std::make_shared<AnalyseRuntime<T>>(ctx, payload);
+        return std::make_shared<AnalyseRuntime<T, Kernels>>(ctx, payload);
       else
-        return std::make_shared<RecalculateRuntime<T>>(ctx, payload);
+        return std::make_shared<RecalculateRuntime<T, Kernels>>(ctx, payload);
     }
+  }
+  template <class T>
+  static std::shared_ptr<const Runtime> make(ds::VideoInitContext& ctx) {
+#if NEO_MV_ENABLE_HIGHWAY
+    if (selected_backend() == KernelBackend::highway)
+      return make_with_kernels<T, HighwayKernels<T>>(ctx);
+#endif
+    return make_with_kernels<T, ScalarKernels<T>>(ctx);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
             "VS frame services required");
+    selected_backend(); // Freeze selection for every graph, including SCDetection.
     const auto count = ctx.inputs.size();
     require(Op == Operation::Super     ? (count == 1 || count == 2)
             : Op == Operation::Analyse ? count == 1

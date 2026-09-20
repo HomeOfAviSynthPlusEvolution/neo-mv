@@ -4,6 +4,7 @@
 #include "core/super/geometry.hpp"
 #include "core/super/pyramid_reduction.hpp"
 #include "core/super/subpixel.hpp"
+#include "kernels/scalar.hpp"
 
 namespace neo_mv {
 namespace super_detail {
@@ -104,8 +105,9 @@ class SuperPyramid {
   std::array<std::vector<Level>, 3> planes_;
 
 public:
+  template <class Kernels = ScalarKernels<T>>
   SuperPyramid(const SuperPlan<T>& plan, const std::array<span2d::Plane<const T>, 3>& source,
-               const std::array<span2d::Plane<const T>, 3>& external = {})
+               const std::array<span2d::Plane<const T>, 3>& external = {}, Kernels = {})
       : plan_(plan) {
     const auto& g = plan_.geometry();
     const int pel = plan_.params().pel;
@@ -138,17 +140,17 @@ public:
         for (int a = 0; a < size.phase_count; ++a)
           phases.emplace_back(size.padded_width, size.padded_height);
         if (l == 0)
-          extend_border(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
+          Kernels::extend_border(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         else {
           super_detail::PlaneBuffer<T> working(size.width, size.height);
           if (plan_.filter() == 0) {
-            reduce_pyramid<T>(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0);
+            Kernels::reduce_pyramid(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0, {});
           } else {
             super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height);
-            reduce_pyramid<T>(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
-                              scratch.view());
+            Kernels::reduce_pyramid(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
+                                    scratch.view());
           }
-          extend_border<T>(working.view(), phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
+          Kernels::extend_border(working.view(), phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         }
       }
       auto& base = levels[0];
@@ -156,10 +158,10 @@ public:
       for (int a = 1; a < pel * pel; ++a)
         storage[a] = base[a].view();
       if (plan_.external())
-        extract_external_subpixels<T>(base[0].view(), external[k], p.actual_width, p.actual_height, p.pad_x, p.pad_y,
-                                      pel, plan_.bits(), storage);
+        Kernels::extract_external_subpixels(base[0].view(), external[k], p.actual_width, p.actual_height, p.pad_x,
+                                            p.pad_y, pel, plan_.bits(), storage);
       else
-        interpolate_subpixels<T>(base[0].view(), pel, plan_.sharp(), plan_.bits(), storage);
+        Kernels::interpolate_subpixels(base[0].view(), pel, plan_.sharp(), plan_.bits(), storage);
     }
   }
   const SuperPlan<T>& plan() const { return plan_; }

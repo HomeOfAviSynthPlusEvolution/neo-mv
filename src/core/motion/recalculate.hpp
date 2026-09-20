@@ -56,7 +56,7 @@ inline MotionVector map(const AnalysisField& old, const AnalysisMetadata& target
 // target metadata describes the new Super, not the vector carrier. Call the
 // geometry-only validate_motion_layer at plugin creation as well; this frame
 // entry point rechecks it before any mapping or metric evaluation.
-template <class T>
+template <class T, class Kernels = ScalarKernels<T>>
 MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata& target,
                                const SamplingGeometry& geometry, const SamplingFrames<T>& frames,
                                RecalculateControls controls = {}) {
@@ -81,7 +81,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
       const auto evaluate = [&](MotionVector vector) {
-        return block_error(geometry, block, frames, vector, controls.satd ? BlockMetric::satd : BlockMetric::sad);
+        return Kernels::block_error(geometry, block, frames, vector, controls.satd ? BlockMetric::satd : BlockMetric::sad);
       };
       const auto error = evaluate(u);
       SearchResult result{u, error.raw, error.raw};

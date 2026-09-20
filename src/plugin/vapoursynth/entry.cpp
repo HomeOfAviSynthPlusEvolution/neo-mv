@@ -4,6 +4,17 @@
 namespace neo_mv::ds2 {
 namespace {
 using MapOwner = std::unique_ptr<VSMap, decltype(VSAPI::freeMap)>;
+void VS_CC kernel_info(const VSMap*, VSMap* out, void*, VSCore*, const VSAPI* api) {
+  try {
+    require(api->mapSetData(out, "backend", selected_backend_name(), -1, dtUtf8, maReplace) == 0 &&
+                api->mapSetData(out, "target", selected_target_name(), -1, dtUtf8, maReplace) == 0,
+            "cannot report kernel selection");
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: kernel selection failed");
+  }
+}
 // Validate the length-delimited prefix before DS2's current string reader.
 void check_prefix(const VSMap* in, const VSAPI* api) {
   if (api->mapNumElements(in, "prefix") < 0)
@@ -118,4 +129,5 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("AnalyseMany", many_signature, "clip:vnode[];", many, nullptr, plugin);
   api->registerFunction("Recalculate", recalculate_signature, "clip:vnode[];", recalculate, nullptr, plugin);
   api->registerFunction("SCDetection", scene_signature, "clip:vnode;", create<Operation::SCDetection>, nullptr, plugin);
+  api->registerFunction("KernelInfo", "", "backend:data;target:data;", kernel_info, nullptr, plugin);
 }
