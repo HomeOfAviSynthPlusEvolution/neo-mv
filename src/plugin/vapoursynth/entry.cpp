@@ -117,6 +117,22 @@ void VS_CC recalculate(const VSMap* in, VSMap* out, void*, VSCore* core, const V
     api->mapSetError(out, "neo-mv: Recalculate creation failed");
   }
 }
+template <bool Degrain>
+void VS_CC create_render(const VSMap* in, VSMap* out, void* user_data, VSCore* core, const VSAPI* api) {
+  try {
+    check_prefix(in, api);
+    if constexpr (Degrain) {
+      const auto radius = reinterpret_cast<std::intptr_t>(user_data);
+      require(radius == 0 || api->mapNumElements(in, "vectors") == 2 * radius,
+              "named Degrain requires exactly 2R vector members");
+    }
+    ds::vapoursynth::create_video_filter_bridge<RenderBridge<Degrain>>(in, out, core, api);
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: render creation failed");
+  }
+}
 } // namespace
 } // namespace neo_mv::ds2
 
@@ -129,5 +145,12 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("AnalyseMany", many_signature, "clip:vnode[];", many, nullptr, plugin);
   api->registerFunction("Recalculate", recalculate_signature, "clip:vnode[];", recalculate, nullptr, plugin);
   api->registerFunction("SCDetection", scene_signature, "clip:vnode;", create<Operation::SCDetection>, nullptr, plugin);
+  api->registerFunction("Compensate", compensate_signature, "clip:vnode;", create_render<false>, nullptr, plugin);
+  api->registerFunction("Degrain", degrain_signature, "clip:vnode;", create_render<true>, nullptr, plugin);
+  for (std::intptr_t radius = 1; radius <= 25; ++radius) {
+    const auto name = "Degrain" + std::to_string(radius);
+    api->registerFunction(name.c_str(), degrain_signature, "clip:vnode;", create_render<true>,
+                          reinterpret_cast<void*>(radius), plugin);
+  }
   api->registerFunction("KernelInfo", "", "backend:data;target:data;", kernel_info, nullptr, plugin);
 }

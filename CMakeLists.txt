@@ -17,7 +17,7 @@ else()
 endif()
 FetchContent_Declare(dualsynth2
   GIT_REPOSITORY https://github.com/HomeOfAviSynthPlusEvolution/dualsynth2.git
-  GIT_TAG 9b8ca4b1fee43f2f38a2c9b751e9ba5a836acd36
+  GIT_TAG 9ee756ab6213fa0ca8505a7438cb19ac5ec7d1d5
   SOURCE_SUBDIR "${_neo_mv_ds2_subdir}"
 )
 FetchContent_MakeAvailable(dualsynth2)
@@ -67,7 +67,7 @@ endif()
 include(CTest)
 if(NEO_MV_BUILD_VAPOURSYNTH)
   include(cmake/VapourSynth.cmake)
-  add_library(neo_mv_vs MODULE src/plugin/vapoursynth/entry.cpp src/plugin/vapoursynth/properties.cpp
+  add_library(neo_mv_vs MODULE src/plugin/vapoursynth/entry.cpp
     src/kernels/selection.cpp)
   target_link_libraries(neo_mv_vs PRIVATE neo_mv_core DualSynth::dualsynth)
   target_compile_definitions(neo_mv_vs PRIVATE NEO_MV_ENABLE_HIGHWAY=$<BOOL:${NEO_MV_ENABLE_HIGHWAY}>)
@@ -97,12 +97,22 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/acceptance.vpy" --)
       set_tests_properties(vs.acceptance PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE)
       set_tests_properties(vs.acceptance PROPERTIES ENVIRONMENT "NEO_MV_KERNEL=scalar")
+      add_test(NAME vs.render COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+        --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/render.vpy" --)
+      set_tests_properties(vs.render PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
+        ENVIRONMENT "NEO_MV_KERNEL=scalar" FAIL_REGULAR_EXPRESSION "Core freed but")
       if(NEO_MV_ENABLE_HIGHWAY)
         add_test(NAME vs.acceptance.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>" --arg "kernel=highway"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/acceptance.vpy" --)
         set_tests_properties(vs.acceptance.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
           ENVIRONMENT "NEO_MV_KERNEL=highway")
+        add_test(NAME vs.render.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/render.vpy" --)
+        set_tests_properties(vs.render.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
       endif()
     endif()
   endif()

@@ -1,5 +1,6 @@
 #pragma once
 #include "filters/phase1.hpp"
+#include "filters/phase2.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -109,6 +110,48 @@ struct Bridge {
   static bool accepts_video_format(const ds::VideoFormat& format) {
     auto supported = ds::is_supported_video_format(format);
     return supported.has_value() && supported.value();
+  }
+};
+
+inline constexpr char compensate_signature[] =
+    "clip:vnode;super:vnode;vectors:vnode;thsad:int:opt;fields:int:opt;time:float:opt;thscd1:int:opt;"
+    "thscd2:float:opt;tff:int:opt;prefix:data:opt;";
+inline constexpr char degrain_signature[] =
+    "clip:vnode;super:vnode;vectors:vnode[];thsad:int[]:opt:empty;thsad2:int[]:opt:empty;"
+    "planes:int[]:opt:empty;limit:float[]:opt:empty;thscd1:int:opt;thscd2:float:opt;weights:int[]:opt:empty;prefix:"
+    "data:opt;";
+template <bool Degrain>
+struct RenderBridge : Bridge<Operation::Super> {
+  using Core = RenderFilter<Degrain>;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = Degrain ? degrain_signature : compensate_signature;
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    auto add = [&](const char* n, P t, bool required = false, bool array = false) {
+      d.params.push_back(parameter(n, t, required, array));
+    };
+    add("clip", P::Clip, true);
+    add("super", P::Clip, true);
+    add("vectors", P::Clip, true, Degrain);
+    add("thsad", P::Integer, false, Degrain);
+    if constexpr (Degrain) {
+      add("thsad2", P::Integer, false, true);
+      add("planes", P::Integer, false, true);
+      add("limit", P::Float, false, true);
+    } else {
+      add("fields", P::Boolean);
+      add("time", P::Float);
+    }
+    add("thscd1", P::Integer);
+    add("thscd2", P::Float);
+    if constexpr (Degrain)
+      add("weights", P::Integer, false, true);
+    else
+      add("tff", P::Boolean);
+    add("prefix", P::String);
+    return d;
   }
 };
 } // namespace neo_mv::ds2
