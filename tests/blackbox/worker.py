@@ -19,6 +19,7 @@ from cases import build
 from catalog import BY_ID
 import render_cases
 import mask_cases
+import flow_cases
 from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys
 
 
@@ -136,6 +137,8 @@ def main():
         keys = observation_keys(spec)
         prepared = None
         fixture = {2: render_cases, 3: mask_cases}.get(spec.get("phase"))
+        if spec.get("phase") == 3 and spec.get("operation") == "Flow":
+            fixture = flow_cases
         if fixture is not None:
             result["stage"] = "input"
             prepared = fixture.prepare(vs, core, spec)

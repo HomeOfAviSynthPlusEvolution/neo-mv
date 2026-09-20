@@ -107,6 +107,11 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/mask.vpy" --)
       set_tests_properties(vs.mask PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
         ENVIRONMENT "NEO_MV_KERNEL=scalar" FAIL_REGULAR_EXPRESSION "Core freed but")
+      add_test(NAME vs.flow COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+        --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/flow.vpy" --)
+      set_tests_properties(vs.flow PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
+        ENVIRONMENT "NEO_MV_KERNEL=scalar" FAIL_REGULAR_EXPRESSION "Core freed but")
       if(NEO_MV_ENABLE_HIGHWAY)
         add_test(NAME vs.acceptance.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>" --arg "kernel=highway"
@@ -122,6 +127,11 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/mask.vpy" --)
         set_tests_properties(vs.mask.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
+        add_test(NAME vs.flow.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/flow.vpy" --)
+        set_tests_properties(vs.flow.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
           ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
       endif()
     endif()
@@ -144,7 +154,7 @@ if(BUILD_TESTING)
     target_compile_definitions(neo_mv_highway_render_frame_tests PRIVATE NEO_MV_TEST_HIGHWAY=1)
     add_test(NAME core.highway.render_frame COMMAND neo_mv_highway_render_frame_tests)
     set_tests_properties(core.highway.render_frame PROPERTIES LABELS "spec" TIMEOUT 180)
-    foreach(operator mask spec_mask_scores spec_grid_resampling)
+    foreach(operator mask spec_mask_scores spec_grid_resampling flow)
       add_executable(neo_mv_highway_${operator}_tests tests/highway/${operator}.cpp)
       target_link_libraries(neo_mv_highway_${operator}_tests PRIVATE neo_mv_highway)
       add_test(NAME core.highway.${operator} COMMAND neo_mv_highway_${operator}_tests)
@@ -155,8 +165,15 @@ if(BUILD_TESTING)
     target_compile_definitions(neo_mv_highway_mask_frame_tests PRIVATE NEO_MV_TEST_HIGHWAY=1)
     add_test(NAME core.highway.mask_frame COMMAND neo_mv_highway_mask_frame_tests)
     set_tests_properties(core.highway.mask_frame PROPERTIES LABELS "spec" TIMEOUT 180)
+    foreach(operator flow_dense flow_frame)
+      add_executable(neo_mv_highway_${operator}_tests tests/core/test_${operator}.cpp)
+      target_link_libraries(neo_mv_highway_${operator}_tests PRIVATE neo_mv_highway)
+      target_compile_definitions(neo_mv_highway_${operator}_tests PRIVATE NEO_MV_TEST_HIGHWAY=1)
+      add_test(NAME core.highway.${operator} COMMAND neo_mv_highway_${operator}_tests)
+      set_tests_properties(core.highway.${operator} PROPERTIES LABELS "spec" TIMEOUT 180)
+    endforeach()
   endif()
-  foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field scene_classification recalculate analyse super render_reference render_sampling overlap compensation degrain render_frame grid_resampling mask_input mask_scores mask_frame)
+  foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field scene_classification recalculate analyse super render_reference render_sampling overlap compensation degrain render_frame grid_resampling mask_input mask_scores mask_frame flow_dense flow_sampling flow_frame)
     add_executable(neo_mv_${operator}_tests tests/core/test_${operator}.cpp)
     target_link_libraries(neo_mv_${operator}_tests PRIVATE neo_mv_core)
     if(MSVC)

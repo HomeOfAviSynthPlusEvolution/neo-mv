@@ -1,0 +1,14 @@
+#pragma once
+
+#include "core/flow/sampling.hpp"
+
+namespace neo_mv {
+template <class T>
+struct ScalarFlowKernels {
+  using DenseFlow = DenseFlowPlan<>;
+  static void sample(const FlowSamplingPlan& plan, const DenseFlowField& field, const SubpixelPhases<T>& source,
+                     span2d::Plane<T> output) {
+    plan.sample(field, source, output);
+  }
+};
+} // namespace neo_mv

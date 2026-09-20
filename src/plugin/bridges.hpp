@@ -2,6 +2,7 @@
 #include "filters/phase1.hpp"
 #include "filters/phase2.hpp"
 #include "filters/mask.hpp"
+#include "filters/flow.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -158,6 +159,28 @@ struct RenderBridge : Bridge<Operation::Super> {
 inline constexpr char mask_signature[] =
     "vectors:vnode;ml:float:opt;gamma:float:opt;time:float:opt;scval:float:opt;thscd1:int:opt;"
     "thscd2:float:opt;prefix:data:opt;";
+inline constexpr char flow_signature[] =
+    "clip:vnode;super:vnode;vectors:vnode;time:float:opt;fields:int:opt;thscd1:int:opt;"
+    "thscd2:float:opt;tff:int:opt;prefix:data:opt;";
+struct FlowBridge : Bridge<Operation::Super> {
+  using Core = FlowFilter;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = flow_signature;
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    for (auto n : {"clip", "super", "vectors"})
+      d.params.push_back(parameter(n, P::Clip, true));
+    d.params.push_back(parameter("time", P::Float));
+    d.params.push_back(parameter("fields", P::Boolean));
+    d.params.push_back(parameter("thscd1", P::Integer));
+    d.params.push_back(parameter("thscd2", P::Float));
+    d.params.push_back(parameter("tff", P::Boolean));
+    d.params.push_back(parameter("prefix", P::String));
+    return d;
+  }
+};
 template <MaskKind Kind>
 struct MaskBridge : Bridge<Operation::Super> {
   using Core = MaskFilter<Kind>;

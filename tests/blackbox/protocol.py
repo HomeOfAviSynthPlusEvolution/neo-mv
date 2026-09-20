@@ -87,7 +87,7 @@ def validate_result(result, spec, backend):
                 if not isinstance(names, list) or any(not isinstance(name, str) for name in names) or \
                         names != sorted(set(names)) or \
                         set(record["properties"]) != set(names).intersection(observation_keys(spec)):
-                    raise ValueError("missing or invalid mask output property inventory")
+                    raise ValueError("missing or invalid phase-three output property inventory")
     inputs = result.get("inputs", [])
     if [item.get("frame") for item in inputs] != list(range(spec["length"])):
         raise ValueError("missing or duplicated source frames")
@@ -96,7 +96,7 @@ def validate_result(result, spec, backend):
     if spec.get("phase") in (2, 3):
         if not result.get("input_video"):
             raise ValueError("missing source video metadata")
-    if spec.get("phase") == 2:
+    if spec.get("phase") == 2 or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
         auxiliary = result.get("auxiliary_inputs", [])
         expected = ["super_source"] + ["vectors" + str(i) for i in range(len(spec["deltas"]))]
         if [item.get("name") for item in auxiliary] != expected:

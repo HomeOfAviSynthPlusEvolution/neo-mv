@@ -133,6 +133,16 @@ void VS_CC create_render(const VSMap* in, VSMap* out, void* user_data, VSCore* c
     api->mapSetError(out, "neo-mv: render creation failed");
   }
 }
+void VS_CC create_flow(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
+  try {
+    check_prefix(in, api);
+    ds::vapoursynth::create_video_filter_bridge<FlowBridge>(in, out, core, api);
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: Flow creation failed");
+  }
+}
 template <MaskKind Kind>
 void VS_CC create_mask(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
   try {
@@ -158,6 +168,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("Recalculate", recalculate_signature, "clip:vnode[];", recalculate, nullptr, plugin);
   api->registerFunction("SCDetection", scene_signature, "clip:vnode;", create<Operation::SCDetection>, nullptr, plugin);
   api->registerFunction("Compensate", compensate_signature, "clip:vnode;", create_render<false>, nullptr, plugin);
+  api->registerFunction("Flow", flow_signature, "clip:vnode;", create_flow, nullptr, plugin);
   api->registerFunction("Degrain", degrain_signature, "clip:vnode;", create_render<true>, nullptr, plugin);
   api->registerFunction("VectorLengthMask", mask_signature, "clip:vnode;", create_mask<MaskKind::VectorLength>, nullptr,
                         plugin);

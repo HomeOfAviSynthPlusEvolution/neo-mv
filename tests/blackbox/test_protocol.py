@@ -10,6 +10,7 @@ from protocol import SCHEMA, compare, digest_json, validate_result
 from worker import configure_kernel, property_value, snapshot
 from render_cases import CASES as RENDER_CASES
 from mask_cases import CASES as MASK_CASES
+from flow_cases import CASES as FLOW_CASES
 
 
 class ProtocolTests(unittest.TestCase):
@@ -309,6 +310,49 @@ class ProtocolTests(unittest.TestCase):
         status, detail = compare(reference, changed, spec)
         self.assertEqual(status, "difference")
         self.assertEqual(len(detail["known_differences"]), len(spec["requests"]) - 1)
+
+    def flow_result(self):
+        _, result = self.render_result()
+        spec = FLOW_CASES[0]
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec))
+        for record in result["records"]:
+            record["property_names"] = sorted(record["properties"])
+        return spec, result
+
+    def test_flow_requires_and_compares_reference_source_and_vector_inputs(self):
+        spec, result = self.flow_result()
+        validate_result(result, spec, "mvu")
+        self.assertEqual(compare(result, result, spec), ("pass", None))
+        for mutate in [lambda r: r.pop("auxiliary_inputs"),
+                       lambda r: r["auxiliary_inputs"].reverse(),
+                       lambda r: r["auxiliary_inputs"][1]["frames"].pop(),
+                       lambda r: r["auxiliary_inputs"][0].pop("video")]:
+            changed = copy.deepcopy(result)
+            mutate(changed)
+            with self.assertRaises(ValueError):
+                validate_result(changed, spec, "mvu")
+        for index in (0, 1):
+            changed = copy.deepcopy(result)
+            changed["auxiliary_inputs"][index]["frames"][0]["properties"].clear()
+            self.assertEqual(compare(result, changed, spec)[0], "input_mismatch")
+
+    def test_flow_preserves_range_comparison_without_mask_exception(self):
+        spec, reference = self.flow_result()
+        reference["environment"].update(vs_package="79", mvu_package="8")
+        candidate = copy.deepcopy(reference)
+        candidate["backend"] = "neo"
+        for result, value in [(reference, 0), (candidate, 1)]:
+            for record in result["records"]:
+                record["properties"]["_Range"] = dict(type="int", count=1, values=[value])
+                record["property_names"] = sorted(record["properties"])
+            validate_result(result, spec, result["backend"])
+        status, detail = compare(reference, candidate, spec)
+        self.assertEqual(status, "difference")
+        self.assertNotIn("known_differences", detail)
+        changed = copy.deepcopy(candidate)
+        changed["records"][0]["properties"].pop("_Range")
+        with self.assertRaises(ValueError):
+            validate_result(changed, spec, "neo")
 
 
 if __name__ == "__main__":
