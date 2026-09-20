@@ -38,11 +38,21 @@ void admission() {
     auto* misaligned = reinterpret_cast<std::uint16_t*>(reinterpret_cast<unsigned char*>(data.data()) + 1);
     neo_mv::checked_plane(misaligned, 8, 2, 18, sizeof(data) - 1);
   });
-  rejects(
-      [&] { neo_mv::checked_plane(data.data(), 1, 1, static_cast<std::ptrdiff_t>(INT32_MAX) * 2 + 2, sizeof(data)); });
+  if constexpr (sizeof(std::ptrdiff_t) > 4) {
+    rejects([&] {
+      neo_mv::checked_plane(data.data(), 1, 1, static_cast<std::ptrdiff_t>(2LL * INT32_MAX + 2), sizeof(data));
+    });
+  }
   rejects([&] {
-    neo_mv::checked_plane(data.data(), INT32_MAX, INT32_MAX, static_cast<std::ptrdiff_t>(INT32_MAX) * 2, sizeof(data));
+    neo_mv::checked_plane(data.data(), 1, INT32_MAX, std::numeric_limits<std::ptrdiff_t>::max() - 1, sizeof(data));
   });
+  rejects([&] { neo_mv::validate_plane(span2d::Plane<std::uint16_t>(data.data(), 1, 1, -2)); });
+  rejects([&] { neo_mv::validate_plane(span2d::Plane<std::uint16_t>(data.data(), 1, 1, 0)); });
+  // Valid byte-stride construction, but the full three-row span cannot fit a pointer difference.
+  const auto large_stride = std::numeric_limits<std::ptrdiff_t>::max() / 4 * 4;
+  if constexpr (sizeof(std::ptrdiff_t) == 4) {
+    rejects([&] { neo_mv::validate_plane(span2d::Plane<std::uint16_t>(data.data(), 1, 3, large_stride)); });
+  }
 }
 
 template <class T>

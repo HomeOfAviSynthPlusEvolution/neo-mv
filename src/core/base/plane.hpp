@@ -43,8 +43,10 @@ template <class T>
 void validate_plane(span2d::Plane<T> plane) {
   // This validates a view already constructed from a representable element
   // stride. It cannot recover an invalid byte stride truncated by its caller.
-  checked_plane(plane.data(), plane.width(), plane.height(),
-                static_cast<std::ptrdiff_t>(plane.stride()) * static_cast<std::ptrdiff_t>(sizeof(T)),
+  const auto bytes = static_cast<std::int64_t>(plane.stride()) * static_cast<std::int64_t>(sizeof(T));
+  if (bytes <= 0 || bytes > std::numeric_limits<std::ptrdiff_t>::max())
+    throw std::invalid_argument("plane byte stride is not representable");
+  checked_plane(plane.data(), plane.width(), plane.height(), static_cast<std::ptrdiff_t>(bytes),
                 std::numeric_limits<std::size_t>::max());
 }
 

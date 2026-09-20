@@ -6,7 +6,7 @@ project(neo_mv LANGUAGES CXX)
 include(FetchContent)
 FetchContent_Declare(dualsynth2
   GIT_REPOSITORY https://github.com/HomeOfAviSynthPlusEvolution/dualsynth2.git
-  GIT_TAG c9ecec7e812728f6c677b5ef4b4b2e6274137196
+  GIT_TAG 9b8ca4b1fee43f2f38a2c9b751e9ba5a836acd36
   SOURCE_SUBDIR neo_mv_header_only
 )
 # SOURCE_SUBDIR deliberately has no CMakeLists.txt: populate without adding
