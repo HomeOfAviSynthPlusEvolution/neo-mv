@@ -1,17 +1,26 @@
-cmake_minimum_required(VERSION 3.20)
-project(neo_mv LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.24)
+project(neo_mv VERSION 0.1.0 LANGUAGES CXX)
 
-# Only the standalone view header is needed; do not configure the DS2 runtime.
+option(NEO_MV_BUILD_VAPOURSYNTH "Build the VapourSynth plugin" ON)
+# The core-only build uses the standalone view header without the DS2 runtime.
 # Override FETCHCONTENT_SOURCE_DIR_DUALSYNTH2 to use an existing checkout.
 include(FetchContent)
+if(NEO_MV_BUILD_VAPOURSYNTH)
+  set(DS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(DS_BUILD_ACCEPTANCE_PLUGIN OFF CACHE BOOL "" FORCE)
+  set(DS_ENABLE_AVISYNTH OFF CACHE BOOL "" FORCE)
+  set(DS_ENABLE_VAPOURSYNTH ON CACHE BOOL "" FORCE)
+  set(_neo_mv_ds2_subdir .)
+else()
+  set(_neo_mv_ds2_subdir neo_mv_header_only)
+endif()
 FetchContent_Declare(dualsynth2
   GIT_REPOSITORY https://github.com/HomeOfAviSynthPlusEvolution/dualsynth2.git
   GIT_TAG 9b8ca4b1fee43f2f38a2c9b751e9ba5a836acd36
-  SOURCE_SUBDIR neo_mv_header_only
+  SOURCE_SUBDIR "${_neo_mv_ds2_subdir}"
 )
-# SOURCE_SUBDIR deliberately has no CMakeLists.txt: populate without adding
-# DS2's runtime, SDK discovery, acceptance plugins or tests to this build.
 FetchContent_MakeAvailable(dualsynth2)
+unset(_neo_mv_ds2_subdir)
 
 add_library(neo_mv_core INTERFACE)
 target_compile_features(neo_mv_core INTERFACE cxx_std_17)
@@ -24,6 +33,31 @@ else()
 endif()
 
 include(CTest)
+if(NEO_MV_BUILD_VAPOURSYNTH)
+  include(cmake/VapourSynth.cmake)
+  add_library(neo_mv_vs MODULE src/plugin/vapoursynth/entry.cpp src/plugin/vapoursynth/properties.cpp)
+  target_link_libraries(neo_mv_vs PRIVATE neo_mv_core DualSynth::dualsynth)
+  target_include_directories(neo_mv_vs SYSTEM PRIVATE "${NEO_MV_VS_INCLUDE_DIR}")
+  if(MSVC)
+    target_compile_options(neo_mv_vs PRIVATE /W4)
+  else()
+    target_compile_options(neo_mv_vs PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(MINGW)
+    target_link_options(neo_mv_vs PRIVATE -static -static-libgcc -static-libstdc++)
+  endif()
+  set_target_properties(neo_mv_vs PROPERTIES PREFIX "" OUTPUT_NAME "NeoMV")
+  if(BUILD_TESTING)
+    option(NEO_MV_TEST_VAPOURSYNTH "Run tests using an installed vspipe of the matching architecture" ON)
+    find_program(NEO_MV_VSPIPE_EXECUTABLE vspipe)
+    if(NEO_MV_TEST_VAPOURSYNTH AND NEO_MV_VSPIPE_EXECUTABLE)
+      add_test(NAME vs.acceptance COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+        --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/acceptance.vpy" --)
+      set_tests_properties(vs.acceptance PROPERTIES TIMEOUT 120)
+    endif()
+  endif()
+endif()
 if(BUILD_TESTING)
   foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field scene_classification recalculate analyse super)
     add_executable(neo_mv_${operator}_tests tests/core/test_${operator}.cpp)
