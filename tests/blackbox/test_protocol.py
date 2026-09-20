@@ -11,6 +11,7 @@ from worker import configure_kernel, property_value, snapshot
 from render_cases import CASES as RENDER_CASES
 from mask_cases import CASES as MASK_CASES
 from flow_cases import CASES as FLOW_CASES
+from interpolation_cases import CASES as INTERPOLATION_CASES
 
 
 class ProtocolTests(unittest.TestCase):
@@ -353,6 +354,76 @@ class ProtocolTests(unittest.TestCase):
         changed["records"][0]["properties"].pop("_Range")
         with self.assertRaises(ValueError):
             validate_result(changed, spec, "neo")
+
+    def interpolation_result(self):
+        _, result = self.render_result()
+        spec = next(item for item in INTERPOLATION_CASES if item["operation"] == "FlowFPS")
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec),
+                      outputs=[dict(width=32, height=24, length=10, fps=[48000, 1001])])
+        extra = copy.deepcopy(result["auxiliary_inputs"][-1])
+        extra["name"] = "vectors1"
+        result["auxiliary_inputs"].append(extra)
+        sample = {key: copy.deepcopy(value) for key, value in result["records"][0].items()
+                  if key not in ("request", "member", "frame")}
+        sample["properties"].update(_DurationNum=dict(type="int", count=1, values=[1001]),
+                                     _DurationDen=dict(type="int", count=1, values=[48000]),
+                                     _Range=dict(type="int", count=1, values=[1]))
+        sample["property_names"] = sorted(sample["properties"])
+        result["records"] = [dict(request=i, member=m, frame=n, **copy.deepcopy(sample))
+                              for i, (m, n) in enumerate(spec["requests"])]
+        return spec, result
+
+    def test_interpolation_requires_both_vector_nodes_and_inventory(self):
+        spec, result = self.interpolation_result()
+        validate_result(result, spec, "mvu")
+        for mutate in [lambda r: r["auxiliary_inputs"].pop(),
+                       lambda r: r["auxiliary_inputs"][-1]["frames"].pop(),
+                       lambda r: r["records"][0].pop("property_names"),
+                       lambda r: r["records"][0]["properties"].pop("_DurationNum")]:
+            changed = copy.deepcopy(result)
+            mutate(changed)
+            with self.assertRaises(ValueError):
+                validate_result(changed, spec, "mvu")
+
+    def test_interpolation_duration_rate_pixels_and_range_are_strict(self):
+        spec, reference = self.interpolation_result()
+        reference["environment"].update(vs_package="79", mvu_package="8")
+        for mutate in [lambda r: r["outputs"][0].update(length=11),
+                       lambda r: r["outputs"][0].update(fps=[48000, 1000]),
+                       lambda r: r["records"][0]["properties"]["_DurationDen"].update(values=[24000]),
+                       lambda r: r["records"][0]["properties"]["_Range"].update(values=[0]),
+                       lambda r: r["records"][0]["planes"][0].update(data="01")]:
+            candidate = copy.deepcopy(reference)
+            candidate["backend"] = "neo"
+            mutate(candidate)
+            status, detail = compare(reference, candidate, spec)
+            self.assertEqual(status, "difference")
+            self.assertNotIn("known_differences", detail)
+        failed = copy.deepcopy(reference)
+        failed.update(outputs=[], records=[], creation_error=dict(type="Error", message="phase four detail"))
+        validate_result(failed, spec, "mvu")
+        self.assertEqual(compare(failed, failed, spec)[0], "difference")
+
+    def test_interpolation_inventory_has_valid_bounded_requests(self):
+        from fractions import Fraction
+        self.assertGreaterEqual(len(INTERPOLATION_CASES), 30)
+        self.assertLessEqual(len(INTERPOLATION_CASES), 50)
+        self.assertEqual({item["operation"] for item in INTERPOLATION_CASES}, {"FlowInter", "FlowFPS", "FlowBlur"})
+        for spec in INTERPOLATION_CASES:
+            with self.subTest(case=spec["id"]):
+                self.assertEqual(spec["phase"], 4)
+                self.assertGreater(spec["deltas"][0], 0)
+                self.assertEqual(spec["deltas"][0], -spec["deltas"][1])
+                length = spec["length"]
+                if spec["operation"] == "FlowFPS":
+                    source = Fraction(*spec.get("fps", [24000, 1001]))
+                    num, den = spec["params"].get("num", 25), spec["params"].get("den", 1)
+                    target = Fraction(num, den) if num and den else 2*source
+                    length = int(length * target / source)
+                for member, n in spec["requests"]:
+                    self.assertEqual(member, 0)
+                    self.assertGreaterEqual(n, 0)
+                    self.assertLess(n, length)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from catalog import BY_ID
 import render_cases
 import mask_cases
 import flow_cases
+import interpolation_cases
 from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys
 
 
@@ -136,7 +137,7 @@ def main():
             plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
         keys = observation_keys(spec)
         prepared = None
-        fixture = {2: render_cases, 3: mask_cases}.get(spec.get("phase"))
+        fixture = {2: render_cases, 3: mask_cases, 4: interpolation_cases}.get(spec.get("phase"))
         if spec.get("phase") == 3 and spec.get("operation") == "Flow":
             fixture = flow_cases
         if fixture is not None:
@@ -189,7 +190,7 @@ def main():
             else:
                 with acquired as frame:
                     observation = dict(**result["active_request"], **snapshot(frame, keys))
-                    if spec.get("phase") == 3:
+                    if spec.get("phase") in (3, 4):
                         # Observe unexpected property presence without decoding
                         # or exporting unknown/private property payloads.
                         observation["property_names"] = sorted(frame.props)

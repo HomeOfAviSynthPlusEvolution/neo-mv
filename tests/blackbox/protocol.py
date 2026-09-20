@@ -11,7 +11,7 @@ ORDINARY_KEYS = ("TestMarker", "TestData", "TestFloat", "_Field", "_SceneChangeP
 
 def observation_keys(spec):
     keys = list(ORDINARY_KEYS) + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
-    if spec.get("phase") == 3:
+    if spec.get("phase") in (3, 4):
         keys += ["_Range", "_ColorRange", "_Matrix"]
     return keys
 
@@ -66,7 +66,7 @@ def validate_result(result, spec, backend):
     creation_error = result.get("creation_error")
     if creation_error is not None:
         validate_error(creation_error)
-        if spec.get("phase") not in (2, 3) or result.get("outputs") != [] or result.get("records") != []:
+        if spec.get("phase") not in (2, 3, 4) or result.get("outputs") != [] or result.get("records") != []:
             raise ValueError("invalid creation failure observation")
     elif len(result.get("outputs", [])) != spec["members"]:
         raise ValueError("wrong output member count")
@@ -82,21 +82,21 @@ def validate_result(result, spec, backend):
                 raise ValueError("error record also contains successful pixels")
         else:
             validate_snapshot(record)
-            if spec.get("phase") == 3:
+            if spec.get("phase") in (3, 4):
                 names = record.get("property_names")
                 if not isinstance(names, list) or any(not isinstance(name, str) for name in names) or \
                         names != sorted(set(names)) or \
                         set(record["properties"]) != set(names).intersection(observation_keys(spec)):
-                    raise ValueError("missing or invalid phase-three output property inventory")
+                    raise ValueError("missing or invalid output property inventory")
     inputs = result.get("inputs", [])
     if [item.get("frame") for item in inputs] != list(range(spec["length"])):
         raise ValueError("missing or duplicated source frames")
     for item in inputs:
         validate_snapshot(item)
-    if spec.get("phase") in (2, 3):
+    if spec.get("phase") in (2, 3, 4):
         if not result.get("input_video"):
             raise ValueError("missing source video metadata")
-    if spec.get("phase") == 2 or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
+    if spec.get("phase") in (2, 4) or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
         auxiliary = result.get("auxiliary_inputs", [])
         expected = ["super_source"] + ["vectors" + str(i) for i in range(len(spec["deltas"]))]
         if [item.get("name") for item in auxiliary] != expected:
