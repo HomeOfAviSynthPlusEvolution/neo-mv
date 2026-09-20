@@ -125,6 +125,11 @@ public:
         }
     }
   }
+  // Scope-bound reader: never replace owners separately from their borrowed views.
+  FrameSuper(const FrameSuper&) = delete;
+  FrameSuper(FrameSuper&&) = delete;
+  FrameSuper& operator=(const FrameSuper&) = delete;
+  FrameSuper& operator=(FrameSuper&&) = delete;
   span2d::Plane<const T> phase(int k, int l, int a = 0) const { return planes_.at(k).at(l).at(a); }
 };
 template <class T>

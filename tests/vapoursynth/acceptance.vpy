@@ -102,6 +102,18 @@ for fmt, color in [(vs.GRAY8, 37), (vs.YUV420P16, [1023, 777, 999]),
     assert replaced.get_frame(0).props[P + "SuperPel"] == 1
     assert len(values(replaced.get_frame(0).props[P + "NeoMVSuperPlanesV1"])) == len(original.get_frame(0))
 
+# The producer node is gone; a native frame copy alone retains the payload.
+def detached_super():
+    producer = super_clip(blank(color=17), pel=4)
+    saved = producer.get_frame(0).copy()
+    del producer
+    gc.collect()
+    carrier = blank()
+    return core.std.ModifyFrame(carrier, carrier, lambda n, f: saved.copy())
+detached = detached_super()
+assert analysis(mv.Analyse(detached).get_frame(0)) == ([0] * 4, [0] * 4)
+assert detached.get_frame(0)[0][0, 0] == 17
+
 # External pel samples: integer phase uses the original, including when pel=1.
 gray = blank(width=8, height=8, color=3)
 external = blank(width=16, height=16, color=9)
