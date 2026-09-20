@@ -5,6 +5,9 @@
 #include "core/depan/temporal.hpp"
 #include "core/depan/sampling.hpp"
 #include "kernels/selection.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/depan.hpp"
+#endif
 
 namespace neo_mv::ds2 {
 template <class T>
@@ -128,7 +131,14 @@ struct DepanAnalysisFilter {
       owner = frame(ctx.frames, 2, ctx.output_frame);
       mask = plane<std::uint8_t>(owner->frame.plane(0));
     }
-    const auto result = depan::fit(s.input->observe(r.field, mask), s.fit);
+    const auto observations = s.input->observe(r.field, mask);
+#if NEO_MV_ENABLE_HIGHWAY
+    const auto result = selected_backend() == KernelBackend::highway
+                            ? depan::fit<depan::HighwayResiduals>(observations, s.fit)
+                            : depan::fit(observations, s.fit);
+#else
+    const auto result = depan::fit(observations, s.fit);
+#endif
     depan::Motion m;
     if (result.good) {
       const bool forward = s.input->metadata().delta < 0;
@@ -249,7 +259,14 @@ struct DepanCompensationFilter {
       const int rx = k ? (1 << s.clip.format.subsampling_w) : 1, ry = k ? (1 << s.clip.format.subsampling_h) : 1;
       depan::SamplingPlan plan(src.width(), src.height(), bits, s.mode, s.mirror, s.blur / rx,
                                k ? (1 << (bits - 1)) : 0, depan::plane_transform(r.map, rx, ry));
-      plan.render(src, dst);
+#if NEO_MV_ENABLE_HIGHWAY
+      if (selected_backend() == KernelBackend::highway) {
+        depan::HighwaySamplingPlan optimized(src.width(), src.height(), bits, s.mode, s.mirror, s.blur / rx,
+                                             k ? (1 << (bits - 1)) : 0, depan::plane_transform(r.map, rx, ry));
+        optimized.render(src, dst);
+      } else
+#endif
+        plan.render(src, dst);
     }
   }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx, RequestState& r) {

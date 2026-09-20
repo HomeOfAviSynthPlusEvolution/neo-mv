@@ -231,6 +231,15 @@ inline std::vector<float> select_weights(const Observations& observations, const
   return weights;
 }
 
+struct ScalarResiduals {
+  static auto prepare(const Observations& observations, Transform map) {
+    return [&observations, map](std::size_t i) {
+      return std::array<float, 2>{analysis_detail::residual_x(observations.values[i], map),
+                                  analysis_detail::residual_y(observations.values[i], map)};
+    };
+  }
+};
+template <class Residuals = ScalarResiduals>
 inline FitUpdate fit_update(const Observations& observations, const std::vector<float>& weights, const Transform& map,
                             float aspect, float step, bool zoom, bool rotation) {
   analysis_detail::validate(observations);
@@ -242,10 +251,12 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
   f32(step);
   float n = 0.1f, x2 = 0.1f, y2 = 0.1f, residual = 0.1f;
   float gx = 0, gy = 0, gxx = 0, gyy = 0, gxy = 0, gyx = 0;
+  const auto residuals = Residuals::prepare(observations, map);
   for (std::size_t i = 0; i < observations.values.size(); ++i) {
     const auto& value = observations.values[i];
     const float weight = f32(weights[i]);
-    const float ex = analysis_detail::residual_x(value, map), ey = analysis_detail::residual_y(value, map);
+    const auto errors = residuals(i);
+    const float ex = errors[0], ey = errors[1];
     n = add(n, weight);
     x2 = add(x2, mul(analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight));
     y2 = add(y2, mul(analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight));
@@ -279,6 +290,7 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
   return {next, error};
 }
 
+template <class Residuals = ScalarResiduals>
 inline FitResult fit(const Observations& observations, FitParameters parameters = {}) {
   const auto& p = parameters;
   if (!std::isfinite(p.aspect) || p.aspect <= 0 || mul(p.aspect, p.aspect) == 0)
@@ -294,7 +306,7 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
     for (const auto& value : observations.values)
       weights.push_back(value.base);
     for (int k = 0; k < 5; ++k) {
-      const auto next = fit_update(observations, weights, result.map, p.aspect, 0.3f, false, false);
+      const auto next = fit_update<Residuals>(observations, weights, result.map, p.aspect, 0.3f, false, false);
       result.map = next.map;
       result.error = next.error;
       weights = select_weights(observations, result.map, p.wrong, p.zerow, 1000.0f);
@@ -302,11 +314,11 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
     result.iteration = 100;
     for (int k = 5; k < 100; ++k) {
       const float old_error = result.error;
-      const auto next = fit_update(observations, weights, result.map, p.aspect,
-                                   k < 8    ? 0.3f
-                                   : k < 10 ? 0.6f
-                                            : 1.0f,
-                                   p.zoom, p.rotation);
+      const auto next = fit_update<Residuals>(observations, weights, result.map, p.aspect,
+                                              k < 8    ? 0.3f
+                                              : k < 10 ? 0.6f
+                                                       : 1.0f,
+                                              p.zoom, p.rotation);
       result.map = next.map;
       result.error = next.error;
       if ((sub(old_error, result.error) < mul(0.01f, 0.5f) && k > 9) || result.error < 0.01f) {
