@@ -175,6 +175,51 @@ template <class V> void Hadamard(V &a, V &b, V &c, V &d) {
   c = hn::Sub(ab, cd);
   d = hn::Sub(am, cm);
 }
+// Motion blocks fit this bounded fast path. The entire u16 SAD is at most
+// 128 * 128 * 65535 < INT32_MAX, including all lanes and scalar tails.
+// Larger public metric rectangles keep the checked accumulation below.
+template <class T, class D>
+std::int64_t SmallSad(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h) {
+  const int n = int(hn::Lanes(d));
+  auto sum = hn::Zero(d);
+  std::int64_t tail = 0;
+  for (int y = 0; y < h; ++y) {
+    int x = 0;
+    for (; x <= w - n; x += n)
+      sum = hn::Add(sum, hn::Abs(hn::Sub(LoadWide(d, a + x, 1), LoadWide(d, b + x, 1))));
+    for (; x < w; ++x)
+      tail += std::abs(int(a[x]) - int(b[x]));
+    if (y + 1 < h) {
+      a += as;
+      b += bs;
+    }
+  }
+  return tail + hn::ReduceSum(d, sum);
+}
+
+#if HWY_TARGET != HWY_SCALAR
+template <class D>
+std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b,
+                          std::ptrdiff_t bs, int w, int h) {
+  const hn::Repartition<std::uint64_t, D> wide;
+  const int n = int(hn::Lanes(d));
+  auto sum = hn::Zero(wide);
+  std::int64_t tail = 0;
+  for (int y = 0; y < h; ++y) {
+    int x = 0;
+    for (; x <= w - n; x += n)
+      sum = hn::Add(sum, hn::SumsOf8AbsDiff(hn::LoadU(d, a + x), hn::LoadU(d, b + x)));
+    for (; x < w; ++x)
+      tail += std::abs(int(a[x]) - int(b[x]));
+    if (y + 1 < h) {
+      a += as;
+      b += bs;
+    }
+  }
+  return tail + static_cast<std::int64_t>(hn::ReduceSum(wide, sum));
+}
+#endif
+
 template <class T, class D>
 std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
   const hn::Rebind<T, D> narrow;
@@ -252,17 +297,25 @@ std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::
         NEO_ROW(2, r20, r21, r22, r23)
         NEO_ROW(3, r30, r31, r32, r33)
 #undef NEO_ROW
+        auto cell_sum = hn::Zero(d);
 #define NEO_COL(I, A0, A1, A2, A3)                                                                                     \
   Hadamard(A0, A1, A2, A3);                                                                                            \
   {                                                                                                                    \
     auto s = hn::Add(hn::Add(hn::Add(hn::Abs(A0), hn::Abs(A1)), hn::Abs(A2)), hn::Abs(A3));                            \
     finite(d, s);                                                                                                      \
-    hn::StoreU(s, d, sums[I]);                                                                                         \
+    if constexpr (std::is_same_v<T, float> || hn::MaxLanes(d) > 128)                                                   \
+      hn::StoreU(s, d, sums[I]);                                                                                       \
+    else                                                                                                              \
+      cell_sum = hn::Add(cell_sum, s);                                                                                \
   }
             NEO_COL(0, r00, r10, r20, r30) NEO_COL(1, r01, r11, r21, r31) NEO_COL(2, r02, r12, r22, r32)
                 NEO_COL(3, r03, r13, r23, r33)
 #undef NEO_COL
-                    for (int i = 0; i < n; ++i) {
+        // Each integer cell contributes at most 128 * 65535 after /2.
+        // Up to 128 cells therefore reduce safely in signed 32-bit lanes.
+        if constexpr (!std::is_same_v<T, float> && hn::MaxLanes(d) <= 128) {
+          append(hn::ReduceSum(d, hn::ShiftRight<1>(cell_sum)));
+        } else for (int i = 0; i < n; ++i) {
           if constexpr (std::is_same_v<T, float>)
             for (int c = 0; c < 4; ++c)
               append(sums[c][i]);
@@ -305,6 +358,35 @@ std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::
 }
 template <class T>
 std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
+  if constexpr (!std::is_same_v<T, float>) {
+    if (!satd && w <= 128 && h <= 128) {
+#if HWY_TARGET != HWY_SCALAR
+      if constexpr (std::is_same_v<T, std::uint8_t>) {
+        if (w >= 64)
+          return SmallByteSad(hn::CappedTag<T, 64>{}, a, as, b, bs, w, h);
+        if (w >= 32)
+          return SmallByteSad(hn::CappedTag<T, 32>{}, a, as, b, bs, w, h);
+        if (w >= 16)
+          return SmallByteSad(hn::CappedTag<T, 16>{}, a, as, b, bs, w, h);
+        if (w >= 8)
+          return SmallByteSad(hn::CappedTag<T, 8>{}, a, as, b, bs, w, h);
+      }
+#endif
+      if (w < 8)
+        return SmallSad(hn::CappedTag<std::int32_t, 4>{}, a, as, b, bs, w, h);
+      if (w < 16)
+        return SmallSad(hn::CappedTag<std::int32_t, 8>{}, a, as, b, bs, w, h);
+      return SmallSad(hn::ScalableTag<std::int32_t>{}, a, as, b, bs, w, h);
+    }
+  }
+  if constexpr (std::is_same_v<T, float>) {
+    // Vectorize sample validation and subtraction for small SAD blocks, while
+    // MetricWithTag still appends float differences in original pixel order.
+    if (!satd && w < 8)
+      return MetricWithTag(hn::CappedTag<float, 4>{}, a, as, b, bs, w, h, false);
+    if (!satd && w < 16)
+      return MetricWithTag(hn::CappedTag<float, 8>{}, a, as, b, bs, w, h, false);
+  }
   // Narrow SATD lanes for small blocks so even one cell uses the vector kernel.
   if (satd) {
     if (w < 8)

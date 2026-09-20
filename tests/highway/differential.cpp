@@ -167,6 +167,30 @@ template <class T> void sampled_motion() {
   }
 }
 
+template <class T> void integer_metric_extremes() {
+  // Exercise bounded SAD accumulation, both fallback dimensions, and SATD
+  // reductions with full-range differences (not only random small blocks).
+  for (int w : {4, 8, 16, 32, 64, 128, 129, 132})
+    for (int h : {4, 128, 129, 512}) {
+      Buffer<T> a(w, h), b(w, h);
+      for (int pattern = 0; pattern < 3; ++pattern) {
+        for (int y = 0; y < h; ++y)
+          for (int x = 0; x < w; ++x) {
+            const auto high = std::numeric_limits<T>::max();
+            a.view().row(y)[x] = pattern == 0 ? T(0) : high;
+            b.view().row(y)[x] = pattern == 0 || (pattern == 2 && (x + y) % 2) ? high : T(0);
+          }
+        for (auto metric : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd}) {
+          if (metric == neo_mv::BlockMetric::satd && (w % 4 || h % 4))
+            continue;
+          check(neo_mv::block_metric(a.read(), b.read(), metric) ==
+                    neo_mv::simd::block_metric(a.read(), b.read(), metric),
+                "full-range integer metric mismatch");
+        }
+      }
+    }
+}
+
 int main() {
   try {
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
@@ -176,6 +200,8 @@ int main() {
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();
+      integer_metric_extremes<std::uint8_t>();
+      integer_metric_extremes<std::uint16_t>();
       boundaries<std::uint8_t>();
       boundaries<std::uint16_t>();
       boundaries<float>();
