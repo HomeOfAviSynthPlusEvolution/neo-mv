@@ -19,7 +19,7 @@ $$G_x(b_x,b_y)=\lfloor c_x/r_x\rfloor,\qquad G_y(b_x,b_y)=\lfloor c_y/r_y\rfloor
 
 The addition vy+f must not overflow before clipping. Use render-plane ratios, regardless of AnalysisChroma. Require Bx,Ox divisible by rx and By,Oy divisible by ry. This creates a grid of signed plane displacements with the same Nx,Ny for every plane. Do not first spatially resample the luma field and then downsample it for chroma.
 
-Invoke [integer grid resampling](../vector-length-mask/kernel-grid-resampling.md) independently on Gx and Gy, using Bx/rx,By/ry,Ox/rx,Oy/ry and visible Wr/rx,Hr/ry. Its result is Vx(x,y),Vy(x,y), rounded only once per component with halfway results toward positive infinity. The same field can serve U and V when their geometry agrees. Writable temporary grids must not mutate input vectors or shared state.
+Invoke [integer grid resampling](../vector-length-mask/kernel-grid-resampling.md) independently on Gx and Gy, using Bx/rx,By/ry,Ox/rx,Oy/ry and visible Wr/rx,Hr/ry. Its result is Vx(x,y),Vy(x,y). Retain its 14-bit coefficient quantization, geometry-selected axis order, and integer rounding after each axis. Do not compute an unrounded two-dimensional displacement and round it only once. The same field can serve U and V when their geometry agrees. Writable temporary grids must not mutate input vectors or shared state.
 
 ## Examples
 
