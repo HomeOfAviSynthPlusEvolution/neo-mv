@@ -133,11 +133,23 @@ void VS_CC create_render(const VSMap* in, VSMap* out, void* user_data, VSCore* c
     api->mapSetError(out, "neo-mv: render creation failed");
   }
 }
+template <MaskKind Kind>
+void VS_CC create_mask(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
+  try {
+    check_prefix(in, api);
+    ds::vapoursynth::create_video_filter_bridge<MaskBridge<Kind>>(in, out, core, api);
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: mask creation failed");
+  }
+}
 } // namespace
 } // namespace neo_mv::ds2
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* api) {
   using namespace neo_mv::ds2;
+  using neo_mv::MaskKind;
   api->configPlugin("org.neofilters.neo_mv", "neomv", "neo-mv", VS_MAKE_VERSION(0, 1), VAPOURSYNTH_API_VERSION, 0,
                     plugin);
   api->registerFunction("Super", super_signature, "clip:vnode;", create<Operation::Super>, nullptr, plugin);
@@ -147,6 +159,11 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("SCDetection", scene_signature, "clip:vnode;", create<Operation::SCDetection>, nullptr, plugin);
   api->registerFunction("Compensate", compensate_signature, "clip:vnode;", create_render<false>, nullptr, plugin);
   api->registerFunction("Degrain", degrain_signature, "clip:vnode;", create_render<true>, nullptr, plugin);
+  api->registerFunction("VectorLengthMask", mask_signature, "clip:vnode;", create_mask<MaskKind::VectorLength>, nullptr,
+                        plugin);
+  api->registerFunction("SADMask", mask_signature, "clip:vnode;", create_mask<MaskKind::SAD>, nullptr, plugin);
+  api->registerFunction("OcclusionMask", mask_signature, "clip:vnode;", create_mask<MaskKind::Occlusion>, nullptr,
+                        plugin);
   for (std::intptr_t radius = 1; radius <= 25; ++radius) {
     const auto name = "Degrain" + std::to_string(radius);
     api->registerFunction(name.c_str(), degrain_signature, "clip:vnode;", create_render<true>,

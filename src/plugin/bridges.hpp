@@ -1,6 +1,7 @@
 #pragma once
 #include "filters/phase1.hpp"
 #include "filters/phase2.hpp"
+#include "filters/mask.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -151,6 +152,27 @@ struct RenderBridge : Bridge<Operation::Super> {
     else
       add("tff", P::Boolean);
     add("prefix", P::String);
+    return d;
+  }
+};
+inline constexpr char mask_signature[] =
+    "vectors:vnode;ml:float:opt;gamma:float:opt;time:float:opt;scval:float:opt;thscd1:int:opt;"
+    "thscd2:float:opt;prefix:data:opt;";
+template <MaskKind Kind>
+struct MaskBridge : Bridge<Operation::Super> {
+  using Core = MaskFilter<Kind>;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = mask_signature;
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    d.params.push_back(parameter("vectors", P::Clip, true));
+    for (auto n : {"ml", "gamma", "time", "scval"})
+      d.params.push_back(parameter(n, P::Float));
+    d.params.push_back(parameter("thscd1", P::Integer));
+    d.params.push_back(parameter("thscd2", P::Float));
+    d.params.push_back(parameter("prefix", P::String));
     return d;
   }
 };
