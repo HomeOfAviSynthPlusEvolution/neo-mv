@@ -1,6 +1,8 @@
 """Host acceptance from approved phase-1 formulas; no legacy MV oracle."""
 import gc
+import importlib.util
 import math
+from pathlib import Path
 import vapoursynth as vs
 
 core = vs.core
@@ -223,5 +225,23 @@ def bad_payload(n, f):
         f.props[P + "NeoMVSuperPlanesV1"] = values(f.props[P + "NeoMVSuperPlanesV1"])[0]
 fails(lambda: mv.Analyse(edit(s, bad_payload)).get_frame(1), "count mismatch")
 
-print("neo-mv VS acceptance passed: five entry points, ownership, motion, parameters, errors")
+# Share only deterministic public fixtures with the black-box suite. This path
+# uses neo-mv alone and checks literal expected results from the approved spec.
+fixture_spec = importlib.util.spec_from_file_location(
+    "search_fixtures", Path(__file__).resolve().parents[1] / "blackbox" / "cases.py")
+fixtures = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(fixtures)
+for spec in fixtures.SEARCH0_CASES:
+    _, nodes = fixtures.build(vs, core, mv, spec)
+    expected = spec["expected_block"]
+    with nodes[0].get_frame(expected["frame"]) as frame:
+        vectors, errors = analysis(frame)
+        packed = vectors[expected["index"]]
+        x, y = packed & 0xffffffff, (packed >> 32) & 0xffffffff
+        x = x - (1 << 32) if x >= 1 << 31 else x
+        y = y - (1 << 32) if y >= 1 << 31 else y
+        actual = [x, y, errors[expected["index"]]]
+        assert actual == expected["result"], (spec["id"], actual, expected["result"])
+
+print("neo-mv VS acceptance passed: five entry points, ownership, motion, parameters, errors, search=0 fixtures")
 blank(length=1).set_output()

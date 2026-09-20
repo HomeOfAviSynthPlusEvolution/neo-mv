@@ -43,6 +43,53 @@ CASES = [
     case("scene.chain", "scene_chain"),
     case("scene.public", "scene_public", params=dict(thscd1=0, thscd2=50.0)),
 ]
+
+
+def search0_translation(operation, distance):
+    params = dict(search=0, mvlambda=0, pnew=0, chroma=False)
+    if operation == "analyse":
+        params.update(delta=1, pelsearch=distance)
+    else:
+        params.update(thsad=0, smooth=False, searchparam=distance, fields=False, satd=False)
+    spec = case(f"{operation}.translation.search0.range{distance}", operation,
+                pattern="translation", params=params)
+    spec["public_field"] = dict(delta=1, seed=[0, 0])
+    spec["expected_block"] = dict(frame=2, index=0,
+                                  result=[8, 8, 64] if distance == 4 else [-1, 0, 294])
+    return spec
+
+
+# Approved search=0 image examples also serve as oracle-free host assertions.
+SEARCH0_CASES = [search0_translation(op, distance)
+                 for op in ["analyse", "recalculate_public"] for distance in range(1, 5)]
+
+
+def search0_image(name, size, pad, seed, block, expected, *, patch=None, row=None):
+    spec = case(f"recalculate.search0.{name}", "recalculate_public", pattern="search0_image",
+                params=dict(thsad=0, smooth=False, search=0, searchparam=1, mvlambda=0,
+                            pnew=0, chroma=False, meander=False, fields=False, satd=False),
+                super_params=dict(blksize=[4], pad=[pad]))
+    spec.update(width=size, height=size, length=2, requests=[[0, n] for n in [0, 1, 0]],
+                public_field=dict(delta=1, seed=seed), reference_patch=patch, reference_row=row,
+                expected_block=dict(frame=0, index=block, result=expected))
+    return spec
+
+
+SEARCH0_CASES += [
+    search0_image("axial_diagonal", 16, 16, [4, 4], 0, [4, 3, 189], patch=[
+        [11, 5, 15, 20, 5, 15], [8, 5, 7, 20, 11, 20], [9, 11, 16, 19, 3, 9],
+        [19, 19, 19, 11, 3, 0], [18, 15, 11, 19, 17, 20], [2, 11, 8, 9, 7, 13]]),
+    search0_image("diagonal_tie", 16, 16, [4, 4], 0, [5, 5, 30], patch=[
+        [0, 10, 0, 0, 10, 0], [10, 10, 0, 0, 10, 10], [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0], [10, 10, 0, 0, 10, 10], [0, 10, 0, 0, 10, 0]]),
+    search0_image("axial_tie", 16, 16, [4, 4], 0, [5, 4, 40],
+                  row=[100, 100, 100, 0, 10, 0, 0, 10, 0, 100, 100, 100, 100, 100, 100, 100]),
+    search0_image("upper_bound", 8, 1, [0, 0], 3, [0, 0, 40],
+                  row=[100, 100, 100, 100, 10, 0, 0, 0]),
+    search0_image("lower_bound", 8, 1, [0, 0], 0, [-1, 0, 80],
+                  row=[0, 10, 10, 10, 100, 100, 100, 100]),
+]
+CASES += SEARCH0_CASES
 BY_ID = {item["id"]: item for item in CASES}
 
 
@@ -61,6 +108,13 @@ def build(vs, core, plugin, spec):
                 for x in range(data.shape[1]):
                     if spec["pattern"] == "translation":
                         value = ((x + n) * 17 + y * 29) % 192 + 16
+                    elif spec["pattern"] == "search0_image":
+                        value = 0
+                        if n == 1:
+                            patch, row = spec["reference_patch"], spec["reference_row"]
+                            value = row[x] if row is not None else 100
+                            if patch is not None and 3 <= x <= 8 and 3 <= y <= 8:
+                                value = patch[y - 3][x - 3]
                     else:
                         value = 32 + plane * 16
                     if result.format.sample_type == vs.FLOAT:
@@ -79,20 +133,31 @@ def build(vs, core, plugin, spec):
 
     def public_field():
         # Public, typed Analysis fixture; deliberately contains no Super payload.
-        metadata = dict(Width=32, Height=24, RealWidth=32, RealHeight=24,
-                        HPad=16, VPad=16, Pel=1, Levels=1, Chroma=0,
-                        XRatioUV=1, YRatioUV=1, BlkSizeX=8, BlkSizeY=8,
-                        OverlapX=0, OverlapY=0, NBlkX=4, NBlkY=3,
-                        DeltaFrame=-1, BitsPerSample=8)
+        # These fixtures use GRAY8, square blocks, zero overlap and one level.
+        assert spec["format"] == "GRAY8" and spec["super_params"]["overlap"] == [0]
+        block = spec["super_params"]["blksize"][0]
+        pad = spec["super_params"]["pad"][0]
+        width, height = spec["width"], spec["height"]
+        field = spec.get("public_field")
+        metadata = dict(Width=width, Height=height, RealWidth=width, RealHeight=height,
+                        HPad=pad, VPad=pad, Pel=spec["super_params"]["pel"], Levels=1, Chroma=0,
+                        XRatioUV=1, YRatioUV=1, BlkSizeX=block, BlkSizeY=block,
+                        OverlapX=0, OverlapY=0, NBlkX=width // block, NBlkY=height // block,
+                        DeltaFrame=field["delta"] if field else -1, BitsPerSample=8)
+        count = metadata["NBlkX"] * metadata["NBlkY"]
+        dx, dy = field["seed"] if field else [0, 0]
+        packed = (dx & 0xffffffff) | ((dy & 0xffffffff) << 32)
+        if packed >= 1 << 63:
+            packed -= 1 << 64
 
         def fill(n, f):
             result = f.copy()
             for key, value in metadata.items():
                 result.props[prefix + "Analysis" + key] = value
-            if n != 0:
-                result.props[prefix + "AnalysisVectors"] = [0] * 12
+            if field or n != 0:
+                result.props[prefix + "AnalysisVectors"] = [packed] * count
                 # Recalculate must measure new errors, not reuse these values.
-                result.props[prefix + "AnalysisSAD"] = [999 if n % 2 else 0] * 12
+                result.props[prefix + "AnalysisSAD"] = [0 if field else (999 if n % 2 else 0)] * count
             return result
 
         return core.std.ModifyFrame(src, src, fill)

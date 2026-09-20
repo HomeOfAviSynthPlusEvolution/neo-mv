@@ -128,16 +128,46 @@ SearchResult refine_motion(SearchResult initial, const SearchParams& p, Evaluato
   const MotionVector origin = initial.vector;
   switch (p.type) {
     case 0: {
-      constexpr MotionVector n[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
-      for (std::int64_t d = p.range; d > 0; d /= 2)
+      // Index 0 is the unrestricted hint; 1..4 are axial and 5..8 diagonal.
+      constexpr MotionVector directions[] = {
+          {0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
+      constexpr int fallback[][4] = {{5, 6, 7, 8}, {5, 7, 0, 0}, {6, 8, 0, 0},
+                                     {5, 6, 0, 0}, {7, 8, 0, 0}, {5, 6, 7, 0},
+                                     {5, 6, 8, 0}, {5, 8, 7, 0}, {8, 6, 7, 0}};
+      for (std::int64_t d = p.range; d > 0; d /= 2) {
+        int hint = 0;
         for (;;) {
           const auto center = best.vector;
-          bool improved = false;
-          for (auto v : n)
-            improved = offset(center, d * v.x, d * v.y) || improved;
-          if (!improved)
+          int winner = 0;
+          for (int i = 1; i <= 4; ++i) {
+            const auto e = directions[i], h = directions[hint];
+            if ((hint == 0 || e.x * h.x + e.y * h.y > 0) && offset(center, d * e.x, d * e.y))
+              winner = i;
+          }
+          if (winner != 0) {
+            // Both perpendicular choices use the selected axial position.
+            const auto axial = best.vector;
+            const int first = winner <= 2 ? 3 : 1;
+            hint = winner;
+            for (int i = first; i < first + 2; ++i) {
+              const auto e = directions[i];
+              if (offset(axial, d * e.x, d * e.y))
+                hint = i; // Carry only the perpendicular direction forward.
+            }
+            continue;
+          }
+          for (const int i : fallback[hint]) {
+            if (i == 0)
+              break;
+            const auto e = directions[i];
+            if (offset(center, d * e.x, d * e.y))
+              winner = i;
+          }
+          if (winner == 0)
             break;
+          hint = winner;
         }
+      }
       break;
     }
     case 1:

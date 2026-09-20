@@ -98,22 +98,90 @@ void ordered_lists() {
   CHECK(std::equal(first.begin(), first.end(), cross.visits.begin()));
 }
 
+void directional_search() {
+  const SearchResult initial{{0, 0}, 9, 9};
+  const auto p = params(0, 1);
+  const auto example = [&](std::map<Point, std::int64_t> values, int x, int y, std::int64_t error) {
+    Errors field{std::move(values), {}};
+    result(refine_motion(initial, p, field), x, y, error, error);
+  };
+  example({{{1, 0}, 4}, {{-1, 1}, 2}}, 1, 0, 4);
+  example({{{1, 0}, 7}, {{-1, 0}, 3}}, -1, 0, 3); // fixed axial centre
+  example({{{1, 0}, 4}, {{1, 1}, 2}, {{2, 1}, 1}}, 1, 1, 2);
+  example({{{1, 0}, 4}, {{-1, 0}, 4}, {{0, 1}, 4}, {{0, -1}, 4}}, 1, 0, 4);
+  example({{{1, 0}, 5}, {{1, 1}, 3}, {{1, -1}, 3}}, 1, 1, 3);
+  example({{{0, 1}, 5}, {{1, 1}, 3}, {{-1, 1}, 3}}, 1, 1, 3);
+  example({{{1, 1}, 4}, {{-1, 1}, 4}}, 1, 1, 4);
+  example({{{1, -1}, 7}, {{2, 0}, 3}, {{0, -2}, 3}, {{2, -2}, 3}}, 2, 0, 3);
+  example({}, 0, 0, 9);
+
+  // Both perpendicular candidates stay centred on the axial winner.
+  example({{{1, 0}, 7}, {{1, 1}, 5}, {{1, -1}, 3}}, 1, -1, 3);
+  // A successful axis can continue beyond the initial step's displacement.
+  example({{{1, 0}, 7}, {{2, 0}, 5}, {{3, 0}, 3}}, 3, 0, 3);
+
+  // Every diagonal hint's fallback priority, including the asymmetric rows.
+  struct DiagonalCase { Point seed; Point candidates[3]; };
+  const DiagonalCase diagonals[] = {
+      {{1, 1}, {{2, 2}, {0, 2}, {2, 0}}},
+      {{-1, 1}, {{0, 2}, {-2, 2}, {-2, 0}}},
+      {{1, -1}, {{2, 0}, {0, -2}, {2, -2}}},
+      {{-1, -1}, {{-2, -2}, {-2, 0}, {0, -2}}}};
+  for (const auto& item : diagonals)
+    for (int first = 0; first < 3; ++first) {
+      Errors field{{{item.seed, 7}}, {}};
+      for (int i = first; i < 3; ++i)
+        field.values[item.candidates[i]] = 3;
+      const auto expected = item.candidates[first];
+      result(refine_motion(initial, p, field), expected.first, expected.second, 3, 3);
+    }
+  // A diagonal hint admits each of its two forward axial components.
+  for (const auto& item : diagonals) {
+    const auto [x, y] = item.seed;
+    example({{item.seed, 7}, {{2 * x, y}, 3}}, 2 * x, y, 3);
+    example({{item.seed, 7}, {{x, 2 * y}, 3}}, x, 2 * y, 3);
+  }
+
+  Errors reset{{{{2, 0}, 7}, {{1, 0}, 3}}, {}};
+  result(refine_motion(initial, params(0, 2), reset), 1, 0, 3, 3);
+  Errors odd_step{{{{3, 0}, 7}, {{2, 0}, 3}}, {}};
+  result(refine_motion(initial, params(0, 3), odd_step), 2, 0, 3, 3);
+
+  auto bounded = p;
+  bounded.domain = {-1, -1, 1, 2};
+  Errors edge{{{{1, 0}, 0}, {{-1, 0}, 4}}, {}};
+  result(refine_motion(initial, bounded, edge), -1, 0, 4, 4);
+  bounded.domain = {0, 0, 3, 3};
+  Errors outside{{{{0, 0}, 4}, {{0, 1}, 3}}, {}};
+  result(refine_motion({{-1, 0}, 5, 8}, bounded, outside), 0, 1, 3, 3);
+  Errors flat;
+  result(refine_motion({{-1, 0}, 5, 8}, bounded, flat), -1, 0, 5, 8);
+  for (const auto v : flat.visits)
+    CHECK(v.first >= 0 && v.first < 3 && v.second >= 0 && v.second < 3);
+
+  auto weighted = p;
+  weighted.predictor = {0, 0};
+  weighted.lambda = 256;
+  weighted.penalty = 256;
+  Errors raw{{{{1, 0}, 2}, {{2, 0}, 1}}, {}};
+  result(refine_motion(initial, weighted, raw), 1, 0, 5, 2);
+  // Coordinate arithmetic must remain wide before rejecting candidates.
+  bounded.domain = {INT32_MIN, INT32_MIN, std::int64_t(INT32_MAX) + 1, std::int64_t(INT32_MAX) + 1};
+  bounded.range = INT32_MAX;
+  result(refine_motion({{INT32_MAX, INT32_MIN}, 5, 8}, bounded, flat), INT32_MAX, INT32_MIN, 5, 8);
+}
+
 void recurrence_and_domains() {
   Errors hex{{{{2, 0}, 8}, {{4, 0}, 7}, {{6, 0}, 6}, {{6, 1}, 5}}, {}};
   result(refine_motion({{0, 0}, 9, 9}, params(2, 6), hex), 6, 1, 5, 5);
   CHECK(hex.visits.size() == 20); // six initial, two triples, eight final
   CHECK(hex.visits[6] == Point(3, 2) && hex.visits[7] == Point(4, 0) && hex.visits[8] == Point(3, -2));
   CHECK(hex.visits[9] == Point(5, 2) && hex.visits[10] == Point(6, 0) && hex.visits[11] == Point(5, -2));
-  std::vector<Point> log_visits;
-  auto parabola = [&](MotionVector v) {
-    log_visits.push_back(point(v));
+  auto parabola = [](MotionVector v) {
     const std::int64_t e = (v.x - 2) * (v.x - 2) + (v.y - 2) * (v.y - 2);
     return BlockError{e, 0, e};
   };
   result(refine_motion({{0, 0}, 8, 8}, params(0, 1), parabola), 2, 2, 0, 0);
-  CHECK(log_visits.size() == 24);
-  CHECK(log_visits[0] == Point(1, 0) && log_visits[1] == Point(-1, 0));
-  CHECK(log_visits[8] == Point(2, 1) && log_visits[16] == Point(3, 2));
 
   auto restricted = params(1, 1);
   restricted.domain = {0, 0, 2, 2};
@@ -158,6 +226,7 @@ int main() {
   try {
     specification_examples();
     ordered_lists();
+    directional_search();
     recurrence_and_domains();
     exact_costs_and_errors();
     std::cout << "Scalar motion refinement checks passed\n";
