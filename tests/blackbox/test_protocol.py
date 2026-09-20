@@ -1,12 +1,15 @@
 """Test the oracle transport without loading any video plugin."""
 import copy
+from enum import Enum, IntEnum
 import hashlib
 import unittest
+from types import SimpleNamespace
 
 from cases import CASES
 from protocol import SCHEMA, compare, digest_json, validate_result
-from worker import configure_kernel
+from worker import configure_kernel, property_value, snapshot
 from render_cases import CASES as RENDER_CASES
+from mask_cases import CASES as MASK_CASES
 
 
 class ProtocolTests(unittest.TestCase):
@@ -89,6 +92,23 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_result(result, self.spec, "mvu")
 
+    def test_native_integer_enum_binding_preserves_exact_values(self):
+        class Range(IntEnum):
+            LIMITED = 0
+            FULL = 1
+            LARGE = 2**60 + 1
+        class Other(Enum):
+            NUMBER = 1
+        self.assertEqual(property_value(Range.FULL), dict(type="int", count=1, values=[1]))
+        self.assertEqual(property_value([Range.LIMITED, 1, Range.LARGE]),
+                         dict(type="int", count=3, values=[0, 1, 2**60 + 1]))
+        for item in property_value([Range.LIMITED, Range.FULL])["values"]:
+            self.assertIs(type(item), int)
+        for value in [True, Other.NUMBER, [Range.FULL, 1.0], [Range.FULL, b"1"]]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                property_value(value)
+        self.assertEqual(property_value(1.0)["type"], "float64")
+
     def render_result(self):
         spec = RENDER_CASES[0]
         result = copy.deepcopy(self.result)
@@ -146,6 +166,75 @@ class ProtocolTests(unittest.TestCase):
             validate_result(result, self.spec, "mvu")
         self.assertEqual(compare(reference, candidate)[0], "difference")
         self.assertEqual(compare(reference, reference), ("pass", None))
+
+    def test_snapshot_does_not_invent_deprecated_property_aliases(self):
+        class AliasedProperties(dict):
+            def __contains__(self, key):
+                return key == "_ColorRange" or super().__contains__(key)
+
+            def __getitem__(self, key):
+                return super().__getitem__("_Range" if key == "_ColorRange" else key)
+
+        frame = SimpleNamespace(format=SimpleNamespace(num_planes=0), props=AliasedProperties(_Range=1))
+        self.assertIn("_ColorRange", frame.props)
+        self.assertEqual(snapshot(frame, ["_Range", "_ColorRange"])["properties"],
+                         {"_Range": dict(type="int", count=1, values=[1])})
+
+    def mask_result(self):
+        spec = MASK_CASES[0]
+        result = copy.deepcopy(self.result)
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec),
+                      input_video=dict(width=4, height=4, bits=16),
+                      outputs=[dict(width=8, height=8, bits=8)])
+        result["inputs"] = result["inputs"][:spec["length"]]
+        sample = {key: copy.deepcopy(value) for key, value in result["records"][0].items()
+                  if key not in ("member", "frame", "request")}
+        sample.update(properties={"_Range": dict(type="int", count=1, values=[1])},
+                      property_names=["_Range"])
+        result["records"] = [dict(request=i, member=m, frame=n, **copy.deepcopy(sample))
+                              for i, (m, n) in enumerate(spec["requests"])]
+        return spec, result
+
+    def test_mask_output_format_is_independent_of_carrier(self):
+        spec, result = self.mask_result()
+        validate_result(result, spec, "mvu")
+        self.assertEqual(compare(result, result), ("pass", None))
+        changed = copy.deepcopy(result)
+        changed["outputs"][0]["bits"] = 16
+        self.assertEqual(compare(result, changed)[0], "difference")
+        self.assertEqual(compare(result, changed)[1]["path"], "/outputs/0/bits")
+        changed = copy.deepcopy(result)
+        del changed["input_video"]
+        with self.assertRaises(ValueError):
+            validate_result(changed, spec, "mvu")
+
+    def test_mask_property_inventory_observes_unknown_keys_without_payloads(self):
+        spec, result = self.mask_result()
+        for names in [None, [], ["_Range", "_Range"], [42]]:
+            changed = copy.deepcopy(result)
+            changed["records"][0]["property_names"] = names
+            with self.assertRaises(ValueError):
+                validate_result(changed, spec, "mvu")
+        changed = copy.deepcopy(result)
+        changed["records"][0]["property_names"] = ["UnexpectedOpaqueProperty", "_Range"]
+        validate_result(changed, spec, "mvu")
+        self.assertEqual(compare(result, changed)[0], "difference")
+        self.assertIn("/property_names", compare(result, changed)[1]["path"])
+        self.assertNotIn("UnexpectedOpaqueProperty", changed["records"][0]["properties"])
+        for key in ["_Range", "TestMarker", spec["prefix"] + "AnalysisVectors"]:
+            changed = copy.deepcopy(result)
+            changed["records"][0]["property_names"] = sorted({"_Range", key})
+            changed["records"][0]["properties"].pop(key, None)
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                validate_result(changed, spec, "mvu")
+
+    def test_mask_creation_errors_are_observed_and_remain_red(self):
+        spec, result = self.mask_result()
+        failed = copy.deepcopy(result)
+        failed.update(outputs=[], records=[], creation_error=dict(type="Error", message="mask creation detail"))
+        validate_result(failed, spec, "mvu")
+        self.assertEqual(compare(failed, result)[0], "difference")
+        self.assertEqual(compare(failed, failed)[0], "difference")
 
 
 if __name__ == "__main__":

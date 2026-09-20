@@ -4,6 +4,7 @@ Each fresh process selects its backend before loading neo-mv, then queries the
 loaded plugin's actual dispatch target. SIMD requests must not pass as scalar.
 """
 import argparse
+from enum import IntEnum
 import hashlib
 import importlib.metadata
 import json
@@ -14,10 +15,11 @@ import struct
 import sys
 import traceback
 
-from cases import ANALYSIS_KEYS, SUPER_KEYS, build
+from cases import build
 from catalog import BY_ID
 import render_cases
-from protocol import SCHEMA, digest_file, digest_json
+import mask_cases
+from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys
 
 
 def configure_kernel(backend, requested, plugin=None):
@@ -54,11 +56,14 @@ def property_value(value):
     items = list(value) if isinstance(value, (list, tuple)) else [value]
     if not items:
         raise ValueError("empty observed property requires a native type-aware reader")
+    # VS exposes some native integer properties as IntEnum members. Retain the
+    # exact integer payload and native property type, without coercing floats,
+    # booleans, data strings or arbitrary int-convertible objects.
+    if all(type(item) is int or isinstance(item, IntEnum) for item in items):
+        return dict(type="int", count=len(items), values=[int(item) for item in items])
     kind = type(items[0])
     if any(type(item) is not kind for item in items):
         raise ValueError("mixed property types")
-    if kind is int:
-        return dict(type="int", count=len(items), values=items)
     if kind is float:
         return dict(type="float64", count=len(items), values=[struct.pack(">d", item).hex() for item in items])
     if kind is bytes:
@@ -76,7 +81,10 @@ def snapshot(frame, keys):
                            sample_bytes=frame.format.bytes_per_sample,
                            sha256=hashlib.sha256(data).hexdigest(), data=data.hex()))
     # Absence is a missing key, never normalized to zero or an empty array.
-    props = {key: property_value(frame.props[key]) for key in keys if key in frame.props}
+    # Test actual names, not mapping membership: newer VS Python bindings expose
+    # deprecated aliases (e.g. _ColorRange) for keys absent from the native map.
+    names = set(frame.props)
+    props = {key: property_value(frame.props[key]) for key in keys if key in names}
     return dict(planes=planes, properties=props)
 
 
@@ -125,13 +133,12 @@ def main():
             vs_package=package_vs, mvu_package=package_mvu, core=str(core),
             plugin_path=str(loaded), plugin_sha256=loaded_hash,
             plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
-        ordinary = ["TestMarker", "TestData", "TestFloat", "_Field", "_SceneChangePrev", "_SceneChangeNext",
-                    "_DurationNum", "_DurationDen"]
-        keys = ordinary + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
+        keys = observation_keys(spec)
         prepared = None
-        if spec.get("phase") == 2:
+        fixture = {2: render_cases, 3: mask_cases}.get(spec.get("phase"))
+        if fixture is not None:
             result["stage"] = "input"
-            prepared = render_cases.prepare(vs, core, spec)
+            prepared = fixture.prepare(vs, core, spec)
             result["inputs"] = []
             result["auxiliary_inputs"] = []
             for name, node in prepared.items():
@@ -150,7 +157,7 @@ def main():
                 source, outputs = build(vs, core, plugin, spec)
             else:
                 source = prepared["clip"]
-                outputs = render_cases.build(plugin, spec, prepared)
+                outputs = fixture.build(plugin, spec, prepared)
         except vs.Error as error:
             if prepared is None:
                 raise
@@ -166,7 +173,7 @@ def main():
             result["inputs"] = []
             for n in range(spec["length"]):
                 with source.get_frame(n) as frame:
-                    result["inputs"].append(dict(frame=n, **snapshot(frame, ordinary)))
+                    result["inputs"].append(dict(frame=n, **snapshot(frame, ORDINARY_KEYS)))
         result["stage"] = "frame"
         result["records"] = []
         for ordinal, (member, n) in enumerate(spec["requests"]):
@@ -178,7 +185,12 @@ def main():
                     error=dict(type=type(error).__name__, message=str(error))))
             else:
                 with acquired as frame:
-                    result["records"].append(dict(**result["active_request"], **snapshot(frame, keys)))
+                    observation = dict(**result["active_request"], **snapshot(frame, keys))
+                    if spec.get("phase") == 3:
+                        # Observe unexpected property presence without decoding
+                        # or exporting unknown/private property payloads.
+                        observation["property_names"] = sorted(frame.props)
+                    result["records"].append(observation)
         result.pop("active_request", None)
         result["status"] = "ok"
         result["stage"] = "complete"
