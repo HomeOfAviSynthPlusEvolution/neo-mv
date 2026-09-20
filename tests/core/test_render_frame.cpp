@@ -1,8 +1,22 @@
 #include "core/render/frame.hpp"
+#if NEO_MV_TEST_HIGHWAY
+#include "highway/render_ops.hpp"
+#endif
 #include <iostream>
 
 namespace {
 using namespace neo_mv;
+template <class T>
+using TestKernels =
+#if NEO_MV_TEST_HIGHWAY
+    HighwayRenderKernels<T>;
+#else
+    ScalarRenderKernels<T>;
+#endif
+template <class T>
+using TestCompensate = CompensateFramePlan<T, TestKernels<T>>;
+template <class T>
+using TestDegrain = DegrainFramePlan<T, TestKernels<T>>;
 void check(bool condition, int line) {
   if (!condition)
     throw std::runtime_error("render frame assertion at " + std::to_string(line));
@@ -77,7 +91,7 @@ void compensation(int bits) {
   p.thsad = 100;
   auto eight = m;
   eight.bits = 8; // Analysis precision does not follow render depth.
-  CompensateFramePlan<T> plan(video, super, 3, eight, 3, p);
+  TestCompensate<T> plan(video, super, 3, eight, 3, p);
   auto r = ref.view();
   constant(plan.render(0, field(eight, 99), clip.pixels(), current.view(), &r), 0, T(80));
   constant(plan.render(0, field(eight, 100), clip.pixels(), current.view(), &r), 0, T(10));
@@ -101,7 +115,7 @@ void compensation(int bits) {
   rejects([&] { plan.render(2, corrupt, clip.pixels(), current.view(), nullptr); });
   m.delta = 0;
   m.bits = 8;
-  CompensateFramePlan<T> same(video, super, 3, m, 3);
+  TestCompensate<T> same(video, super, 3, m, 3);
   CHECK(same.reference(field(m), 2) == 2);
   auto c = current.view();
   constant(same.render(2, field(m), clip.pixels(), c, &c), 0, T(10));
@@ -112,17 +126,17 @@ void admission_and_fields() {
   SuperPlan<std::uint8_t> bad(geometry, 8);
   RenderVideo video{16, 16, 8, true, 2, 2, 3};
   auto m = super_analysis_metadata(bad, 1, false);
-  rejects([&] { CompensateFramePlan<std::uint8_t>(video, bad, 3, m, 3); });
+  rejects([&] { TestCompensate<std::uint8_t>(video, bad, 3, m, 3); });
   CompensateParameters zero;
   zero.time = 0;
-  CompensateFramePlan<std::uint8_t>(video, bad, 3, m, 3, zero);
+  TestCompensate<std::uint8_t>(video, bad, 3, m, 3, zero);
   geometry.pad_x = geometry.pad_y = 4;
   SuperPlan<std::uint8_t> super(geometry, 8);
   m = super_analysis_metadata(super, 1, false);
   CompensateParameters p;
   p.fields = true;
   p.thsad = 0;
-  CompensateFramePlan<std::uint8_t> plan(video, super, 3, m, 3, p);
+  TestCompensate<std::uint8_t> plan(video, super, 3, m, 3, p);
   Image<std::uint8_t> clip(super, 5), current(super, 10), ref(super, 80);
   auto r = ref.view();
   auto f = field(m);
@@ -140,7 +154,7 @@ void admission_and_fields() {
   SuperPlan<float> fs(geometry, 32);
   auto fm = super_analysis_metadata(fs, 1, false);
   fm.bits = 8;
-  CompensateFramePlan<float> fp({16, 16, 32, true, 2, 2, 3}, fs, 3, fm, 3, p);
+  TestCompensate<float> fp({16, 16, 32, true, 2, 2, 3}, fs, 3, fm, 3, p);
   Image<float> fc(fs, 5), cur(fs, std::numeric_limits<float>::quiet_NaN()), fr(fs, 80);
   auto ff = field(fm);
   ff.grid.values[1].vector.y = -8; // Second block must fail before first-block NaN sampling.
@@ -158,7 +172,7 @@ void degrain() {
   RenderVideo video{8, 8, 8, false, 1, 1, 3};
   auto a = super_analysis_metadata(super, -1), b = super_analysis_metadata(super, 1);
   Image<std::uint8_t> clip(super, 5), centre(super, 100), past(super, 80), future(super, 140);
-  DegrainFramePlan<std::uint8_t> plan(video, super, 3, {a, b}, {3, 3});
+  TestDegrain<std::uint8_t> plan(video, super, 3, {a, b}, {3, 3});
   std::vector<AnalysisField> fields{field(a), field(b)};
   constant(plan.render(1, fields, clip.pixels(), centre.view(), {past.view(), future.view()}), 0, std::uint8_t(107));
   constant(plan.render(2, fields, clip.pixels(), centre.view(), {past.view(), {}}), 0, std::uint8_t(90));
@@ -170,18 +184,18 @@ void degrain() {
   constant(plan.render(1, absent, clip.pixels(), centre.view(), {{}, {}}), 0, std::uint8_t(100));
   DegrainParameters limited;
   limited.limit = {2.2, 2.2};
-  DegrainFramePlan<std::uint8_t> limiter(video, super, 3, {a, b}, {3, 3}, limited);
+  TestDegrain<std::uint8_t> limiter(video, super, 3, {a, b}, {3, 3}, limited);
   constant(limiter.render(1, fields, clip.pixels(), centre.view(), {past.view(), future.view()}), 0, std::uint8_t(102));
   DegrainParameters none;
   none.planes = {false, false, false};
   none.weights = {0, 0, 0};
-  DegrainFramePlan<std::uint8_t> disabled(video, super, 3, {a, b}, {3, 3}, none);
+  TestDegrain<std::uint8_t> disabled(video, super, 3, {a, b}, {3, 3}, none);
   constant(disabled.render(1, fields, clip.pixels(), centre.view(), {past.view(), future.view()}), 0, std::uint8_t(5));
   rejects([&] { disabled.render(1, fields, clip.pixels(), centre.view(), {{}, {}}); });
   auto corrupt = fields;
   corrupt[1].grid.values[0].error = -1;
   rejects([&] { disabled.references(corrupt, 2); });
-  rejects([&] { DegrainFramePlan<std::uint8_t>(video, super, 3, {a, b}, {3, 2}); });
+  rejects([&] { TestDegrain<std::uint8_t>(video, super, 3, {a, b}, {3, 2}); });
   // Cropped overlapping grid, centre-only output still uses the composition path.
   SuperPlan<std::uint8_t> wide({18, 16, 8, 8, 0, 0, 4, 4}, 8);
   a = super_analysis_metadata(wide, -1);
@@ -191,7 +205,7 @@ void degrain() {
   b = a;
   b.delta = 1;
   Image<std::uint8_t> wc(wide, 100), wp(wide, 5);
-  DegrainFramePlan<std::uint8_t> overlap({18, 16, 8, false, 1, 1, 3}, wide, 3, {a, b}, {3, 3});
+  TestDegrain<std::uint8_t> overlap({18, 16, 8, false, 1, 1, 3}, wide, 3, {a, b}, {3, 3});
   auto fa = field(a), fb = field(b);
   fa.state = fb.state = FieldState::metadata_only;
   constant(overlap.render(1, {fa, fb}, wp.pixels(), wc.view(), {{}, {}}), 0, std::uint8_t(100));
@@ -206,13 +220,13 @@ void chroma_and_precision(int bits) {
   Image<T> clip(super, T(5)), centre(super, T(100)), past(super, T(80)), future(super, T(140));
   DegrainParameters p;
   p.planes = {false, true, false};
-  DegrainFramePlan<T> plan(video, super, 3, {a, b}, {3, 3}, p);
+  TestDegrain<T> plan(video, super, 3, {a, b}, {3, 3}, p);
   auto result = plan.render(1, {field(a), field(b)}, clip.pixels(), centre.view(), {past.view(), future.view()});
   constant(result, 0, T(5));
   constant(result, 1, std::is_same_v<T, float> ? T(106.640625) : T(107));
   constant(result, 2, T(5));
   p.limit[1] = 2.2;
-  DegrainFramePlan<T> limited(video, super, 3, {a, b}, {3, 3}, p);
+  TestDegrain<T> limited(video, super, 3, {a, b}, {3, 3}, p);
   auto capped = limited.render(1, {field(a), field(b)}, clip.pixels(), centre.view(), {past.view(), future.view()});
   constant(capped, 0, T(5));
   constant(capped, 1, std::is_same_v<T, float> ? T(102.2f) : T(102));
@@ -226,7 +240,7 @@ void chroma_and_precision(int bits) {
   auto vectors = field(b);
   for (auto& v : vectors.grid.values)
     v.vector.x = -1;
-  CompensateFramePlan<T> compensated(video, super, 3, b, 3);
+  TestCompensate<T> compensated(video, super, 3, b, 3);
   auto r = future.view();
   auto shifted = compensated.render(0, vectors, clip.pixels(), centre.view(), &r);
   for (int k = 0; k < 3; ++k)

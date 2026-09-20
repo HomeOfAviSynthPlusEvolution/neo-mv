@@ -3,6 +3,9 @@
 #include "filters/super_payload.hpp"
 #include "core/render/frame.hpp"
 #include "kernels/selection.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/render_ops.hpp"
+#endif
 #include <dualsynth/staged_video.hpp>
 
 namespace neo_mv::ds2 {
@@ -72,9 +75,9 @@ struct RenderRuntime {
   virtual void process(ds::VideoProcessContext&, const RenderRequest&) const = 0;
 };
 
-template <class T, bool Degrain>
+template <class T, bool Degrain, class Kernels>
 class TypedRenderRuntime final : public RenderRuntime {
-  using Plan = std::conditional_t<Degrain, DegrainFramePlan<T>, CompensateFramePlan<T>>;
+  using Plan = std::conditional_t<Degrain, DegrainFramePlan<T, Kernels>, CompensateFramePlan<T, Kernels>>;
   ds::VideoInputInfo clip_, super_;
   std::string prefix_;
   CompensateParameters compensation_;
@@ -189,7 +192,11 @@ struct RenderFilter {
   static std::shared_ptr<const RenderRuntime> make(ds::VideoInitContext& ctx) {
     const auto first = frame(*ctx.frames, 1, 0);
     FrameSuper<T> super(first.frame, ctx.inputs[1], Params{*ctx.params}.prefix());
-    return std::make_shared<TypedRenderRuntime<T, Degrain>>(ctx, super);
+#if NEO_MV_ENABLE_HIGHWAY
+    if (selected_backend() == KernelBackend::highway)
+      return std::make_shared<TypedRenderRuntime<T, Degrain, HighwayRenderKernels<T>>>(ctx, super);
+#endif
+    return std::make_shared<TypedRenderRuntime<T, Degrain, ScalarRenderKernels<T>>>(ctx, super);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,

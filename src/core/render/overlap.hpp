@@ -72,6 +72,13 @@ public:
   }
   const BlockCompositionGeometry& geometry() const { return geometry_; }
   bool has_overlap() const { return geometry_.overlap_x != 0 || geometry_.overlap_y != 0; }
+  // The immutable row stays valid while this plan remains alive and unmodified.
+  const std::uint16_t* coefficient_row(int bx, int by, int y) const {
+    const auto& g = geometry_;
+    if (!has_overlap() || bx < 0 || bx >= g.blocks_x || by < 0 || by >= g.blocks_y || y < 0 || y >= g.block_height)
+      throw std::invalid_argument("invalid overlap coefficient row");
+    return windows_[kind(by, g.blocks_y) * 3 + kind(bx, g.blocks_x)].data() + std::size_t(y) * g.block_width;
+  }
   std::uint16_t coefficient(int bx, int by, int x, int y) const {
     const auto& g = geometry_;
     if (bx < 0 || bx >= g.blocks_x || by < 0 || by >= g.blocks_y || x < 0 || x >= g.block_width || y < 0 ||

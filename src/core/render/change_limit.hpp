@@ -36,6 +36,9 @@ public:
     }
   }
   bool active() const { return active_; }
+  std::int64_t maximum() const { return maximum_; }
+  std::int64_t integer_limit() const { return integer_limit_; }
+  float float_limit() const { return limit_; }
   T operator()(T q, T centre) const {
     subpixel_detail::valid_sample(q, maximum_);
     subpixel_detail::valid_sample(centre, maximum_);
