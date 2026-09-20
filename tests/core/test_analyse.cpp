@@ -128,7 +128,7 @@ void selection_and_expansion() {
   best = analyse_detail::block({}, spatial, {0, 0}, omega, 0, 1, 0, 99, c, distant);
   CHECK(best.raw == 0 && best.vector.x == -4 && best.vector.y == 2);
   c.badrange = 0;
-  c.search = 0;
+  c.search = 4; // Horizontal ordinary search cannot find either expansion target.
   const auto near = [](MotionVector v) {
     const std::int64_t e = v.x == 0 && v.y == -1 ? 1 : 100;
     return BlockError{e, 0, e};
