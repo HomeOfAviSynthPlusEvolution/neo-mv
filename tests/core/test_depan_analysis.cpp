@@ -71,11 +71,11 @@ void input_and_mask() {
     CHECK(value.base == 1);
   rejects([&] { plan.observe(current); });
   current.state = FieldState::metadata_only;
-  CHECK(!plan.observe(current).eligible); // No mask frame is acquired or required.
+  CHECK(!plan.observe(current).eligible); // No fitting samples; the host still acquires mask[n].
   current.metadata.levels = 7;
   CHECK(!plan.observe(current).eligible);
   current.metadata.delta = 1;
-  rejects([&] { plan.observe(current); });
+  CHECK(!plan.observe(current).eligible);
   current.state = FieldState::invalid_metadata;
   CHECK(!plan.observe(current).eligible);
   current = field(m);
@@ -96,6 +96,76 @@ void input_and_mask() {
   rejects([&] { AnalysisInputPlan(m, 16, 16, 3, 3, 400, 51, MaskDescription{8, 16, 3}); });
   rejects([&] { AnalysisInputPlan(m, 16, 16, 3, 3, 400, 51, MaskDescription{16, 16, 2}); });
   rejects([&] { AnalysisInputPlan(m, 16, 16, 3, 3, 400, 51, MaskDescription{16, 16, 3, 16}); });
+}
+
+void current_metadata() {
+  const auto initial = metadata();
+  const AnalysisInputPlan plan(initial, 48, 48, 3, 3);
+  auto current = field(metadata(3, 2));
+  current.metadata.delta = 1;
+  current.metadata.pel = 4;
+  current.metadata.block_width = 12;
+  current.metadata.overlap_x = 4;
+  current.grid.values[0].vector = {4, -2};
+  auto result = plan.observe(current);
+  CHECK(result.eligible && result.nx == 3 && result.ny == 2 && result.values.size() == 6);
+  CHECK(result.values[0].x == 6 && result.values[1].x == 14 && result.values[2].x == 22);
+  CHECK(result.values[0].y == 4 && result.values[3].y == 12);
+  CHECK(result.values[0].dx == 1 && result.values[0].dy == -0.5f);
+  CHECK(plan.vector_index(2) == 2 && plan.metadata().delta == -1);
+  CHECK(result.sad_threshold == 400 && plan.thresholds().count == 2.04f);
+
+  // The current six-block grid does not increase the saved count threshold.
+  current = field(metadata(3, 2));
+  current.grid.values[0].error = current.grid.values[1].error = 401;
+  CHECK(plan.observe(current).eligible);
+  current.grid.values[2].error = 401;
+  CHECK(!plan.observe(current).eligible);
+  current.grid.values.back().error = -1;
+  rejects([&] { plan.observe(current); }); // Validate even after K exceeds T2.
+
+  for (const int bits : {10, 16, 32}) {
+    current = field(initial);
+    current.metadata.bits = bits;
+    current.metadata.chroma = true;
+    current.metadata.ratio_x = current.metadata.ratio_y = 2;
+    for (auto& value : current.grid.values)
+      value.error = 400;
+    CHECK(plan.observe(current).eligible);
+    for (auto& value : current.grid.values)
+      value.error = 401;
+    CHECK(!plan.observe(current).eligible); // Neither depth nor chroma rescales T1.
+  }
+
+  current = field(initial);
+  current.metadata.pad_x = 17;
+  current.grid.values[0].vector.x = -33;
+  CHECK(plan.observe(current).eligible);
+  current.metadata.pad_x = 16;
+  rejects([&] { plan.observe(current); }); // Current bounds, not creation bounds.
+
+  current = field(metadata(3, 2));
+  auto properties = encode_analysis_field(current);
+  const auto read = [&](const std::string& name) -> IntegerPropertyView {
+    const auto found = properties.find(name);
+    return found == properties.end() ? IntegerPropertyView{}
+                                    : IntegerPropertyView{true, found->second.size(), found->second.data()};
+  };
+  properties.erase("MVUtensilsAnalysisDeltaFrame");
+  CHECK(plan.read(read).eligible && plan.vector_index(2) == 2);
+  properties["MVUtensilsAnalysisVectors"].resize(4);
+  properties["MVUtensilsAnalysisSAD"].resize(4);
+  CHECK(!plan.read(read).eligible); // Counts are compared to current 3x2, not saved 2x2.
+  properties = encode_analysis_field(current);
+  properties.erase("MVUtensilsAnalysisPel");
+  properties["MVUtensilsAnalysisSAD"][0] = -1;
+  CHECK(!plan.read(read).eligible); // Invalid metadata precedes array validation.
+
+  current.grid.width = 2;
+  rejects([&] { plan.observe(current); });
+  current = field(metadata(3, 2));
+  current.grid.values.pop_back();
+  rejects([&] { plan.observe(current); });
 }
 
 void metadata_only_creation() {
@@ -250,6 +320,7 @@ void complete_example() {
 int main() {
   try {
     input_and_mask();
+    current_metadata();
     metadata_only_creation();
     exact_centers();
     weight_rules();

@@ -131,7 +131,7 @@ def analysis():
     absent = vectors(missing=True)
     assert motion(mv.DepanAnalyse(src, absent), 0) == (0, 0, 0, 1, 0)
     changed = edit(absent, lambda n, f: f.props.__setitem__(P + "BitsPerSample", 10) if n == 1 else None)
-    fails(lambda: mv.DepanAnalyse(src, changed).get_frame(1))
+    assert motion(mv.DepanAnalyse(src, changed), 1) == (0, 0, 0, 1, 0)
     invalid = edit(vectors(), lambda n, f: f.props.__setitem__(P + "Width", 0) if n == 1 else None)
     assert motion(mv.DepanAnalyse(src, invalid), 1) == (0, 0, 0, 1, 0)
     scene = edit(vectors(), lambda n, f: f.props.__setitem__(P + "SAD", [401] * 4) if n == 1 else None)
@@ -148,15 +148,19 @@ def analysis():
         seen.append(n)
         raise vs.Error("Depan mask dependency sentinel")
     broken_mask = edit(zero_mask, mask_error)
-    assert motion(mv.DepanAnalyse(src, absent, mask=broken_mask), 1)[4] == 0
-    assert seen == [], seen
+    fails(lambda: mv.DepanAnalyse(src, absent, mask=broken_mask).get_frame(1), "mask dependency sentinel")
+    assert 1 in seen, seen
     fails(lambda: mv.DepanAnalyse(src, vectors(), mask=broken_mask).get_frame(1), "mask dependency sentinel")
+    fails(lambda: mv.DepanAnalyse(src, invalid, mask=broken_mask).get_frame(1), "mask dependency sentinel")
+    fails(lambda: mv.DepanAnalyse(src, scene, mask=broken_mask).get_frame(1), "mask dependency sentinel")
     for invalid_mask in [blank(width=8), blank(format=vs.GRAY16), blank(length=2)]:
         fails(lambda: mv.DepanAnalyse(src, absent, mask=invalid_mask))
     fails(lambda: mv.DepanAnalyse(src, absent, mask=[]))
 
-    # Negative acceptance error permits an ineligible identity, without a mask dependency.
-    negative = mv.DepanAnalyse(src, absent, mask=broken_mask, error=-1)
+    # Ineligibility skips fitting samples, but a supplied mask must still be retrievable.
+    fails(lambda: mv.DepanAnalyse(src, absent, mask=broken_mask, error=-1).get_frame(1),
+          "mask dependency sentinel")
+    negative = mv.DepanAnalyse(src, absent, mask=zero_mask, error=-1)
     assert motion(negative, 1) == (0, 0, -0.0, 1, 1)
     fails(lambda: mv.DepanAnalyse(src, absent, error=-1, fields=True).get_frame(1))
     top = mv.DepanAnalyse(src, absent, error=-1, fields=True, tff=True)
@@ -186,6 +190,100 @@ def analysis():
     if hasattr(vs, "GRAYH"):
         fails(lambda: mv.DepanAnalyse(blank(format=vs.GRAYH, color=0.5), absent))
     return golden
+
+
+def analysis_current_metadata():
+    src = blank(width=48, height=48)
+    zeros = blank(width=48, height=48, color=0)
+    ones = blank(width=48, height=48, color=1)
+    identity = (0, 0, -0.0, 1, 1)
+    invalid = (0, 0, 0, 1, 0)
+    golden = (0.4916095733642578, 0, -0.0, 1, 1)
+
+    def current(properties, node=None):
+        def replace(n, f):
+            if n == 0:
+                return
+            for key, value in properties.items():
+                if value is None:
+                    del f.props[P + key]
+                else:
+                    f.props[P + key] = value
+        return edit(vectors() if node is None else node, replace)
+
+    # The current pel controls displacement units; doubling packed components
+    # with p=4 reproduces the complete p=2 example's four observations exactly.
+    doubled = vectors(values=[(2, -6), (0, 0), (8, 4), (-4, 2)])
+    result = mv.DepanAnalyse(src, current(dict(Pel=4), doubled), mask=ones, zoom=False, rot=False)
+    assert motion(result, 1) == golden
+
+    # New centers (2,2),(6,2),(2,6),(6,6) read zeros. The old centers read 255,
+    # so using creation geometry would incorrectly fit a nonzero translation.
+    def old_centers(n, f):
+        for y in [4, 12]:
+            for x in [4, 12]:
+                f[0][y, x] = 255
+    mask = edit(zeros, old_centers)
+    smaller = current(dict(BlkSizeX=4, BlkSizeY=4), vectors(values=[(2, 0)] * 4))
+    assert motion(mv.DepanAnalyse(src, smaller, mask=mask), 1) == identity
+
+    # Creation keeps T1=400 and T2=fl32(2.04), even as precision, chroma,
+    # block area or the current number of blocks changes.
+    for properties in [dict(BitsPerSample=10, SAD=[500] * 4),
+                       dict(Chroma=1, XRatioUV=2, YRatioUV=2, SAD=[500] * 4)]:
+        assert motion(mv.DepanAnalyse(src, current(properties), mask=zeros), 1) == invalid
+    smaller_sad = current(dict(BlkSizeX=4, BlkSizeY=4, SAD=[200] * 4))
+    assert motion(mv.DepanAnalyse(src, smaller_sad, mask=zeros), 1) == identity
+    grid = dict(Width=24, RealWidth=24, NBlkX=3)
+    assert motion(mv.DepanAnalyse(src, current(grid), mask=zeros), 1) == invalid  # Four != current six.
+    grid.update(Vectors=[0] * 6, SAD=[0] * 6)
+    assert motion(mv.DepanAnalyse(src, current(grid), mask=zeros), 1) == identity
+    assert motion(mv.DepanAnalyse(src, current(dict(grid, SAD=[401, 401, 0, 0, 0, 0])), mask=zeros), 1) == identity
+    assert motion(mv.DepanAnalyse(src, current(dict(grid, SAD=[401, 401, 401, 0, 0, 0])), mask=zeros), 1) == invalid
+    fails(lambda: mv.DepanAnalyse(src, current(dict(grid, Vectors=[0.0] * 6)), mask=zeros).get_frame(1))
+
+    # At the second column vx=32 is excluded with hp=16 but allowed with hp=17.
+    widened = current(dict(HPad=17), vectors(values=[(32, 0)] * 4))
+    assert motion(mv.DepanAnalyse(src, widened, mask=zeros), 1) == identity
+    fails(lambda: mv.DepanAnalyse(src, vectors(values=[(32, 0)] * 4), mask=zeros).get_frame(1))
+    narrowed = current(dict(HPad=0), vectors(values=[(-1, 0)] * 4))
+    fails(lambda: mv.DepanAnalyse(src, narrowed, mask=zeros).get_frame(1))
+    # Missing/wrong-type current scalars default to zero, not creation metadata.
+    for pel in [None, 0.5]:
+        bad_metadata = current(dict(Pel=pel, Vectors=[0.0] * 4, SAD=[-1] * 4))
+        assert motion(mv.DepanAnalyse(src, bad_metadata, mask=zeros), 1) == invalid
+
+    # Save the creation direction for selection and conversion. Frame 2 has no
+    # arrays; current frame 1 delta changes cannot redirect either operation.
+    components = [(1, -3), (0, 0), (4, 2), (-2, 1)]
+    for delta, altered in [(-1, 1), (-1, 0), (-1, None), (1, -1), (1, 0), (1, None)]:
+        def change_direction(n, f):
+            if n == 1:
+                if altered is None:
+                    del f.props[P + "DeltaFrame"]
+                else:
+                    f.props[P + "DeltaFrame"] = altered
+            elif n == 2:
+                del f.props[P + "Vectors"]
+        carrier = edit(vectors(delta=delta, values=components), change_direction)
+        result = mv.DepanAnalyse(src, carrier, mask=ones, zoom=False, rot=False)
+        if delta == -1:
+            assert motion(result, 1) == golden
+            assert motion(result, 2) == invalid
+        else:
+            assert motion(result, 2) == (-golden[0], 0, 0, 1, 1)
+
+    # The mask dependency is indexed by output n, even for d=+1 selecting k=0.
+    seen = []
+    def mask_at_output(n, f):
+        seen.append(n)
+        if n == 1:
+            raise vs.Error("Depan current-mask frame sentinel")
+    mask = edit(zeros, mask_at_output)
+    result = mv.DepanAnalyse(src, vectors(delta=1, missing=True), mask=mask)
+    assert motion(result, 0) == invalid
+    fails(lambda: result.get_frame(1), "current-mask frame sentinel")
+    assert 0 in seen and 1 in seen, seen
 
 
 def compensate_formats():
@@ -338,6 +436,7 @@ def diagnostics():
 
 def run():
     fitted = analysis()
+    analysis_current_metadata()
     compensate_formats()
     shifted = compensate_temporal()
     diagnostics()

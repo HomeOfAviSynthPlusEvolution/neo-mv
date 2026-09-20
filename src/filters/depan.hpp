@@ -109,6 +109,8 @@ struct DepanAnalysisFilter {
       r.k = static_cast<int>(s.input->vector_index(ctx.output_frame));
       ctx.request_frame(1, r.k);
       ctx.request_frame(0, ctx.output_frame);
+      if (s.input->masked())
+        ctx.request_frame(2, ctx.output_frame);
       r.stage = 1;
       return ds::Result<ds::VideoStageResult>::success(ds::VideoStageResult::RequestFrames);
     }
@@ -116,10 +118,6 @@ struct DepanAnalysisFilter {
       r.field = read_field(frame(ctx.frames, 1, r.k), "MVUtensils");
       r.eligible = s.input->eligible(r.field);
       r.stage = 2;
-      if (r.eligible && s.input->masked()) {
-        ctx.request_frame(2, ctx.output_frame);
-        return ds::Result<ds::VideoStageResult>::success(ds::VideoStageResult::RequestFrames);
-      }
     }
     return ds::Result<ds::VideoStageResult>::success(ds::VideoStageResult::Ready);
   }
@@ -127,9 +125,10 @@ struct DepanAnalysisFilter {
     const auto& s = ctx.state<State>();
     std::optional<span2d::Plane<const std::uint8_t>> mask;
     std::optional<ds::RequestedVideoFrame> owner;
-    if (r.eligible && s.input->masked()) {
+    if (s.input->masked()) {
       owner = frame(ctx.frames, 2, ctx.output_frame);
-      mask = plane<std::uint8_t>(owner->frame.plane(0));
+      if (r.eligible)
+        mask = plane<std::uint8_t>(owner->frame.plane(0));
     }
     const auto observations = s.input->observe(r.field, mask);
 #if NEO_MV_ENABLE_HIGHWAY

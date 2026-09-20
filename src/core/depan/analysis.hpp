@@ -4,7 +4,6 @@
 #include "core/depan/numeric.hpp"
 #include "core/depan/transform.hpp"
 #include "core/motion/scene_classification.hpp"
-#include "core/render/reference.hpp"
 
 #include <array>
 #include <optional>
@@ -118,13 +117,13 @@ class AnalysisInputPlan {
   int width_, height_;
   std::int64_t frames_;
   bool masked_;
-  SceneClassifier scene_;
+  SceneThresholds thresholds_;
 
 public:
   AnalysisInputPlan(AnalysisMetadata metadata, int width, int height, std::int64_t frames, std::int64_t vector_frames,
                     std::int64_t thscd1 = 400, double thscd2 = 51, std::optional<MaskDescription> mask = {})
       : metadata_(metadata), width_(width), height_(height), frames_(frames), masked_(mask.has_value()),
-        scene_(scene_descriptor(metadata), thscd1, f32(thscd2)) {
+        thresholds_(scene_thresholds(scene_descriptor(metadata), thscd1, f32(thscd2))) {
     if (!valid_analysis_metadata(metadata) || (metadata.delta != -1 && metadata.delta != 1) || width <= 0 ||
         height <= 0 || frames < 1 || frames > INT32_MAX || vector_frames < frames || vector_frames > INT32_MAX)
       throw std::invalid_argument("invalid Depan analysis creation description");
@@ -140,7 +139,7 @@ public:
     return {field.metadata, width, height, frames, vector_frames, thscd1, thscd2, mask};
   }
   const AnalysisMetadata& metadata() const { return metadata_; }
-  const SceneThresholds& thresholds() const { return scene_.thresholds; }
+  const SceneThresholds& thresholds() const { return thresholds_; }
   bool masked() const { return masked_; }
   std::int64_t vector_index(std::int64_t n) const {
     if (n < 0 || n >= frames_)
@@ -150,13 +149,26 @@ public:
   bool eligible(const AnalysisField& field) const {
     if (field.state == FieldState::invalid_metadata)
       return false;
-    if (!valid_analysis_metadata(field.metadata) || !same_render_analysis(metadata_, field.metadata))
-      throw std::invalid_argument("Depan analysis metadata changed");
-    return scene_(field) == 0;
+    const auto& m = field.metadata;
+    if (!valid_analysis_metadata(m))
+      throw std::invalid_argument("invalid Depan current metadata");
+    if (field.state == FieldState::metadata_only)
+      return false;
+    if (field.state != FieldState::complete || field.grid.width != m.blocks_x || field.grid.height != m.blocks_y ||
+        field.grid.values.size() != std::uint64_t(m.blocks_x) * m.blocks_y)
+      throw std::invalid_argument("malformed complete Depan field");
+    std::uint64_t bad = 0;
+    for (std::size_t i = 0; i < field.grid.values.size(); ++i) {
+      const auto& value = field.grid.values[i];
+      field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
+      if (value.error > thresholds_.error)
+        ++bad;
+    }
+    return analysis_detail::integer32(bad) <= thresholds_.count;
   }
   Observations observe(const AnalysisField& field, std::optional<span2d::Plane<const std::uint8_t>> mask = {}) const {
-    const auto& m = metadata_;
-    Observations result{m.blocks_x, m.blocks_y, eligible(field), masked_, scene_.thresholds.error, {}};
+    const auto& m = field.metadata;
+    Observations result{m.blocks_x, m.blocks_y, eligible(field), masked_, thresholds_.error, {}};
     if (!result.eligible)
       return result;
     if (masked_) {
