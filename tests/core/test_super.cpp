@@ -182,6 +182,27 @@ void analysis_integration() {
   validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(p, 8, 0, 0));
   SuperPlan<std::uint16_t> depth10(p, 10), depth12(p, 12);
   rejects([&] { validate_super_pair(depth10, depth12); });
+
+  // Distinct images detect accidentally binding both roles to one payload.
+  p = {4, 4, 4, 4, 0, 0, 4, 4, 1, 1, 1, false, true};
+  Input<std::uint8_t> left(p, 0), right(p, 0);
+  const std::uint8_t a[] = {10, 20, 30, 30}, b[] = {0, 10, 20, 30};
+  for (int y = 0; y < 4; ++y)
+    for (int x = 0; x < 4; ++x) {
+      left.data[0][y * 5 + x] = a[x];
+      right.data[0][y * 5 + x] = b[x];
+    }
+  const SuperPlan<std::uint8_t> plan(p, 8);
+  const SuperPyramid<std::uint8_t> moving(plan, left.views), shifted(plan, right.views);
+  const auto moving_geometry = super_sampling_geometry(plan);
+  const auto moving_frames = borrow_super_frames(moving, shifted);
+  CHECK(block_error(moving_geometry[0], {0, 0, 4, 4}, moving_frames[0], {0, 0}, BlockMetric::sad).raw == 120);
+  AnalyseControls controls;
+  controls.search = 4;
+  controls.pnew = controls.pzero = 0;
+  const auto motion =
+      analyse_vectors<std::uint8_t>(super_analysis_metadata(plan, 1), moving_geometry, moving_frames, controls);
+  CHECK(motion.values[0].vector.x == 1 && motion.values[0].vector.y == 0 && motion.values[0].error == 0);
 }
 } // namespace
 int main() {
