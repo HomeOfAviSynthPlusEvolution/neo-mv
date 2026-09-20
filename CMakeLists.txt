@@ -25,7 +25,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field)
+  foreach(operator border_extension pyramid subpixel block_metric block_sampling search prediction analysis_field scene_classification)
     add_executable(neo_mv_${operator}_tests tests/core/test_${operator}.cpp)
     target_link_libraries(neo_mv_${operator}_tests PRIVATE neo_mv_core)
     if(MSVC)
