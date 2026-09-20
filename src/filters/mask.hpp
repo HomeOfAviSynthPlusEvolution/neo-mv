@@ -3,6 +3,9 @@
 #include "core/mask/frame.hpp"
 #include "filters/common.hpp"
 #include "kernels/selection.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/mask.hpp"
+#endif
 
 namespace neo_mv::ds2 {
 
@@ -12,10 +15,10 @@ inline MaskParameters mask_parameters(const ds::ParamValues& values) {
           unwrap(values.get_int64("thscd1", 400)), unwrap(values.get_double("thscd2", 51))};
 }
 
-template <class T>
+template <class T, class Kernels>
 class MaskRuntime final : public Runtime {
   std::string prefix_;
-  MaskFramePlan<T> plan_;
+  MaskFramePlan<T, Kernels> plan_;
 
 public:
   MaskRuntime(ds::VideoInitContext& ctx, MaskKind kind, AnalysisMetadata metadata)
@@ -44,6 +47,14 @@ struct MaskFilter {
   struct State {
     std::shared_ptr<const Runtime> runtime;
   };
+  template <class T>
+  static std::shared_ptr<const Runtime> make(ds::VideoInitContext& ctx, const AnalysisMetadata& metadata) {
+#if NEO_MV_ENABLE_HIGHWAY
+    if (selected_backend() == KernelBackend::highway)
+      return std::make_shared<MaskRuntime<T, HighwayMaskKernels<T>>>(ctx, Kind, metadata);
+#endif
+    return std::make_shared<MaskRuntime<T, ScalarMaskKernels<T>>>(ctx, Kind, metadata);
+  }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
             "VS frame services required");
@@ -54,11 +65,11 @@ struct MaskFilter {
     const auto& m = first.metadata;
     std::shared_ptr<const Runtime> runtime;
     if (m.bits == 8)
-      runtime = std::make_shared<MaskRuntime<std::uint8_t>>(ctx, Kind, m);
+      runtime = make<std::uint8_t>(ctx, m);
     else if (m.bits == 32)
-      runtime = std::make_shared<MaskRuntime<float>>(ctx, Kind, m);
+      runtime = make<float>(ctx, m);
     else
-      runtime = std::make_shared<MaskRuntime<std::uint16_t>>(ctx, Kind, m);
+      runtime = make<std::uint16_t>(ctx, m);
     auto output = output_info(ctx.inputs[0]);
     output.width = m.real_width;
     output.height = m.real_height;

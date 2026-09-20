@@ -1,8 +1,7 @@
 #pragma once
 
-#include "core/mask/grid_resampling.hpp"
 #include "core/mask/input.hpp"
-#include "core/mask/scores.hpp"
+#include "kernels/mask_scalar.hpp"
 
 #include <variant>
 
@@ -29,22 +28,25 @@ bool overlaps(span2d::Plane<T> output, const void* data, std::size_t bytes) {
 
 // Pixel-only composition. The host creates an independent GRAY output and
 // installs exactly _Range=[1]; no carrier pixels or property map enter this API.
-template <class T>
+template <class T, class Kernels = ScalarMaskKernels<T>>
 class MaskFramePlan {
-  using ScorePlan = std::variant<VectorLengthMaskPlan<T>, SADMaskPlan<T>, OcclusionMaskPlan<T>>;
+  using VectorLength = typename Kernels::VectorLength;
+  using SAD = typename Kernels::SAD;
+  using Occlusion = typename Kernels::Occlusion;
+  using ScorePlan = std::variant<VectorLength, SAD, Occlusion>;
   MaskInputPlan<T> input_;
   ScorePlan scores_;
-  GridResamplingPlan resampling_;
+  typename Kernels::GridResampling resampling_;
 
   static ScorePlan make_scores(MaskKind kind, const MaskInputPlan<T>& input) {
     const auto& m = input.metadata();
     switch (kind) {
       case MaskKind::VectorLength:
-        return ScorePlan(std::in_place_type<VectorLengthMaskPlan<T>>, m, input.f(), input.gamma(), input.time256());
+        return ScorePlan(std::in_place_type<VectorLength>, m, input.f(), input.gamma(), input.time256());
       case MaskKind::SAD:
-        return ScorePlan(std::in_place_type<SADMaskPlan<T>>, m, input.f(), input.gamma(), input.time256());
+        return ScorePlan(std::in_place_type<SAD>, m, input.f(), input.gamma(), input.time256());
       case MaskKind::Occlusion:
-        return ScorePlan(std::in_place_type<OcclusionMaskPlan<T>>, m, input.f(), input.gamma(), input.time256());
+        return ScorePlan(std::in_place_type<Occlusion>, m, input.f(), input.gamma(), input.time256());
     }
     throw std::invalid_argument("invalid mask kind");
   }

@@ -1,9 +1,21 @@
 #include "core/mask/frame.hpp"
+#if NEO_MV_TEST_HIGHWAY
+#include "highway/mask.hpp"
+#endif
 
 #include <iostream>
 
 namespace {
 using namespace neo_mv;
+template <class T>
+using TestKernels =
+#if NEO_MV_TEST_HIGHWAY
+    HighwayMaskKernels<T>;
+#else
+    ScalarMaskKernels<T>;
+#endif
+template <class T>
+using TestMaskFrame = MaskFramePlan<T, TestKernels<T>>;
 void check(bool condition, int line) {
   if (!condition)
     throw std::runtime_error("mask frame assertion failed at line " + std::to_string(line));
@@ -63,7 +75,7 @@ void precision(int bits) {
   p.ml = 8;
   p.gamma = 2;
   p.scval = 20.5;
-  const MaskFramePlan<T> plan(MaskKind::VectorLength, input.metadata, 2, p);
+  const TestMaskFrame<T> plan(MaskKind::VectorLength, input.metadata, 2, p);
   CHECK(plan.metadata().bits == bits && plan.metadata().real_width == 8);
   Buffer<T> output(8, 8);
   plan.render(input, output.view());
@@ -87,7 +99,7 @@ void examples() {
   MaskParameters p;
   p.ml = 1;
   p.scval = 9;
-  const MaskFramePlan<std::uint8_t> sad(MaskKind::SAD, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> sad(MaskKind::SAD, input.metadata, 1, p);
   Buffer<std::uint8_t> output(8, 8);
   sad.render(input, output.view());
   output.constant(127);
@@ -100,7 +112,7 @@ void examples() {
   input.grid.values[0].vector = {4, 0};
   p = {};
   p.ml = 80;
-  const MaskFramePlan<std::uint8_t> occ(MaskKind::Occlusion, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> occ(MaskKind::Occlusion, input.metadata, 1, p);
   Buffer<std::uint8_t> occlusion(8, 4);
   occ.render(input, occlusion.view());
   const int expected[] = {255, 255, 223, 159, 96, 32, 0, 0};
@@ -110,7 +122,7 @@ void examples() {
   occlusion.guards();
   // Resize using the covered 8-wide geometry, then crop to the real width.
   input.metadata.real_width = 6;
-  const MaskFramePlan<std::uint8_t> crop(MaskKind::Occlusion, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> crop(MaskKind::Occlusion, input.metadata, 1, p);
   Buffer<std::uint8_t> cropped(6, 4);
   crop.render(input, cropped.view());
   for (int y = 0; y < 4; ++y)
@@ -126,7 +138,7 @@ void fallback_and_errors() {
   p.scval = 12.5;
   Buffer<std::uint8_t> output(8, 8);
   for (auto kind : {MaskKind::VectorLength, MaskKind::SAD, MaskKind::Occlusion}) {
-    const MaskFramePlan<std::uint8_t> plan(kind, input.metadata, 1, p);
+    const TestMaskFrame<std::uint8_t> plan(kind, input.metadata, 1, p);
     auto current = input;
     current.state = FieldState::invalid_metadata;
     current.metadata = {}; // Output shape still comes from the saved descriptor.
@@ -155,7 +167,7 @@ void fallback_and_errors() {
   p = {};
   p.ml = 8;
   p.gamma = 2;
-  const MaskFramePlan<std::uint8_t> length(MaskKind::VectorLength, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> length(MaskKind::VectorLength, input.metadata, 1, p);
   input.grid.values[0].vector = {4, 0};
   length.render(input, output.view());
   output.constant(63);
@@ -167,7 +179,7 @@ void fallback_and_errors() {
   output.constant(63);
   p.ml = 1e-37;
   p.gamma = 1;
-  const MaskFramePlan<std::uint8_t> overflow(MaskKind::SAD, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> overflow(MaskKind::SAD, input.metadata, 1, p);
   input.grid.values[0].error = 8; // Still scene-eligible, but score overflows.
   rejects<std::overflow_error>([&] { overflow.render(input, output.view()); });
   output.constant(63);
@@ -175,7 +187,7 @@ void fallback_and_errors() {
   const auto fp = field(32);
   p = {};
   p.scval = -0.0;
-  const MaskFramePlan<float> float_plan(MaskKind::SAD, fp.metadata, 1, p);
+  const TestMaskFrame<float> float_plan(MaskKind::SAD, fp.metadata, 1, p);
   auto missing = fp;
   missing.state = FieldState::metadata_only;
   Buffer<float> float_output(8, 8);
@@ -183,7 +195,7 @@ void fallback_and_errors() {
   float_output.constant(0);
   CHECK(std::signbit(float_output.view().row(0)[0]));
   p.scval = 1.25;
-  MaskFramePlan<float>(MaskKind::Occlusion, fp.metadata, 1, p).render(missing, float_output.view());
+  TestMaskFrame<float>(MaskKind::Occlusion, fp.metadata, 1, p).render(missing, float_output.view());
   float_output.constant(1.25f);
 }
 
@@ -191,14 +203,14 @@ void creation_and_views() {
   const auto input = field();
   MaskParameters p;
   p.ml = 1e-30;
-  rejects<std::overflow_error>([&] { MaskFramePlan<std::uint8_t> plan(MaskKind::VectorLength, input.metadata, 1, p); });
+  rejects<std::overflow_error>([&] { TestMaskFrame<std::uint8_t> plan(MaskKind::VectorLength, input.metadata, 1, p); });
   // Only the chosen operator's constants are evaluated during construction.
-  const MaskFramePlan<std::uint8_t> sad(MaskKind::SAD, input.metadata, 1, p);
-  const MaskFramePlan<std::uint8_t> occ(MaskKind::Occlusion, input.metadata, 1, p);
-  rejects([&] { MaskFramePlan<std::uint8_t> plan(static_cast<MaskKind>(99), input.metadata, 1); });
-  rejects([&] { MaskFramePlan<std::uint8_t> plan(MaskKind::SAD, input.metadata, 0); });
-  rejects([&] { MaskFramePlan<float> plan(MaskKind::SAD, input.metadata, 1); });
-  const MaskFramePlan<std::uint8_t> plan(MaskKind::SAD, input.metadata, 1);
+  const TestMaskFrame<std::uint8_t> sad(MaskKind::SAD, input.metadata, 1, p);
+  const TestMaskFrame<std::uint8_t> occ(MaskKind::Occlusion, input.metadata, 1, p);
+  rejects([&] { TestMaskFrame<std::uint8_t> plan(static_cast<MaskKind>(99), input.metadata, 1); });
+  rejects([&] { TestMaskFrame<std::uint8_t> plan(MaskKind::SAD, input.metadata, 0); });
+  rejects([&] { TestMaskFrame<float> plan(MaskKind::SAD, input.metadata, 1); });
+  const TestMaskFrame<std::uint8_t> plan(MaskKind::SAD, input.metadata, 1);
   Buffer<std::uint8_t> wrong(7, 8);
   rejects([&] { plan.render(input, wrong.view()); });
   wrong.constant(19);
@@ -207,7 +219,7 @@ void creation_and_views() {
   missing.state = FieldState::metadata_only;
   rejects([&] { plan.render(missing, wrong.view()); });
   auto small = field(8, 1, 1, 2);
-  const MaskFramePlan<std::uint8_t> small_plan(MaskKind::SAD, small.metadata, 1);
+  const TestMaskFrame<std::uint8_t> small_plan(MaskKind::SAD, small.metadata, 1);
   auto* bytes = reinterpret_cast<std::uint8_t*>(small.grid.values.data());
   const auto alias = checked_plane(bytes, 2, 2, 2, sizeof(MotionTriple));
   rejects([&] { small_plan.render(small, alias); });
