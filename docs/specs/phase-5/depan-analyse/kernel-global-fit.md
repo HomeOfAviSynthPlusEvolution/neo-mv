@@ -2,7 +2,7 @@
 
 Inputs are observations and initial weights, aspect a>0, flags zoom/rot, error limit, and the weight-selection inputs. Output is a final map, residual error E, diagnostic iteration number iter, and a validity decision. Use the [common binary32 arithmetic](../README.md#common-contracts). This finite recurrence defines the result; an unrestricted least-squares solution is not interchangeable with it.
 
-Initialize tx=ty=v=w=0, u=h=1, E=2*error, iter=0. For an ineligible field stop here with invalid motion; do not run any update or parity operation. For an eligible field use the following operator and schedule.
+Initialize tx=ty=v=w=0, u=h=1, E=2*error, iter=0. For an ineligible field skip all fitting updates and weight selection, retaining these initial values; still apply the final E<error validity comparison below. For an eligible field use the following operator and schedule. Field-parity processing is performed by the plugin after validity and coordinate conversion.
 
 ## One update
 
@@ -37,11 +37,12 @@ Require a*a nonzero. E' measures the residuals before this update, not those of 
 - For k=5..99, use s=0.3 when k<8, s=0.6 when 8<=k<10, otherwise s=1. ze=zoom and re=rot. Save Eold, update to E'. Stop with iter=k if `(Eold-E'<0.01*0.5 and k>9)` or `E'<0.01`. The stopping step keeps its new map and E' and does not select weights again.
 - Otherwise select weights with G=E'*2 and continue. If step 99 completes without stopping, iter=100.
 
-After an eligible run, good=(E<error), strictly. An invalid result exports the standard invalid tuple, not the final map. A valid result is converted by the plugin, which may still encounter a coordinate-conversion error. No positive-weight-count condition is added. Negative error, wrong or zerow are not independently forbidden; this recurrence, its comparisons and its arithmetic-domain checks define their behavior.
+For both eligible and ineligible fields, good=(E<error), strictly. Eligibility decides whether to fit; it is not an additional condition on good. In particular an ineligible field retains E=2*error and passes this comparison when error<0. An invalid result exports the standard invalid tuple, not the final map. A valid result is converted by the plugin, which may still encounter a coordinate-conversion error. No positive-weight-count condition is added. Negative error, wrong or zerow are not independently forbidden; this recurrence, its comparisons and its arithmetic-domain checks define their behavior.
 
 ## Examples
 
 - One observation d=(2,0), b=1, identity map, s=0.3 and ze=re=false gives N=fl32(1.1), gx approximately -1.8181818, tx' approximately 0.54545456 and E' approximately 1.9306146. This is one update, not the final fit.
 - Eligible zero observations with all base weights zero preserve identity. N=X2=Y2=R=fl32(0.1), so E=1 on every update and the run stops at iter=10. With error=15 it is valid; error=1 makes it invalid. A zero-weight fit is not automatically rejected.
 - An ineligible field and error=15 yield E=30, iter=0 and `(dx,dy,r,z,good)=(0,0,0,1,0)`.
+- An ineligible field with error=-1 retains the identity map, E=-2 and iter=0, then sets good=true because -2<-1. error=0 instead sets good=false. An eligible fit has nonnegative E and cannot pass a negative error limit.
 - E=error is invalid. A negative R/N caused by signed weights is a frame error, not an invalid-motion tuple.
