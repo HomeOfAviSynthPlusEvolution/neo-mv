@@ -7,12 +7,16 @@ from cases import ANALYSIS_KEYS, SUPER_KEYS
 SCHEMA = 2
 ORDINARY_KEYS = ("TestMarker", "TestData", "TestFloat", "_Field", "_SceneChangePrev", "_SceneChangeNext",
                  "_DurationNum", "_DurationDen")
+DEPAN_KEYS = ("Depan_dx", "Depan_dy", "Depan_rot", "Depan_zoom", "Depan_goodmotion",
+              "DepanAnalyse_info", "DepanCompensate_info")
 
 
 def observation_keys(spec):
     keys = list(ORDINARY_KEYS) + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
-    if spec.get("phase") in (3, 4):
+    if spec.get("phase") in (3, 4, 5):
         keys += ["_Range", "_ColorRange", "_Matrix"]
+    if spec.get("phase") == 5:
+        keys += list(DEPAN_KEYS)
     return keys
 
 
@@ -66,7 +70,7 @@ def validate_result(result, spec, backend):
     creation_error = result.get("creation_error")
     if creation_error is not None:
         validate_error(creation_error)
-        if spec.get("phase") not in (2, 3, 4) or result.get("outputs") != [] or result.get("records") != []:
+        if spec.get("phase") not in (2, 3, 4, 5) or result.get("outputs") != [] or result.get("records") != []:
             raise ValueError("invalid creation failure observation")
     elif len(result.get("outputs", [])) != spec["members"]:
         raise ValueError("wrong output member count")
@@ -82,7 +86,7 @@ def validate_result(result, spec, backend):
                 raise ValueError("error record also contains successful pixels")
         else:
             validate_snapshot(record)
-            if spec.get("phase") in (3, 4):
+            if spec.get("phase") in (3, 4, 5):
                 names = record.get("property_names")
                 if not isinstance(names, list) or any(not isinstance(name, str) for name in names) or \
                         names != sorted(set(names)) or \
@@ -93,12 +97,16 @@ def validate_result(result, spec, backend):
         raise ValueError("missing or duplicated source frames")
     for item in inputs:
         validate_snapshot(item)
-    if spec.get("phase") in (2, 3, 4):
+    if spec.get("phase") in (2, 3, 4, 5):
         if not result.get("input_video"):
             raise ValueError("missing source video metadata")
-    if spec.get("phase") in (2, 4) or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
+    if spec.get("phase") in (2, 4, 5) or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
         auxiliary = result.get("auxiliary_inputs", [])
-        expected = ["super_source"] + ["vectors" + str(i) for i in range(len(spec["deltas"]))]
+        if spec.get("phase") == 5:
+            expected = (["vectors"] + (["mask"] if spec["mask"] is not None else [])) \
+                if spec["operation"] == "DepanAnalyse" else ["data"]
+        else:
+            expected = ["super_source"] + ["vectors" + str(i) for i in range(len(spec["deltas"]))]
         if [item.get("name") for item in auxiliary] != expected:
             raise ValueError("missing auxiliary input observations")
         for item in auxiliary:
@@ -109,6 +117,17 @@ def validate_result(result, spec, backend):
     env = result.get("environment", {})
     if not env.get("plugin_sha256") or not env.get("core") or not env.get("kernel"):
         raise ValueError("missing runtime provenance")
+    if spec.get("phase") == 5 and spec["params"].get("info"):
+        renderer = env.get("text_renderer", {})
+        if renderer.get("entry") != "text.FrameProps" or \
+                renderer.get("arguments") != dict(props=[spec["operation"] + "_info"]) or \
+                not renderer.get("plugin_version"):
+            raise ValueError("missing or incorrect text renderer provenance")
+        if renderer.get("plugin_path"):
+            if not renderer.get("plugin_sha256") or renderer.get("builtin_core") is not None:
+                raise ValueError("incomplete external text renderer identity")
+        elif not renderer.get("builtin_core") or renderer.get("plugin_sha256") is not None:
+            raise ValueError("incomplete built-in text renderer identity")
 
 
 def validate_error(error):
@@ -177,6 +196,10 @@ def mask_range_observations(reference, candidate, spec):
 def compare(reference, candidate, spec=None):
     # Do not compare DLL identity/host addresses/private payloads. Do compare the
     # actual generated source before assigning any difference to an algorithm.
+    difference = first_difference(reference.get("environment", {}).get("text_renderer"),
+                                  candidate.get("environment", {}).get("text_renderer"), "/environment/text_renderer")
+    if difference:
+        return "input_mismatch", difference
     difference = first_difference(reference.get("input_video"), candidate.get("input_video"), "/input_video")
     if difference:
         return "input_mismatch", difference

@@ -21,6 +21,7 @@ import render_cases
 import mask_cases
 import flow_cases
 import interpolation_cases
+import depan_cases
 from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys
 
 
@@ -70,6 +71,9 @@ def property_value(value):
         return dict(type="float64", count=len(items), values=[struct.pack(">d", item).hex() for item in items])
     if kind is bytes:
         return dict(type="data", count=len(items), values=[item.hex() for item in items])
+    if kind is str:
+        # VS decodes data tagged UTF-8 as str. Record its native data bytes.
+        return dict(type="data", count=len(items), values=[item.encode("utf-8").hex() for item in items])
     raise ValueError(f"unsupported public property type: {kind.__name__}")
 
 
@@ -135,9 +139,17 @@ def main():
             vs_package=package_vs, mvu_package=package_mvu, core=str(core),
             plugin_path=str(loaded), plugin_sha256=loaded_hash,
             plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
+        if spec.get("phase") == 5 and spec["params"].get("info"):
+            renderer = core.text
+            renderer_path = Path(renderer.plugin_path).resolve() if renderer.plugin_path else None
+            result["environment"]["text_renderer"] = dict(plugin_path=str(renderer_path) if renderer_path else None,
+                plugin_sha256=digest_file(renderer_path) if renderer_path else None,
+                builtin_core=str(core.core_version) if renderer_path is None else None,
+                plugin_version=str(renderer.version),
+                entry="text.FrameProps", arguments=dict(props=[spec["operation"] + "_info"]))
         keys = observation_keys(spec)
         prepared = None
-        fixture = {2: render_cases, 3: mask_cases, 4: interpolation_cases}.get(spec.get("phase"))
+        fixture = {2: render_cases, 3: mask_cases, 4: interpolation_cases, 5: depan_cases}.get(spec.get("phase"))
         if spec.get("phase") == 3 and spec.get("operation") == "Flow":
             fixture = flow_cases
         if fixture is not None:
@@ -190,7 +202,7 @@ def main():
             else:
                 with acquired as frame:
                     observation = dict(**result["active_request"], **snapshot(frame, keys))
-                    if spec.get("phase") in (3, 4):
+                    if spec.get("phase") in (3, 4, 5):
                         # Observe unexpected property presence without decoding
                         # or exporting unknown/private property payloads.
                         observation["property_names"] = sorted(frame.props)

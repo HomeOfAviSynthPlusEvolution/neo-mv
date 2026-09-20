@@ -12,6 +12,7 @@ from render_cases import CASES as RENDER_CASES
 from mask_cases import CASES as MASK_CASES
 from flow_cases import CASES as FLOW_CASES
 from interpolation_cases import CASES as INTERPOLATION_CASES
+from depan_cases import CASES as DEPAN_CASES
 
 
 class ProtocolTests(unittest.TestCase):
@@ -110,6 +111,10 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 property_value(value)
         self.assertEqual(property_value(1.0)["type"], "float64")
+
+    def test_utf8_data_property(self):
+        self.assertEqual(property_value("zoom=1.00000"), property_value(b"zoom=1.00000"))
+        self.assertEqual(property_value(["a", "\u4e2d"]), dict(type="data", count=2, values=["61", "e4b8ad"]))
 
     def render_result(self):
         spec = RENDER_CASES[0]
@@ -424,6 +429,93 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(member, 0)
                     self.assertGreaterEqual(n, 0)
                     self.assertLess(n, length)
+
+    def depan_result(self, spec=None):
+        _, result = self.render_result()
+        spec = spec or DEPAN_CASES[0]
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec))
+        names = (["vectors"] + (["mask"] if spec["mask"] is not None else [])) \
+            if spec["operation"] == "DepanAnalyse" else ["data"]
+        result["auxiliary_inputs"] = [dict(name=name, video={"width": 1}, frames=copy.deepcopy(result["inputs"]))
+                                      for name in names]
+        sample = {key: copy.deepcopy(value) for key, value in result["records"][0].items()
+                  if key not in ("request", "member", "frame")}
+        sample["properties"].update(
+            Depan_dx=dict(type="float64", count=1, values=["3fe0000000000000"]),
+            Depan_dy=dict(type="float64", count=1, values=["0000000000000000"]),
+            Depan_rot=dict(type="float64", count=1, values=["8000000000000000"]),
+            Depan_zoom=dict(type="float64", count=1, values=["3ff0000000000000"]),
+            Depan_goodmotion=dict(type="int", count=1, values=[1]),
+            DepanAnalyse_info=dict(type="data", count=1, values=[b"inherited analysis".hex()]),
+            DepanCompensate_info=dict(type="data", count=1, values=[b"inherited compensation".hex()]))
+        sample["property_names"] = sorted(sample["properties"])
+        result["records"] = [dict(request=i, member=m, frame=n, **copy.deepcopy(sample))
+                              for i, (m, n) in enumerate(spec["requests"])]
+        return spec, result
+
+    def test_depan_public_motion_signed_zero_and_diagnostics_are_strict(self):
+        spec, reference = self.depan_result()
+        validate_result(reference, spec, "mvu")
+        for key, value in [("Depan_dx", "3fe0000000000001"), ("Depan_rot", "0000000000000000"),
+                           ("DepanAnalyse_info", b"different diagnostic".hex())]:
+            candidate = copy.deepcopy(reference)
+            candidate["records"][0]["properties"][key]["values"] = [value]
+            status, detail = compare(reference, candidate, spec)
+            self.assertEqual(status, "difference")
+            self.assertNotIn("known_differences", detail)
+        missing = copy.deepcopy(reference)
+        del missing["records"][0]["properties"]["Depan_zoom"]
+        with self.assertRaises(ValueError):
+            validate_result(missing, spec, "mvu")
+
+    def test_depan_requires_exact_auxiliary_inputs(self):
+        for operation in ["DepanAnalyse", "DepanCompensate"]:
+            spec, reference = self.depan_result(next(item for item in DEPAN_CASES if item["operation"] == operation))
+            validate_result(reference, spec, "mvu")
+            missing = copy.deepcopy(reference)
+            missing["auxiliary_inputs"].pop()
+            with self.assertRaises(ValueError):
+                validate_result(missing, spec, "mvu")
+            changed = copy.deepcopy(reference)
+            changed["auxiliary_inputs"][-1]["frames"][0]["properties"].clear()
+            self.assertEqual(compare(reference, changed, spec)[0], "input_mismatch")
+            failed = copy.deepcopy(reference)
+            failed.update(outputs=[], records=[], creation_error=dict(type="Error", message="Depan creation detail"))
+            validate_result(failed, spec, "mvu")
+            self.assertEqual(compare(failed, failed, spec)[0], "difference")
+
+    def test_depan_info_binds_external_or_builtin_renderer_and_defaults(self):
+        spec, reference = self.depan_result(next(item for item in DEPAN_CASES if item["params"].get("info")))
+        with self.assertRaises(ValueError):
+            validate_result(reference, spec, "mvu")
+        reference["environment"]["text_renderer"] = dict(plugin_path="text.dll", plugin_sha256="renderer hash",
+            plugin_version="1", builtin_core=None, entry="text.FrameProps",
+            arguments=dict(props=[spec["operation"] + "_info"]))
+        validate_result(reference, spec, "mvu")
+        changed = copy.deepcopy(reference)
+        changed["environment"]["text_renderer"]["plugin_sha256"] = "other renderer"
+        self.assertEqual(compare(reference, changed, spec)[0], "input_mismatch")
+        changed = copy.deepcopy(reference)
+        changed["environment"]["text_renderer"]["arguments"]["scale"] = 2
+        with self.assertRaises(ValueError):
+            validate_result(changed, spec, "mvu")
+        builtin = copy.deepcopy(reference)
+        builtin["environment"]["text_renderer"].update(plugin_path=None, plugin_sha256=None, builtin_core="R79")
+        validate_result(builtin, spec, "mvu")
+
+    def test_depan_fixture_inventory_is_bounded_and_names_all_public_entries(self):
+        self.assertGreaterEqual(len(DEPAN_CASES), 40)
+        self.assertLessEqual(len(DEPAN_CASES), 60)
+        self.assertEqual({item["operation"] for item in DEPAN_CASES}, {"DepanAnalyse", "DepanCompensate"})
+        for spec in DEPAN_CASES:
+            with self.subTest(case=spec["id"]):
+                self.assertEqual(spec["phase"], 5)
+                if spec["operation"] == "DepanAnalyse":
+                    self.assertIn(spec["delta"], (-1, 1))
+                for member, n in spec["requests"]:
+                    self.assertEqual(member, 0)
+                    self.assertGreaterEqual(n, 0)
+                    self.assertLess(n, spec["length"])
 
 
 if __name__ == "__main__":
