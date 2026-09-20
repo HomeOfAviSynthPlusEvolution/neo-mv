@@ -43,6 +43,9 @@ void parent_interpolation() {
   triple(interpolate_predictor(line, 1, 0, g), 4, -4, 2);
   triple(interpolate_predictor(line, 3, 0, g), 10, -10, 5);
   triple(interpolate_predictor(line, INT32_MAX, INT32_MAX, g), 10, -10, 5);
+  triple(interpolate_predictor(line, INT32_MIN, 0, g), 2, -2, 1);
+  triple(interpolate_predictor(line, 1, -1, g), 4, -4, 2);
+  triple(interpolate_predictor(line, -1, INT32_MIN, g), 2, -2, 1);
   const MotionGrid column{1, 2, line.values};
   triple(interpolate_predictor(column, 0, 1, g), 4, -4, 2);
   const MotionGrid single{1, 1, {{{-3, 3}, 7}}};

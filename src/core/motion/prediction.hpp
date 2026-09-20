@@ -77,10 +77,11 @@ inline MotionTriple interpolate_predictor(const MotionGrid& parent, std::int32_t
   validate(parent);
   const int r = 3 - log_pel(g.child_pel) + log_pel(g.parent_pel);
   if (!geometry_detail::block_pair(g.block_width, g.block_height) || g.overlap_x < 0 || g.overlap_y < 0 ||
-      g.overlap_x > g.block_width / 2 || g.overlap_y > g.block_height / 2 || child_x < 0 || child_y < 0)
+      g.overlap_x > g.block_width / 2 || g.overlap_y > g.block_height / 2)
     throw std::invalid_argument("invalid parent interpolation geometry");
   const auto xmax = 2 * std::int64_t(parent.width) - 1, ymax = 2 * std::int64_t(parent.height) - 1;
-  const auto i = std::min(std::int64_t(child_x), xmax), t = std::min(std::int64_t(child_y), ymax);
+  const auto i = std::clamp(std::int64_t(child_x), std::int64_t{0}, xmax);
+  const auto t = std::clamp(std::int64_t(child_y), std::int64_t{0}, ymax);
   const int x = static_cast<int>(i / 2), y = static_cast<int>(t / 2);
   const int dx = 2 * int(i % 2) - 1, dy = 2 * int(t % 2) - 1;
   const bool edge_x = i == 0 || i == xmax, edge_y = t == 0 || t == ymax;
