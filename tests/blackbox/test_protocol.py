@@ -6,6 +6,7 @@ import unittest
 from cases import CASES
 from protocol import SCHEMA, compare, digest_json, validate_result
 from worker import configure_kernel
+from render_cases import CASES as RENDER_CASES
 
 
 class ProtocolTests(unittest.TestCase):
@@ -87,6 +88,64 @@ class ProtocolTests(unittest.TestCase):
                 result["records"][0]["properties"]["Marker"] = dict(type=kind, count=1, values=[value])
                 with self.assertRaises(ValueError):
                     validate_result(result, self.spec, "mvu")
+
+    def render_result(self):
+        spec = RENDER_CASES[0]
+        result = copy.deepcopy(self.result)
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec))
+        result["input_video"] = {"width": 1}
+        sample = {k: copy.deepcopy(v) for k, v in result["records"][0].items()
+                  if k not in ("member", "frame", "request")}
+        result["records"] = [dict(request=i, member=m, frame=n, **copy.deepcopy(sample))
+                              for i, (m, n) in enumerate(spec["requests"])]
+        result["auxiliary_inputs"] = [dict(name=name, video={"width": 1}, frames=copy.deepcopy(result["inputs"]))
+                                      for name in ["super_source", "vectors0"]]
+        return spec, result
+
+    def test_auxiliary_inputs_are_required_and_compared_first(self):
+        spec, result = self.render_result()
+        validate_result(result, spec, "mvu")
+        missing = copy.deepcopy(result)
+        missing["auxiliary_inputs"].pop()
+        with self.assertRaises(ValueError):
+            validate_result(missing, spec, "mvu")
+        changed = copy.deepcopy(result)
+        changed["auxiliary_inputs"][1]["frames"][0]["properties"].clear()
+        self.assertEqual(compare(result, changed)[0], "input_mismatch")
+        changed = copy.deepcopy(result)
+        changed["input_video"]["width"] = 2
+        self.assertEqual(compare(result, changed)[0], "input_mismatch")
+        del changed["input_video"]
+        with self.assertRaises(ValueError):
+            validate_result(changed, spec, "mvu")
+
+    def test_observed_errors_stay_red_including_matching_rejections(self):
+        spec, good = self.render_result()
+        creation = copy.deepcopy(good)
+        creation.update(outputs=[], records=[], creation_error=dict(type="Error", message="original detail"))
+        validate_result(creation, spec, "mvu")
+        for pair in [(creation, good), (good, creation), (creation, creation)]:
+            self.assertEqual(compare(*pair)[0], "difference")
+        failed = copy.deepcopy(good)
+        failed["records"][0] = dict(request=0, member=0, frame=2,
+                                     error=dict(type="Error", message="upstream detail"))
+        validate_result(failed, spec, "mvu")
+        for pair in [(failed, good), (good, failed), (failed, failed)]:
+            self.assertEqual(compare(*pair)[0], "difference")
+        failed["records"][0]["error"]["message"] = ""
+        with self.assertRaises(ValueError):
+            validate_result(failed, spec, "mvu")
+
+    def test_one_float_bit_is_a_difference(self):
+        reference, candidate = copy.deepcopy(self.result), copy.deepcopy(self.result)
+        # Adjacent IEEE-754 float32 values: 1.0 and 1.0 + 2**-23.
+        for result, bits in [(reference, 0x3f800000), (candidate, 0x3f800001)]:
+            data = bits.to_bytes(4, "little")
+            result["records"][0]["planes"][0].update(sample_bytes=4, data=data.hex(),
+                                                       sha256=hashlib.sha256(data).hexdigest())
+            validate_result(result, self.spec, "mvu")
+        self.assertEqual(compare(reference, candidate)[0], "difference")
+        self.assertEqual(compare(reference, reference), ("pass", None))
 
 
 if __name__ == "__main__":

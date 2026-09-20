@@ -14,7 +14,9 @@ import struct
 import sys
 import traceback
 
-from cases import ANALYSIS_KEYS, BY_ID, SUPER_KEYS, build
+from cases import ANALYSIS_KEYS, SUPER_KEYS, build
+from catalog import BY_ID
+import render_cases
 from protocol import SCHEMA, digest_file, digest_json
 
 
@@ -123,24 +125,60 @@ def main():
             vs_package=package_vs, mvu_package=package_mvu, core=str(core),
             plugin_path=str(loaded), plugin_sha256=loaded_hash,
             plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
+        ordinary = ["TestMarker", "TestData", "TestFloat", "_Field", "_SceneChangePrev", "_SceneChangeNext",
+                    "_DurationNum", "_DurationDen"]
+        keys = ordinary + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
+        prepared = None
+        if spec.get("phase") == 2:
+            result["stage"] = "input"
+            prepared = render_cases.prepare(vs, core, spec)
+            result["inputs"] = []
+            result["auxiliary_inputs"] = []
+            for name, node in prepared.items():
+                frames = []
+                for n in range(spec["length"]):
+                    with node.get_frame(n) as frame:
+                        frames.append(dict(frame=n, **snapshot(frame, keys)))
+                if name == "clip":
+                    result["input_video"] = video_info(node)
+                    result["inputs"] = frames
+                else:
+                    result["auxiliary_inputs"].append(dict(name=name, video=video_info(node), frames=frames))
         result["stage"] = "creation"
-        source, outputs = build(vs, core, plugin, spec)
+        try:
+            if prepared is None:
+                source, outputs = build(vs, core, plugin, spec)
+            else:
+                source = prepared["clip"]
+                outputs = render_cases.build(plugin, spec, prepared)
+        except vs.Error as error:
+            if prepared is None:
+                raise
+            result.update(status="ok", stage="complete", outputs=[], records=[],
+                          creation_error=dict(type=type(error).__name__, message=str(error)))
+            args.output.write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8")
+            return 0
         if len(outputs) != spec["members"]:
             raise ValueError(f"expected {spec['members']} outputs, got {len(outputs)}")
         result["outputs"] = [video_info(node) for node in outputs]
-        ordinary = ["TestMarker", "_SceneChangePrev", "_SceneChangeNext", "_DurationNum", "_DurationDen"]
-        keys = ordinary + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
         result["stage"] = "input"
-        result["inputs"] = []
-        for n in range(spec["length"]):
-            with source.get_frame(n) as frame:
-                result["inputs"].append(dict(frame=n, **snapshot(frame, ordinary)))
+        if prepared is None:
+            result["inputs"] = []
+            for n in range(spec["length"]):
+                with source.get_frame(n) as frame:
+                    result["inputs"].append(dict(frame=n, **snapshot(frame, ordinary)))
         result["stage"] = "frame"
         result["records"] = []
         for ordinal, (member, n) in enumerate(spec["requests"]):
             result["active_request"] = dict(request=ordinal, member=member, frame=n)
-            with outputs[member].get_frame(n) as frame:
-                result["records"].append(dict(**result["active_request"], **snapshot(frame, keys)))
+            try:
+                acquired = outputs[member].get_frame(n)
+            except vs.Error as error:
+                result["records"].append(dict(**result["active_request"],
+                    error=dict(type=type(error).__name__, message=str(error))))
+            else:
+                with acquired as frame:
+                    result["records"].append(dict(**result["active_request"], **snapshot(frame, keys)))
         result.pop("active_request", None)
         result["status"] = "ok"
         result["stage"] = "complete"

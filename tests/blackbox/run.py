@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from cases import BY_ID, CASES
+from catalog import BY_ID, CASES
 from protocol import SCHEMA, compare, digest_file, validate_result
 
 
@@ -68,7 +68,7 @@ def execute(spec, backend, args, directory):
 def write_report(directory, report):
     (directory / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     counts = Counter(item["status"] for item in report["cases"])
-    lines = ["# Phase-one compatibility report", "", f"Status: {report['status']}",
+    lines = ["# Binary compatibility report", "", f"Status: {report['status']}",
              f"Completed: {len(report['cases'])}/{len(report['selected_cases'])}",
              f"Counts: {dict(counts)}", "", "| Case | Result |", "| --- | --- |"]
     lines += [f"| {item['id']} | {item['status']} |" for item in report["cases"]]
@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--plugin", type=Path, help="candidate plugin built from neo-mv")
     parser.add_argument("--case", action="append", choices=BY_ID, dest="cases", help="repeat to select cases")
     parser.add_argument("--list", action="store_true", help="list cases without importing VS")
+    parser.add_argument("--phase", type=int, choices=[1, 2], help="select one development phase")
     parser.add_argument("--threads", type=int, choices=[1, 4], default=1)
     parser.add_argument("--timeout", type=float, default=30, help="per backend/case timeout in seconds")
     parser.add_argument("--output-root", type=Path, default=Path(__file__).resolve().parents[2] / "build" / "blackbox")
@@ -94,18 +95,22 @@ def main():
     parser.add_argument("--neo-kernel", choices=["scalar", "highway"], default="scalar",
                         help="select and query the loaded candidate backend; highway requires a real SIMD target")
     args = parser.parse_args()
+    if args.cases and len(args.cases) != len(set(args.cases)):
+        parser.error("duplicate case selection")
+    selected = [BY_ID[key] for key in args.cases] if args.cases else CASES
+    if args.phase is not None:
+        selected = [spec for spec in selected if spec.get("phase", 1) == args.phase]
+    if not selected:
+        parser.error("no cases selected")
     if args.list:
-        for spec in CASES:
+        for spec in selected:
             print(spec["id"])
         return 0
     if args.plugin is None or not args.plugin.is_file():
         parser.error("--plugin must name an existing candidate binary")
     if not 0 < args.timeout <= 300:
         parser.error("--timeout must be in (0,300]")
-    if args.cases and len(args.cases) != len(set(args.cases)):
-        parser.error("duplicate case selection")
     args.plugin = args.plugin.resolve()
-    selected = [BY_ID[key] for key in args.cases] if args.cases else CASES
     args.output_root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=args.output_root.resolve()))
     report = dict(schema=SCHEMA, status="incomplete", started_utc=datetime.now(timezone.utc).isoformat(),
