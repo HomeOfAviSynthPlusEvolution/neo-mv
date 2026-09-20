@@ -20,6 +20,16 @@ CASES = [
       for fmt in ["GRAY8", "YUV420P16", "RGB24", "RGBS", "GRAYS"] for delta in [-1, 1]],
     case("analyse.zero_mask", mask="zero"),
     case("analyse.weight128", mask="weighted"),
+    # Non-power-of-two and spatially varying weights exercise rounded products
+    # in the fitted sums; masks restricted to 0/1/128 give weaker coverage.
+    case("analyse.weight137", mask="weighted137"),
+    case("analyse.weight137_zoom", mask="weighted137", params=dict(zoom=True)),
+    case("analyse.weight137_rotation", mask="weighted137", params=dict(rot=True)),
+    case("analyse.weight137_aspect", mask="weighted137", params=dict(zoom=True, rot=True, pixaspect=1.5)),
+    case("analyse.varying_weights", width=136, height=72, grid=[17, 9], mask="varying",
+         frame_vectors=True, params=dict(zoom=True, rot=True)),
+    case("analyse.varying_weights_aspect", width=136, height=72, grid=[17, 9], mask="varying",
+         frame_vectors=True, delta=1, params=dict(zoom=True, rot=True, pixaspect=1.5)),
     case("analyse.no_mask_border", width=80, height=80, grid=[9, 9], mask=None),
     case("analyse.no_mask_small", mask=None),
     case("analyse.outside_mask", width=16, height=16, grid=[3, 3], mask="zero"),
@@ -169,9 +179,19 @@ def prepare(vs, core, spec):
 
         inputs["vectors"] = core.std.ModifyFrame(source, source, vectors)
         if spec["mask"] is not None:
-            value = {"zero": 0, "one": 1, "weighted": 128}[spec["mask"]]
+            value = {"zero": 0, "one": 1, "weighted": 128, "weighted137": 137, "varying": 0}[spec["mask"]]
             inputs["mask"] = core.std.BlankClip(width=spec["width"], height=spec["height"], format=vs.GRAY8,
                                                 length=spec["length"], color=[value])
+            if spec["mask"] == "varying":
+                def varying_mask(n, f):
+                    out = f.copy()
+                    data = out[0]
+                    for y in range(data.shape[0]):
+                        for x in range(data.shape[1]):
+                            data[y, x] = (13*(x//8) + 29*(y//8) + 31*n + 7) % 256
+                    return out
+                mask = inputs["mask"]
+                inputs["mask"] = core.std.ModifyFrame(mask, mask, varying_mask)
             if spec.get("input_error_frames", {}).get("mask"):
                 def failing_mask(n, f):
                     if n in spec["input_error_frames"]["mask"]:

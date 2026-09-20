@@ -147,6 +147,36 @@ float fused_add(float a, float b, float c) {
   (void)mul(a, b);
   return finite(std::fma(a, b, finite(c)));
 }
+// Reference reduction spells out all ten sums independently of accumulate_fit.
+template <class Residuals>
+FitSums oracle_sums(const Observations& o, const std::vector<float>& weights, Residuals&& errors,
+                    bool zoom, bool rotation) {
+  FitSums sums;
+  const auto madd = [](float a, float b, float c) {
+    return simd::depan_rows::native_fma() ? fused_add(a, b, c) : add(c, mul(a, b));
+  };
+  for (std::size_t i = 0; i < o.values.size(); ++i) {
+    const auto e = errors(i);
+    const float w = f32(weights[i]);
+    const auto x = static_cast<std::uint64_t>(o.values[i].x);
+    const auto y = static_cast<std::uint64_t>(o.values[i].y);
+    sums.n = add(sums.n, w);
+    sums.x2 = madd(analysis_detail::square32(x), w, sums.x2);
+    sums.y2 = madd(analysis_detail::square32(y), w, sums.y2);
+    sums.residual = madd(add(mul(e[0], e[0]), mul(e[1], e[1])), w, sums.residual);
+    sums.gx = madd(mul(2, e[0]), w, sums.gx);
+    sums.gy = madd(mul(2, e[1]), w, sums.gy);
+    if (zoom) {
+      sums.gxx = madd(mul(analysis_detail::integer32(2 * x), e[0]), w, sums.gxx);
+      sums.gyy = madd(mul(analysis_detail::integer32(2 * y), e[1]), w, sums.gyy);
+    }
+    if (rotation) {
+      sums.gxy = madd(mul(analysis_detail::integer32(2 * y), e[0]), w, sums.gxy);
+      sums.gyx = madd(mul(analysis_detail::integer32(2 * x), e[1]), w, sums.gyx);
+    }
+  }
+  return sums;
+}
 struct FmaOracle : ScalarResiduals {
   static auto prepare(const Observations& o, Transform t) {
     if (!simd::depan_rows::native_fma()) {
@@ -174,6 +204,11 @@ struct FmaOracle : ScalarResiduals {
   }
 };
 struct OracleResiduals : FmaOracle {
+  static FitSums accumulate(const Observations& o, const std::vector<float>& weights, Transform map,
+                            bool zoom, bool rotation) {
+    const auto rows = FmaOracle::prepare(o, map);
+    return oracle_sums(o, weights, [&rows](std::size_t i) { return rows[i]; }, zoom, rotation);
+  }
   static auto prepare(const Observations& o, Transform t) {
     return [rows = FmaOracle::prepare(o, t)](std::size_t i) { return rows[i]; };
   }
@@ -249,6 +284,16 @@ void fitting() {
   fit_pair(golden, p, true);
   const auto result = fit<HighwayResiduals>(golden, p);
   CHECK(result.good && result.iteration == 10);
+  // The final good-motion comparison stays strict even next to its threshold.
+  for (float threshold : {std::nextafter(result.error, 0.0f), result.error,
+                          std::nextafter(result.error, std::numeric_limits<float>::infinity())}) {
+    auto boundary = p;
+    boundary.error = threshold;
+    fit_pair(golden, boundary);
+    const auto actual = fit<HighwayResiduals>(golden, boundary);
+    CHECK(actual.good == (result.error < threshold));
+    CHECK(actual.iteration == result.iteration);
+  }
   if (!simd::depan_rows::native_fma()) {
     same_float(result.map.tx, 0.49161040782928467f);
     same_float(result.error, 1.6047950983047485f);
@@ -425,6 +470,43 @@ void guarded_residuals() {
         [&] { simd::depan_rows::residuals(x.data, y.data, dx.data, dy.data, width, overflow, ex.data, ey.data); }));
   }
 }
+void guarded_accumulation() {
+  std::mt19937 random(58401);
+  for (int width : widths) {
+    auto o = observations(width, 1);
+    EndRow<float> ex(width), ey(width);
+    std::vector<float> weights(width);
+    for (int i = 0; i < width; ++i) {
+      ex.data[i] = float(int(random() % 8193) - 4096) / 37.0f;
+      ey.data[i] = float(int(random() % 8193) - 4096) / 53.0f;
+      weights[i] = float(int(random() % 1025) - 512) / 17.0f;
+    }
+    for (bool zoom : {false, true})
+      for (bool rotation : {false, true}) {
+        const auto expected = oracle_sums(o, weights,
+            [&](std::size_t i) { return std::array<float, 2>{ex.data[i], ey.data[i]}; }, zoom, rotation);
+        const auto actual = simd::depan_rows::accumulate(o, weights, ex.data, ey.data, zoom, rotation);
+        const std::array<float, 10> a{expected.n, expected.x2, expected.y2, expected.residual, expected.gx,
+                                      expected.gy, expected.gxx, expected.gyy, expected.gxy, expected.gyx};
+        const std::array<float, 10> b{actual.n, actual.x2, actual.y2, actual.residual, actual.gx,
+                                      actual.gy, actual.gxx, actual.gyy, actual.gxy, actual.gyx};
+        CHECK(std::memcmp(a.data(), b.data(), sizeof(a)) == 0);
+      }
+    for (float invalid : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+      ex.data[width - 1] = invalid;
+      CHECK(rejected([&] { simd::depan_rows::accumulate(o, weights, ex.data, ey.data, true, true); }));
+    }
+  }
+  auto o = observations(2, 1);
+  const float ex[] = {-0.5f, 0x1.000002p-1f}, ey[] = {0, 0};
+  const auto sums = simd::depan_rows::accumulate(o, {1, 0x1.fffffcp-1f}, ex, ey, true, true);
+  same_float(sums.gx, simd::depan_rows::native_fma() ? -0x1p-46f : 0.0f);
+  // A finite fused cancellation must not hide an overflowing weighted product.
+  for (auto& value : o.values)
+    value.x = INT64_MAX;
+  const float zeros[] = {0, 0};
+  CHECK(rejected([&] { simd::depan_rows::accumulate(o, {-3, 5}, zeros, zeros, false, false); }));
+}
 void guarded_adjustments() {
   for (const int width : widths) {
     EndRow<float> values(width), scales(width), gradients(width), output(width);
@@ -465,6 +547,7 @@ int main() {
       guarded_weighted();
       guarded_residuals();
       guarded_adjustments();
+      guarded_accumulation();
     }
     hwy::SetSupportedTargetsForTest(0);
     std::cout << "Depan exact differentials passed\n";

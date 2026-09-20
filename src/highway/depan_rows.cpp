@@ -37,6 +37,18 @@ auto MulAdd(D d, V a, V b, V c) {
 #endif
 }
 bool NativeFma() { return HWY_NATIVE_FMA != 0; }
+struct FitArithmetic {
+  static float multiply_add(float a, float b, float c) {
+    const hn::CappedTag<float, 1> d;
+    // One lane preserves the serial reduction order on every target.
+    return hn::GetLane(MulAdd(d, hn::Set(d, a), hn::Set(d, b), hn::Set(d, c)));
+  }
+};
+depan::FitSums Accumulate(const depan::Observations& observations, const std::vector<float>& weights,
+                          const float* ex, const float* ey, bool zoom, bool rotation) {
+  return depan::accumulate_fit<FitArithmetic>(observations, weights,
+      [ex, ey](std::size_t i) { return std::array<float, 2>{ex[i], ey[i]}; }, zoom, rotation);
+}
 template <class D>
 void AdjustChunk(D d, const float* values, const float* scales, const float* gradients, float* output) {
   const auto value = Check(d, hn::LoadU(d, values));
@@ -121,6 +133,11 @@ HWY_EXPORT(Residuals);
 HWY_EXPORT(Weighted);
 HWY_EXPORT(NativeFma);
 HWY_EXPORT(Adjust);
+HWY_EXPORT(Accumulate);
+depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights,
+                          const float* ex, const float* ey, bool zoom, bool rotation) {
+  return HWY_DYNAMIC_DISPATCH(Accumulate)(observations, weights, ex, ey, zoom, rotation);
+}
 bool native_fma() { return HWY_DYNAMIC_DISPATCH(NativeFma)(); }
 void adjust(const float* values, const float* scales, const float* gradients, std::size_t count, float* output) {
   HWY_DYNAMIC_DISPATCH(Adjust)(values, scales, gradients, count, output);

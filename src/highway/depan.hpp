@@ -32,6 +32,11 @@ struct HighwayResiduals {
                                 result.ex.data(), result.ey.data());
     return result;
   }
+  static FitSums accumulate(const Observations& observations, const std::vector<float>& weights, Transform map,
+                            bool zoom, bool rotation) {
+    const auto rows = prepare(observations, map);
+    return simd::depan_rows::accumulate(observations, weights, rows.ex.data(), rows.ey.data(), zoom, rotation);
+  }
 };
 class HighwaySamplingPlan : public SamplingPlan {
 public:

@@ -243,6 +243,47 @@ inline std::vector<float> select_weights(const Observations& observations, const
   return weights;
 }
 
+struct FitSums {
+  float n = 0.1f, x2 = 0.1f, y2 = 0.1f, residual = 0.1f;
+  float gx = 0, gy = 0, gxx = 0, gyy = 0, gxy = 0, gyx = 0;
+};
+struct ScalarFitArithmetic {
+  static float multiply_add(float a, float b, float c) { return add(c, mul(a, b)); }
+};
+// The caller validates the grid and weight count. Keep observation order and
+// separately rounded inner products; only the outer weighted accumulation may fuse.
+template <class Arithmetic = ScalarFitArithmetic, class Residuals>
+inline FitSums accumulate_fit(const Observations& observations, const std::vector<float>& weights,
+                              Residuals&& residuals, bool zoom, bool rotation) {
+  FitSums sums;
+  auto& [n, x2, y2, residual, gx, gy, gxx, gyy, gxy, gyx] = sums;
+  for (std::size_t i = 0; i < observations.values.size(); ++i) {
+    const auto& value = observations.values[i];
+    const float weight = f32(weights[i]);
+    const auto errors = residuals(i);
+    const float ex = errors[0], ey = errors[1];
+    n = add(n, weight);
+    x2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight, x2);
+    y2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight, y2);
+    residual = Arithmetic::multiply_add(add(mul(ex, ex), mul(ey, ey)), weight, residual);
+    gx = Arithmetic::multiply_add(mul(2.0f, ex), weight, gx);
+    gy = Arithmetic::multiply_add(mul(2.0f, ey), weight, gy);
+    if (zoom) {
+      gxx = Arithmetic::multiply_add(
+          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex), weight, gxx);
+      gyy = Arithmetic::multiply_add(
+          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey), weight, gyy);
+    }
+    if (rotation) {
+      gxy = Arithmetic::multiply_add(
+          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex), weight, gxy);
+      gyx = Arithmetic::multiply_add(
+          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey), weight, gyx);
+    }
+  }
+  return sums;
+}
+
 struct ScalarResiduals {
   static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
                                     const std::array<float, 4>& gradients, std::size_t count) {
@@ -256,6 +297,10 @@ struct ScalarResiduals {
                                   analysis_detail::residual_y(observations.values[i], map)};
     };
   }
+  static FitSums accumulate(const Observations& observations, const std::vector<float>& weights, Transform map,
+                            bool zoom, bool rotation) {
+    return accumulate_fit(observations, weights, prepare(observations, map), zoom, rotation);
+  }
 };
 template <class Residuals = ScalarResiduals>
 inline FitUpdate fit_update(const Observations& observations, const std::vector<float>& weights, const Transform& map,
@@ -267,29 +312,8 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
   if (aspect2 == 0)
     throw std::invalid_argument("zero Depan squared aspect");
   f32(step);
-  float n = 0.1f, x2 = 0.1f, y2 = 0.1f, residual = 0.1f;
-  float gx = 0, gy = 0, gxx = 0, gyy = 0, gxy = 0, gyx = 0;
-  const auto residuals = Residuals::prepare(observations, map);
-  for (std::size_t i = 0; i < observations.values.size(); ++i) {
-    const auto& value = observations.values[i];
-    const float weight = f32(weights[i]);
-    const auto errors = residuals(i);
-    const float ex = errors[0], ey = errors[1];
-    n = add(n, weight);
-    x2 = add(x2, mul(analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight));
-    y2 = add(y2, mul(analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight));
-    residual = add(residual, mul(add(mul(ex, ex), mul(ey, ey)), weight));
-    gx = add(gx, mul(mul(2.0f, ex), weight));
-    gy = add(gy, mul(mul(2.0f, ey), weight));
-    if (zoom) {
-      gxx = add(gxx, mul(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex), weight));
-      gyy = add(gyy, mul(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey), weight));
-    }
-    if (rotation) {
-      gxy = add(gxy, mul(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex), weight));
-      gyx = add(gyx, mul(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey), weight));
-    }
-  }
+  auto [n, x2, y2, residual, gx, gy, gxx, gyy, gxy, gyx] =
+      Residuals::accumulate(observations, weights, map, zoom, rotation);
   gx = div(gx, mul(n, 2.0f));
   gy = div(gy, mul(n, 2.0f));
   gxx = div(gxx, mul(mul(x2, 2.0f), 1.5f));
