@@ -1,5 +1,7 @@
 #include "core/super/pyramid.hpp"
 #include "core/motion/analyse.hpp"
+#include "core/motion/recalculate.hpp"
+#include "core/motion/super_input.hpp"
 
 #include <iostream>
 
@@ -145,43 +147,41 @@ void analysis_integration() {
   Input<std::uint8_t> input(p, 42);
   SuperPyramid<std::uint8_t> current(SuperPlan<std::uint8_t>(p, 8), input.views);
   const auto reference = current;
-  std::vector<SamplingGeometry> geometries;
-  std::vector<SamplingFrames<std::uint8_t>> frames;
-  const auto& g = current.plan().geometry();
-  for (std::size_t l = 0; l < g.planes[0].levels.size(); ++l) {
-    SamplingGeometry sg;
-    sg.pel = l == 0 ? p.pel : 1;
-    sg.ratio_x = sg.ratio_y = 2;
-    sg.chroma = true;
-    SamplingFrames<std::uint8_t> sf;
-    for (int k = 0; k < 3; ++k) {
-      sf.current[k] = current.phase(k, static_cast<int>(l));
-      sg.planes[k].pad_x = g.planes[k].pad_x;
-      sg.planes[k].pad_y = g.planes[k].pad_y;
-      sg.planes[k].current = {sf.current[k].width(), sf.current[k].height()};
-      for (int ay = 0; ay < sg.pel; ++ay)
-        for (int ax = 0; ax < sg.pel; ++ax) {
-          auto v = reference.phase(k, static_cast<int>(l), ax, ay);
-          sf.reference[k][ay * sg.pel + ax] = v;
-          sg.planes[k].reference[ay * sg.pel + ax] = {v.width(), v.height()};
-        }
-    }
-    geometries.push_back(sg);
-    frames.push_back(sf);
-  }
-  AnalysisMetadata m;
-  m.width = m.height = m.real_width = m.real_height = 32;
-  m.pad_x = m.pad_y = 4;
-  m.block_width = m.block_height = 4;
-  m.pel = 4;
-  m.delta = 1;
-  m.bits = 8;
-  m.chroma = true;
-  m.ratio_x = m.ratio_y = 2;
+  const auto geometries = super_sampling_geometry(current.plan());
+  const auto frames = borrow_super_frames(current, reference);
+  auto m = super_analysis_metadata(current.plan(), 1);
   const auto vectors = analyse_vectors<std::uint8_t>(m, geometries, frames);
   CHECK(vectors.values.size() == 64);
   for (const auto& v : vectors.values)
     CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+  AnalysisField field{m, FieldState::complete, vectors};
+  m.levels = 1;
+  const auto refined = recalculate_vectors(field, m, geometries[0], frames[0]);
+  for (const auto& v : refined.values)
+    CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+  const auto luma_geometry = super_sampling_geometry(current.plan(), false);
+  const auto luma_frames = borrow_super_frames(current, reference, false);
+  const auto luma_metadata = super_analysis_metadata(current.plan(), -1, false);
+  CHECK(!luma_metadata.chroma && luma_metadata.ratio_x == 2 && luma_metadata.delta == -1);
+  const auto luma = analyse_vectors<std::uint8_t>(luma_metadata, luma_geometry, luma_frames);
+  CHECK(luma.values.size() == 64 && luma.values.back().error == 0);
+  CHECK(luma_frames[0].reference[1][0].data() == nullptr);
+  rejects([&] { validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(p, 8, 2, 1, true)); });
+  auto changed = p;
+  changed.pel = 2;
+  rejects([&] { validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(changed, 8)); });
+  changed = p;
+  changed.one_level = true;
+  rejects([&] { validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(changed, 8)); });
+  changed = p;
+  changed.pad_x = 5;
+  rejects([&] { validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(changed, 8)); });
+  changed = p;
+  changed.ratio_y = 1;
+  rejects([&] { validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(changed, 8)); });
+  validate_super_pair(current.plan(), SuperPlan<std::uint8_t>(p, 8, 0, 0));
+  SuperPlan<std::uint16_t> depth10(p, 10), depth12(p, 12);
+  rejects([&] { validate_super_pair(depth10, depth12); });
 }
 } // namespace
 int main() {
