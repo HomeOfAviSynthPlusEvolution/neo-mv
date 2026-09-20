@@ -145,7 +145,36 @@ def first_difference(left, right, path=""):
     return None
 
 
-def compare(reference, candidate):
+def mask_range_observations(reference, candidate, spec):
+    """Project only the approved MVU 8 / VS R79 mask discrepancy for comparison.
+
+    Returned records are copies; worker observations are never rewritten.
+    Omitted spec keeps the comparator completely strict.
+    """
+    left, right = reference["records"], candidate["records"]
+    if not spec or spec.get("phase") != 3 or spec.get("operation") not in (
+            "VectorLengthMask", "SADMask", "OcclusionMask") or \
+            reference.get("backend") != "mvu" or candidate.get("backend") != "neo" or \
+            reference.get("environment", {}).get("mvu_package") != "8" or \
+            any(r.get("environment", {}).get("vs_package") != "79" for r in (reference, candidate)):
+        return left, right, []
+    expected_left = dict(type="int", count=1, values=[0])
+    expected_right = dict(type="int", count=1, values=[1])
+    left, right, known = list(left), list(right), []
+    for i, (a, b) in enumerate(zip(left, right)):
+        av, bv = a.get("properties", {}).get("_Range"), b.get("properties", {}).get("_Range")
+        if "_Range" not in a.get("property_names", []) or "_Range" not in b.get("property_names", []) or \
+                first_difference(av, expected_left) or first_difference(bv, expected_right):
+            continue
+        known.append(dict(rule="mvu8-vs79-mask-range", path=f"/records/{i}/properties/_Range",
+                          reference=av, candidate=bv,
+                          request={key: a[key] for key in ("request", "member", "frame")}))
+        left[i] = dict(a, properties={k: v for k, v in a["properties"].items() if k != "_Range"})
+        right[i] = dict(b, properties={k: v for k, v in b["properties"].items() if k != "_Range"})
+    return left, right, known
+
+
+def compare(reference, candidate, spec=None):
     # Do not compare DLL identity/host addresses/private payloads. Do compare the
     # actual generated source before assigning any difference to an algorithm.
     difference = first_difference(reference.get("input_video"), candidate.get("input_video"), "/input_video")
@@ -163,18 +192,27 @@ def compare(reference, candidate):
         # are red; preserve both messages without claiming their causes match.
         return "difference", dict(path="/creation", reference=reference.get("creation_error", "success"),
                                   candidate=candidate.get("creation_error", "success"))
+    left_records, right_records, known = mask_range_observations(reference, candidate, spec)
     for index, (left, right) in enumerate(zip(reference["records"], candidate["records"])):
         if "error" in left or "error" in right:
-            return "difference", dict(path=f"/records/{index}/error", reference=left.get("error", "success"),
-                                      candidate=right.get("error", "success"),
-                                      request={key: left[key] for key in ("request", "member", "frame")})
-    for field in ("outputs", "records"):
-        difference = first_difference(reference[field], candidate[field], "/" + field)
+            difference = dict(path=f"/records/{index}/error", reference=left.get("error", "success"),
+                              candidate=right.get("error", "success"),
+                              request={key: left[key] for key in ("request", "member", "frame")})
+            if known:
+                difference["known_differences"] = known
+            return "difference", difference
+    for field, left, right in (("outputs", reference["outputs"], candidate["outputs"]),
+                               ("records", left_records, right_records)):
+        difference = first_difference(left, right, "/" + field)
         if difference:
             if field == "records":
                 index = int(difference["path"].split("/")[2]) if difference["path"].split("/")[2].isdigit() else None
                 if index is not None:
                     difference["request"] = {key: reference[field][index][key]
                                              for key in ("request", "member", "frame")}
+            if known:
+                difference["known_differences"] = known
             return "difference", difference
+    if known:
+        return "known_difference", dict(known_differences=known)
     return "pass", None

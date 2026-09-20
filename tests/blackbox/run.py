@@ -2,7 +2,8 @@
 
 No benchmarks, timings, source checkout or package installation are performed.
 Use --list to inspect cases. Reports are stored in a fresh directory on each run.
-Exit status: 0 = all pass; 1 = observed differences; 2 = incomplete/failed run.
+Exit status: 0 = exact matches or approved known differences only;
+1 = new observed differences; 2 = incomplete/failed run.
 """
 import argparse
 from collections import Counter
@@ -76,7 +77,8 @@ def write_report(directory, report):
         if item.get("difference"):
             lines += ["", "## " + item["id"], "", "```json",
                       json.dumps(item["difference"], indent=2), "```"]
-    lines += ["", "This is a binary compatibility result, not a specification verdict or performance measurement.",
+    lines += ["", "known_difference denotes an approved exact exception, not complete equality.",
+              "This is a binary compatibility result, not a specification verdict or performance measurement.",
               "Worker JSON and logs retain the full observations and errors. No reference private payload is exported."]
     (directory / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -129,13 +131,14 @@ def main():
         if any(value is None for value in results.values()):
             status, difference = "execution_error", None
         else:
-            status, difference = compare(results["mvu"], results["neo"])
+            status, difference = compare(results["mvu"], results["neo"], spec)
         report["cases"].append(dict(id=spec["id"], status=status, difference=difference, workers=workers))
         write_report(directory, report)
         print(f"{spec['id']}: {status}", flush=True)
     statuses = {item["status"] for item in report["cases"]}
     code = 2 if statuses & {"execution_error", "input_mismatch"} else 1 if "difference" in statuses else 0
-    report["status"] = "pass" if code == 0 else "error" if code == 2 else "difference"
+    report["status"] = ("error" if code == 2 else "difference" if code == 1 else
+                        "known_difference" if "known_difference" in statuses else "pass")
     write_report(directory, report)
     return code
 
