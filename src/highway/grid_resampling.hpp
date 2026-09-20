@@ -6,6 +6,7 @@ namespace neo_mv::simd {
 class GridResamplingPlan {
   GridResamplingGeometry geometry_;
   std::int64_t covered_width_, covered_height_;
+  bool horizontal_first_;
 
 public:
   explicit GridResamplingPlan(GridResamplingGeometry g) : geometry_(g) {
@@ -17,6 +18,7 @@ public:
     covered_height_ = std::int64_t(g.blocks_y) * (g.block_height - g.overlap_y) + g.overlap_y;
     if (g.width > covered_width_ || g.height > covered_height_)
       throw std::invalid_argument("resampling grid does not cover visible image");
+    horizontal_first_ = grid_detail::horizontal_first(covered_width_, covered_height_, g.blocks_x, g.blocks_y);
   }
   const GridResamplingGeometry& geometry() const { return geometry_; }
 
@@ -49,19 +51,18 @@ public:
         }
       }
     const auto dx = std::uint64_t(covered_width_) * 2, dy = std::uint64_t(covered_height_) * 2;
-    if constexpr (!std::is_same_v<T, float>) {
-      if (dx > (std::uint64_t{1} << 32) / dy) {
-        neo_mv::GridResamplingPlan(g).resize(input, output, bits);
-        return;
-      }
-    }
-    std::vector<std::int64_t> left(g.width), right(g.width);
-    std::vector<double> remainders(g.width), top(g.blocks_x), bottom(g.blocks_x);
+    using Index = std::conditional_t<std::is_same_v<T, float>, std::int64_t, std::int32_t>;
+    using Sample = std::conditional_t<std::is_same_v<T, float>, double, std::int32_t>;
+    std::vector<Index> left(g.width), right(g.width);
+    std::vector<Sample> weights(g.width), top(g.blocks_x), bottom(g.blocks_x);
     for (int x = 0; x < g.width; ++x) {
       const auto axis = grid_detail::axis(x, g.blocks_x, covered_width_);
       left[x] = axis.first;
       right[x] = axis.second;
-      remainders[x] = double(axis.remainder);
+      if constexpr (std::is_same_v<T, float>)
+        weights[x] = double(axis.remainder);
+      else
+        weights[x] = static_cast<std::int32_t>(grid_detail::coefficient(axis.remainder, axis.denominator));
     }
     int first = -1, second = -1;
     constexpr int offset = std::is_same_v<T, std::int16_t> ? 32768 : 0;
@@ -70,21 +71,26 @@ public:
       if (first != axis.first) {
         for (int x = 0; x < g.blocks_x; ++x)
           if constexpr (std::is_same_v<T, std::int16_t>)
-            top[x] = double(input.row(axis.first)[x]) + offset;
+            top[x] = std::int32_t(input.row(axis.first)[x]) + offset;
           else
-            top[x] = double(input.row(axis.first)[x]);
+            top[x] = Sample(input.row(axis.first)[x]);
         first = axis.first;
       }
       if (second != axis.second) {
         for (int x = 0; x < g.blocks_x; ++x)
           if constexpr (std::is_same_v<T, std::int16_t>)
-            bottom[x] = double(input.row(axis.second)[x]) + offset;
+            bottom[x] = std::int32_t(input.row(axis.second)[x]) + offset;
           else
-            bottom[x] = double(input.row(axis.second)[x]);
+            bottom[x] = Sample(input.row(axis.second)[x]);
         second = axis.second;
       }
-      mask_rows::resize(top.data(), bottom.data(), left.data(), right.data(), remainders.data(), g.width, double(dx),
-                        double(dy), double(axis.remainder), output.row(y).data());
+      if constexpr (std::is_same_v<T, float>)
+        mask_rows::resize(top.data(), bottom.data(), left.data(), right.data(), weights.data(), g.width, double(dx),
+                          double(dy), double(axis.remainder), output.row(y).data());
+      else
+        mask_rows::resize(top.data(), bottom.data(), left.data(), right.data(), weights.data(), g.width,
+                          static_cast<std::int32_t>(grid_detail::coefficient(axis.remainder, axis.denominator)),
+                          horizontal_first_, output.row(y).data());
     }
   }
 };

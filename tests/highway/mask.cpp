@@ -1,5 +1,7 @@
 #include "highway/grid_resampling.hpp"
 #include "highway/mask_scores.hpp"
+#include "highway/rows.hpp"
+#include "hwy/targets.h"
 #include <iostream>
 #include <cstring>
 #include <random>
@@ -56,7 +58,7 @@ void grids(int bits) {
         neo_mv::simd::GridResamplingPlan(g).resize(input.read(), b.view(), bits);
         same(a.data, b.data);
       }
-  // Both sides of the integer fast-path bound, without huge allocations.
+  // Wide covered geometry and coefficient arithmetic, with bounded output.
   for (int side : {32765, 32767, 32769, INT32_MAX}) {
     const int width = side == INT32_MAX ? 17 : std::min(32767, 2 * (side / 2 + 1));
     neo_mv::GridResamplingGeometry g{2, 2, side / 2 + 1, side / 2 + 1, 0, 0, width, 3};
@@ -69,6 +71,33 @@ void grids(int bits) {
     neo_mv::simd::GridResamplingPlan(g).resize(input.read(), b.view(), bits);
     same(a.data, b.data);
   }
+}
+
+template <class T>
+void integer_extremes(int bits) {
+  const T low = std::is_signed_v<T> ? std::numeric_limits<T>::min() : T(0);
+  const T high = std::is_signed_v<T> ? std::numeric_limits<T>::max() : T((1u << bits) - 1);
+  // Widths straddle SIMD lane boundaries; the short overlapping vertical axis
+  // also exercises vertical-first, with real work in both passes.
+  for (int width : {1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129})
+    for (int height : {2, 3, 6}) {
+      const int bx = (width + 1) / 2;
+      const neo_mv::GridResamplingGeometry g{2, 2, bx, height == 6 ? 3 : 2, 0, height == 6 ? 0 : 1, width, height};
+      Buffer<T> input(2, 2), a(width, height), b(width, height);
+      for (int pattern = 0; pattern < 3; ++pattern) {
+        input.view().row(0)[0] = pattern == 0 ? high : low;
+        input.view().row(0)[1] = pattern == 1 ? low : high;
+        input.view().row(1)[0] = high;
+        input.view().row(1)[1] = pattern == 2 ? low : high;
+        neo_mv::GridResamplingPlan(g).resize(input.read(), a.view(), bits);
+        neo_mv::simd::GridResamplingPlan(g).resize(input.read(), b.view(), bits);
+        same(a.data, b.data);
+        if (pattern == 0)
+          for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+              check(b.view().row(y)[x] == high);
+      }
+    }
 }
 void special_float() {
   Buffer<float> in(2, 2), a(33, 5), b(33, 5);
@@ -201,10 +230,15 @@ struct EndRow {
 };
 template <class T>
 void guarded_rows(int bits) {
-  for (int width : {1, 7, 16, 33, 129}) {
+  for (int width : {1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129}) {
     EndRow<T> src(3), out(width);
-    src.data[0] = T(0);
-    src.data[1] = std::is_same_v<T, float> ? T(1) : T(255);
+    if constexpr (std::is_same_v<T, float>) {
+      src.data[0] = 0;
+      src.data[1] = 1;
+    } else {
+      src.data[0] = std::is_signed_v<T> ? std::numeric_limits<T>::min() : T(0);
+      src.data[1] = std::is_signed_v<T> ? std::numeric_limits<T>::max() : T((1u << bits) - 1);
+    }
     src.data[2] = T(1);
     Buffer<T> expected(width, 1);
     const neo_mv::GridResamplingGeometry geometry{3, 1, (width + 2) / 3, 1, 0, 0, width, 1};
@@ -216,21 +250,31 @@ void guarded_rows(int bits) {
 } // namespace
 int main() {
   try {
-    grids<std::uint8_t>(8);
-    grids<std::uint16_t>(10);
-    grids<std::uint16_t>(16);
-    grids<std::int16_t>(16);
-    grids<float>(32);
-    special_float();
-    scores<std::uint8_t>(8);
-    scores<std::uint16_t>(10);
-    scores<std::uint16_t>(16);
-    scores<float>(32);
-    guarded_rows<std::uint8_t>(8);
-    guarded_rows<std::uint16_t>(16);
-    guarded_rows<std::int16_t>(16);
-    guarded_rows<float>(32);
-    zero_and_subnormal();
+    for (const auto target : hwy::SupportedAndGeneratedTargets()) {
+      hwy::SetSupportedTargetsForTest(target);
+      std::cout << "Testing " << hwy::TargetName(target) << '\n';
+      check(std::strcmp(neo_mv::simd::detail::target_name(), hwy::TargetName(target)) == 0);
+      grids<std::uint8_t>(8);
+      grids<std::uint16_t>(10);
+      grids<std::uint16_t>(16);
+      grids<std::int16_t>(16);
+      grids<float>(32);
+      integer_extremes<std::uint8_t>(8);
+      integer_extremes<std::uint16_t>(10);
+      integer_extremes<std::uint16_t>(16);
+      integer_extremes<std::int16_t>(16);
+      special_float();
+      scores<std::uint8_t>(8);
+      scores<std::uint16_t>(10);
+      scores<std::uint16_t>(16);
+      scores<float>(32);
+      guarded_rows<std::uint8_t>(8);
+      guarded_rows<std::uint16_t>(16);
+      guarded_rows<std::int16_t>(16);
+      guarded_rows<float>(32);
+      zero_and_subnormal();
+    }
+    hwy::SetSupportedTargetsForTest(0);
     std::cout << "Phase3 exact differentials passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

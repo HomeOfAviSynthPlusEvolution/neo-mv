@@ -92,48 +92,28 @@ void Sad(const float* samples, std::size_t count, float scale, float exponent, f
     SadChunk(one, samples + i, scale, exponent, maximum, out + i);
 }
 #if HWY_HAVE_FLOAT64
-template <class D, class T>
+template <class D>
 void ResizeChunk(D d, const double* top, const double* bottom, const std::int64_t* left, const std::int64_t* right,
-                 const double* rx, double dx, double dy, double ry, T* out) {
+                 const double* rx, double dx, double dy, double ry, float* out) {
   const hn::Rebind<std::int64_t, D> di;
   const auto ix = hn::LoadU(di, left), jx = hn::LoadU(di, right);
   const auto s0 = hn::GatherIndex(d, top, ix), s1 = hn::GatherIndex(d, top, jx);
   const auto s2 = hn::GatherIndex(d, bottom, ix), s3 = hn::GatherIndex(d, bottom, jx);
-  auto value = hn::Zero(d);
-  if constexpr (std::is_same_v<T, float>) {
-    const auto a = hn::Div(hn::LoadU(d, rx), hn::Set(d, dx)), b = hn::Set(d, ry / dy);
-    const auto c = hn::Sub(hn::Set(d, 1.0), a), e = hn::Sub(hn::Set(d, 1.0), b);
-    const auto h0 = hn::Add(hn::Mul(c, s0), hn::Mul(a, s1)), h1 = hn::Add(hn::Mul(c, s2), hn::Mul(a, s3));
-    value = hn::Add(hn::Mul(e, h0), hn::Mul(b, h1));
-    // Reject outside the finite round-to-nearest interval before demotion.
-    if (!hn::AllTrue(d, hn::Lt(hn::Abs(value), hn::Set(d, 0x1.ffffffp127))))
-      throw std::invalid_argument("non-finite resized float");
-    const auto max = hn::Set(d, double(std::numeric_limits<float>::max()));
-    value = hn::Min(max, hn::Max(hn::Neg(max), value));
-    const hn::Rebind<float, D> df;
-    hn::StoreU(hn::DemoteTo(df, value), df, out);
-  } else {
-    const auto r = hn::LoadU(d, rx), c = hn::Sub(hn::Set(d, dx), r);
-    const auto b = hn::Set(d, ry), e = hn::Set(d, dy - ry);
-    // All products/sums are exact integers below 2^48. The denominator is at
-    // most 2^32: quotient rounding error is less than the distance to the next
-    // integer, so truncating this binary64 division gives the exact quotient.
-    auto sum = hn::Add(hn::Mul(hn::Mul(c, e), s0), hn::Mul(hn::Mul(r, e), s1));
-    sum = hn::Add(sum, hn::Mul(hn::Mul(c, b), s2));
-    sum = hn::Add(sum, hn::Mul(hn::Mul(r, b), s3));
-    value = hn::Div(hn::Add(sum, hn::Set(d, dx * dy / 2)), hn::Set(d, dx * dy));
-    const hn::Rebind<std::int32_t, D> ds;
-    auto integers = hn::DemoteTo(ds, value);
-    if constexpr (std::is_same_v<T, std::int16_t>)
-      integers = hn::Sub(integers, hn::Set(ds, 32768));
-    const hn::Rebind<T, D> narrow;
-    hn::StoreU(hn::DemoteTo(narrow, integers), narrow, out);
-  }
+  const auto a = hn::Div(hn::LoadU(d, rx), hn::Set(d, dx)), b = hn::Set(d, ry / dy);
+  const auto c = hn::Sub(hn::Set(d, 1.0), a), e = hn::Sub(hn::Set(d, 1.0), b);
+  const auto h0 = hn::Add(hn::Mul(c, s0), hn::Mul(a, s1)), h1 = hn::Add(hn::Mul(c, s2), hn::Mul(a, s3));
+  auto value = hn::Add(hn::Mul(e, h0), hn::Mul(b, h1));
+  // Reject outside the finite round-to-nearest interval before demotion.
+  if (!hn::AllTrue(d, hn::Lt(hn::Abs(value), hn::Set(d, 0x1.ffffffp127))))
+    throw std::invalid_argument("non-finite resized float");
+  const auto max = hn::Set(d, double(std::numeric_limits<float>::max()));
+  value = hn::Min(max, hn::Max(hn::Neg(max), value));
+  const hn::Rebind<float, D> df;
+  hn::StoreU(hn::DemoteTo(df, value), df, out);
 }
 #endif
-template <class T>
-void Resize(const double* top, const double* bottom, const std::int64_t* left, const std::int64_t* right,
-            const double* rx, int width, double dx, double dy, double ry, T* out) {
+void ResizeF32(const double* top, const double* bottom, const std::int64_t* left, const std::int64_t* right,
+               const double* rx, int width, double dx, double dy, double ry, float* out) {
 #if HWY_HAVE_FLOAT64
   const hn::ScalableTag<double> d;
   const int n = int(hn::Lanes(d));
@@ -147,29 +127,49 @@ void Resize(const double* top, const double* bottom, const std::int64_t* left, c
   for (int x = 0; x < width; ++x) {
     const double s0 = top[left[x]], s1 = top[right[x]];
     const double s2 = bottom[left[x]], s3 = bottom[right[x]];
-    if constexpr (std::is_same_v<T, float>) {
-      const double a = rx[x] / dx, b = ry / dy;
-      const double c = 1.0 - a, e = 1.0 - b;
-      const double h0 = c * s0 + a * s1;
-      const double h1 = c * s2 + a * s3;
-      out[x] = mask_detail::binary32(e * h0 + b * h1);
-    } else {
-      const double r = rx[x], c = dx - r;
-      const double b = ry, e = dy - ry;
-      double sum = (c * e) * s0 + (r * e) * s1;
-      sum = sum + (c * b) * s2;
-      sum = sum + (r * b) * s3;
-      // This row API admits integer denominators <= 2^32 only. Products and
-      // sums are exact in binary64; division followed by truncation preserves
-      // the exact rounded-integer formula, as in the vector branch above.
-      const double denominator = dx * dy;
-      auto integer = static_cast<std::int32_t>((sum + denominator / 2) / denominator);
-      if constexpr (std::is_same_v<T, std::int16_t>)
-        integer -= 32768;
-      out[x] = static_cast<T>(integer);
-    }
+    const double a = rx[x] / dx, b = ry / dy;
+    const double c = 1.0 - a, e = 1.0 - b;
+    const double h0 = c * s0 + a * s1;
+    const double h1 = c * s2 + a * s3;
+    out[x] = mask_detail::binary32(e * h0 + b * h1);
   }
 #endif
+}
+template <class D, class V>
+auto Interpolate(D d, V s0, V s1, V coefficient) {
+  // Biased samples are at most 65535 and complementary Q14 coefficients sum
+  // to 16384. The product sum plus 8192 fits signed int32 at either stage.
+  const auto complement = hn::Sub(hn::Set(d, 16384), coefficient);
+  const auto sum = hn::Add(hn::Mul(complement, s0), hn::Mul(coefficient, s1));
+  return hn::ShiftRight<14>(hn::Add(sum, hn::Set(d, 8192)));
+}
+template <class D, class T>
+void ResizeIntegerChunk(D d, const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,
+                        const std::int32_t* right, const std::int32_t* coefficients, std::int32_t vertical,
+                        bool horizontal_first, T* out) {
+  const auto ix = hn::LoadU(d, left), jx = hn::LoadU(d, right);
+  const auto s0 = hn::GatherIndex(d, top, ix), s1 = hn::GatherIndex(d, top, jx);
+  const auto s2 = hn::GatherIndex(d, bottom, ix), s3 = hn::GatherIndex(d, bottom, jx);
+  const auto a = hn::LoadU(d, coefficients), b = hn::Set(d, vertical);
+  auto value = horizontal_first ? Interpolate(d, Interpolate(d, s0, s1, a), Interpolate(d, s2, s3, a), b)
+                                : Interpolate(d, Interpolate(d, s0, s2, b), Interpolate(d, s1, s3, b), a);
+  if constexpr (std::is_same_v<T, std::int16_t>)
+    value = hn::Sub(value, hn::Set(d, 32768));
+  const hn::Rebind<T, D> narrow;
+  hn::StoreU(hn::DemoteTo(narrow, value), narrow, out);
+}
+template <class T>
+void ResizeInteger(const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,
+                   const std::int32_t* right, const std::int32_t* coefficients, int width, std::int32_t vertical,
+                   bool horizontal_first, T* out) {
+  const hn::ScalableTag<std::int32_t> d;
+  const int n = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= width - n; x += n)
+    ResizeIntegerChunk(d, top, bottom, left + x, right + x, coefficients + x, vertical, horizontal_first, out + x);
+  const hn::CappedTag<std::int32_t, 1> one;
+  for (; x < width; ++x)
+    ResizeIntegerChunk(one, top, bottom, left + x, right + x, coefficients + x, vertical, horizontal_first, out + x);
 }
 template <class T>
 void Max(T* samples, std::size_t count, T value) {
@@ -184,16 +184,15 @@ void Max(T* samples, std::size_t count, T value) {
     samples[i] = std::max(samples[i], value);
 }
 #define NEO_RESIZE(T, S)                                                                                               \
-  void Resize##S(const double* a, const double* b, const std::int64_t* l, const std::int64_t* r, const double* x,      \
-                 int n, double dx, double dy, double ry, T* o) {                                                       \
-    Resize(a, b, l, r, x, n, dx, dy, ry, o);                                                                           \
+  void Resize##S(const std::int32_t* a, const std::int32_t* b, const std::int32_t* l, const std::int32_t* r,           \
+                 const std::int32_t* x, int n, std::int32_t vertical, bool horizontal_first, T* o) {                   \
+    ResizeInteger(a, b, l, r, x, n, vertical, horizontal_first, o);                                                    \
   }
 NEO_RESIZE(std::uint8_t, U8)
 NEO_RESIZE(std::uint16_t, U16)
 NEO_RESIZE(std::int16_t, I16)
-NEO_RESIZE(float, F32)
 #undef NEO_RESIZE
-    void MaxU8(std::uint8_t* p, std::size_t n, std::uint8_t v) {
+void MaxU8(std::uint8_t* p, std::size_t n, std::uint8_t v) {
   Max(p, n, v);
 }
 void MaxU16(std::uint16_t* p, std::size_t n, std::uint16_t v) {
@@ -229,11 +228,17 @@ void max_span(float* p, std::size_t n, float v) {
 }
 #define NEO_EXPORT(T, S)                                                                                               \
   HWY_EXPORT(Resize##S);                                                                                               \
-  void resize(const double* a, const double* b, const std::int64_t* l, const std::int64_t* r, const double* x, int n,  \
-              double dx, double dy, double ry, T* o) {                                                                 \
-    HWY_DYNAMIC_DISPATCH(Resize##S)(a, b, l, r, x, n, dx, dy, ry, o);                                                  \
+  void resize(const std::int32_t* a, const std::int32_t* b, const std::int32_t* l, const std::int32_t* r,              \
+              const std::int32_t* x, int n, std::int32_t vertical, bool horizontal_first, T* o) {                      \
+    HWY_DYNAMIC_DISPATCH(Resize##S)(a, b, l, r, x, n, vertical, horizontal_first, o);                                  \
   }
-NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(std::int16_t, I16) NEO_EXPORT(float, F32)
+NEO_EXPORT(std::uint8_t, U8)
+NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(std::int16_t, I16)
 #undef NEO_EXPORT
+    HWY_EXPORT(ResizeF32);
+void resize(const double* a, const double* b, const std::int64_t* l, const std::int64_t* r, const double* x, int n,
+            double dx, double dy, double ry, float* o) {
+  HWY_DYNAMIC_DISPATCH(ResizeF32)(a, b, l, r, x, n, dx, dy, ry, o);
+}
 } // namespace neo_mv::simd::mask_rows
 #endif

@@ -12,10 +12,10 @@ struct GridResamplingGeometry {
 };
 
 namespace grid_detail {
-// At most 126 denominator bits plus 16 sample bits. Six base-2^32 limbs
-// keep the exact formula portable, including MSVC without __int128.
+// The axis-order comparison needs at most 126 bits for covered-width times
+// covered-height. Four base-2^32 limbs keep it exact without __int128.
 struct Wide {
-  std::array<std::uint32_t, 6> words{};
+  std::array<std::uint32_t, 4> words{};
   static Wide product(std::uint64_t a, std::uint64_t b) {
     Wide result;
     for (int i = 0; i < 2; ++i) {
@@ -48,44 +48,46 @@ struct Wide {
       carry = v >> 32;
     }
   }
-  Wide half() const {
-    Wide result;
-    for (std::size_t i = 0; i < words.size(); ++i)
-      result.words[i] = (words[i] >> 1) | (i + 1 < words.size() ? words[i + 1] << 31 : 0);
-    return result;
-  }
   bool less(const Wide& other) const {
-    for (int i = 5; i >= 0; --i)
+    for (int i = 3; i >= 0; --i)
       if (words[i] != other.words[i])
         return words[i] < other.words[i];
     return false;
   }
 };
 
-inline std::uint32_t rounded_integer(std::uint64_t dx, std::uint64_t dy, std::uint64_t rx, std::uint64_t ry,
-                                     const std::array<std::uint32_t, 4>& samples) {
-  constexpr auto small_limit = std::numeric_limits<std::uint64_t>::max() / 65536;
-  if (dx <= small_limit / dy) {
-    const auto denominator = dx * dy;
-    const auto numerator = (dx - rx) * (dy - ry) * samples[0] + rx * (dy - ry) * samples[1] +
-                           (dx - rx) * ry * samples[2] + rx * ry * samples[3];
-    return static_cast<std::uint32_t>((numerator + denominator / 2) / denominator);
+inline std::uint32_t coefficient(std::uint64_t remainder, std::uint64_t denominator) {
+  if (denominator == 0 || remainder >= denominator)
+    throw std::invalid_argument("invalid resampling coefficient fraction");
+  std::uint32_t result = 0;
+  // Extract the fourteen fractional bits without forming Q * remainder.
+  // Comparing against denominator - remainder also avoids overflow when
+  // doubling the remainder, including the full uint64 denominator range.
+  for (int bit = 0; bit < 14; ++bit) {
+    result *= 2;
+    const auto complement = denominator - remainder;
+    if (remainder >= complement) {
+      remainder -= complement;
+      ++result;
+    } else {
+      remainder += remainder;
+    }
   }
-  const auto denominator = Wide::product(dx, dy);
-  auto numerator = denominator.half();
-  numerator.add(Wide::product(dx - rx, dy - ry).times(samples[0]));
-  numerator.add(Wide::product(rx, dy - ry).times(samples[1]));
-  numerator.add(Wide::product(dx - rx, ry).times(samples[2]));
-  numerator.add(Wide::product(rx, ry).times(samples[3]));
-  std::uint32_t low = 0, high = 65536;
-  while (high - low > 1) {
-    const auto mid = (low + high) / 2;
-    if (numerator.less(denominator.times(mid)))
-      high = mid;
-    else
-      low = mid;
-  }
-  return low;
+  const auto complement = denominator - remainder;
+  return result + (remainder > complement || (remainder == complement && (result & 1u)));
+}
+
+inline bool horizontal_first(std::int64_t covered_width, std::int64_t covered_height, int blocks_x, int blocks_y) {
+  const auto left = Wide::product(static_cast<std::uint64_t>(covered_width), blocks_y).times(2);
+  auto right = Wide::product(static_cast<std::uint64_t>(covered_height), blocks_x);
+  right.add(Wide::product(static_cast<std::uint64_t>(covered_width), static_cast<std::uint64_t>(covered_height)));
+  return left.less(right);
+}
+
+inline std::uint32_t interpolate(std::uint32_t first, std::uint32_t second, std::uint32_t coefficient) {
+  // Biased signed samples and unsigned samples both lie in [0,65535].
+  // The complementary weights sum to 16384, so the full sum fits uint32.
+  return ((16384u - coefficient) * first + coefficient * second + 8192u) >> 14;
 }
 
 struct Axis {
@@ -110,6 +112,7 @@ inline Axis axis(int coordinate, int blocks, std::int64_t covered) {
 class GridResamplingPlan {
   GridResamplingGeometry geometry_;
   std::int64_t covered_width_, covered_height_;
+  bool horizontal_first_;
 
 public:
   explicit GridResamplingPlan(GridResamplingGeometry g) : geometry_(g) {
@@ -121,6 +124,7 @@ public:
     covered_height_ = std::int64_t(g.blocks_y) * (g.block_height - g.overlap_y) + g.overlap_y;
     if (g.width > covered_width_ || g.height > covered_height_)
       throw std::invalid_argument("resampling grid does not cover visible image");
+    horizontal_first_ = grid_detail::horizontal_first(covered_width_, covered_height_, g.blocks_x, g.blocks_y);
   }
   const GridResamplingGeometry& geometry() const { return geometry_; }
 
@@ -173,8 +177,13 @@ public:
           std::array<std::uint32_t, 4> biased{};
           for (int i = 0; i < 4; ++i)
             biased[i] = static_cast<std::uint32_t>(int(s[i]) + offset);
+          const auto a = grid_detail::coefficient(ax.remainder, ax.denominator);
+          const auto b = grid_detail::coefficient(ay.remainder, ay.denominator);
+          using grid_detail::interpolate;
           const auto value =
-              grid_detail::rounded_integer(ax.denominator, ay.denominator, ax.remainder, ay.remainder, biased);
+              horizontal_first_
+                  ? interpolate(interpolate(biased[0], biased[1], a), interpolate(biased[2], biased[3], a), b)
+                  : interpolate(interpolate(biased[0], biased[2], b), interpolate(biased[1], biased[3], b), a);
           output.row(y)[x] = static_cast<T>(int(value) - offset);
         }
       }
