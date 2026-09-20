@@ -1,0 +1,145 @@
+"""One case and one implementation per process; only public API observations.
+
+Kernel selection belongs in configure_kernel(), never in fixture generation or
+comparison. A future Highway adapter must force and query the real target before
+returning its execution identity. It must not silently fall back to scalar.
+"""
+import argparse
+import hashlib
+import importlib.metadata
+import json
+from pathlib import Path
+import platform
+import struct
+import sys
+import traceback
+
+from cases import ANALYSIS_KEYS, BY_ID, SUPER_KEYS, build
+from protocol import SCHEMA, digest_file, digest_json
+
+
+def configure_kernel(backend, requested):
+    if backend == "mvu":
+        if requested != "auto":
+            raise ValueError("reference supports only its native automatic selection")
+        return {"requested": "auto", "effective": "auto", "target": None}
+    if requested != "scalar":
+        raise ValueError("Highway selection is reserved but not implemented; no scalar fallback")
+    # The current neo-mv binary has only scalar kernels. Replace this adapter
+    # with actual force/query calls when runtime dispatch is introduced.
+    return {"requested": "scalar", "effective": "scalar", "target": None,
+            "selection": "scalar-only implementation"}
+
+
+def video_info(node):
+    fmt = node.format
+    return dict(width=node.width, height=node.height, length=node.num_frames,
+                fps=[node.fps_num, node.fps_den],
+                format=dict(family=int(fmt.color_family), sample_type=int(fmt.sample_type),
+                            bits=fmt.bits_per_sample, bytes=fmt.bytes_per_sample,
+                            subsampling=[fmt.subsampling_w, fmt.subsampling_h], planes=fmt.num_planes))
+
+
+def property_value(value):
+    items = list(value) if isinstance(value, (list, tuple)) else [value]
+    if not items:
+        raise ValueError("empty observed property requires a native type-aware reader")
+    kind = type(items[0])
+    if any(type(item) is not kind for item in items):
+        raise ValueError("mixed property types")
+    if kind is int:
+        return dict(type="int", count=len(items), values=items)
+    if kind is float:
+        return dict(type="float64", count=len(items), values=[struct.pack(">d", item).hex() for item in items])
+    if kind is bytes:
+        return dict(type="data", count=len(items), values=[item.hex() for item in items])
+    raise ValueError(f"unsupported public property type: {kind.__name__}")
+
+
+def snapshot(frame, keys):
+    # memoryview.tobytes serializes logical samples, excluding host row padding.
+    planes = []
+    for index in range(frame.format.num_planes):
+        view = frame[index]
+        data = view.tobytes()
+        planes.append(dict(width=view.shape[1], height=view.shape[0],
+                           sample_bytes=frame.format.bytes_per_sample,
+                           sha256=hashlib.sha256(data).hexdigest(), data=data.hex()))
+    # Absence is a missing key, never normalized to zero or an empty array.
+    props = {key: property_value(frame.props[key]) for key in keys if key in frame.props}
+    return dict(planes=planes, properties=props)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--backend", choices=["neo", "mvu"], required=True)
+    parser.add_argument("--kernel", required=True)
+    parser.add_argument("--plugin", type=Path)
+    parser.add_argument("--case", choices=BY_ID, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--threads", type=int, choices=[1, 4], required=True)
+    parser.add_argument("--vs-version", default="79")
+    parser.add_argument("--mvu-version", default="8")
+    args = parser.parse_args()
+    spec = BY_ID[args.case]
+    result = dict(schema=SCHEMA, case_id=args.case, case_sha256=digest_json(spec),
+                  backend=args.backend, status="error", stage="environment")
+    try:
+        import vapoursynth as vs
+        core = vs.core
+        core.num_threads = args.threads
+        package_vs = importlib.metadata.version("VapourSynth")
+        package_mvu = importlib.metadata.version("vapoursynth-mvutensils")
+        if package_vs != args.vs_version or package_mvu != args.mvu_version:
+            raise ValueError(f"package mismatch: VS={package_vs}, MVU={package_mvu}")
+        if core.core_version.release_major != int(args.vs_version) or core.core_version.release_minor != 0:
+            raise ValueError(f"loaded core mismatch: {core.core_version}")
+        kernel = configure_kernel(args.backend, args.kernel)
+        if args.backend == "neo":
+            if args.plugin is None:
+                raise ValueError("candidate DLL path required")
+            core.std.LoadPlugin(path=str(args.plugin.resolve()))
+            plugin = core.neomv
+        else:
+            plugin = core.mvu
+            if plugin.version.major != int(args.mvu_version):
+                raise ValueError(f"loaded MVU version mismatch: {plugin.version}")
+        loaded = Path(plugin.plugin_path).resolve()
+        loaded_hash = digest_file(loaded)
+        if args.backend == "neo" and loaded_hash != digest_file(args.plugin):
+            raise ValueError("loaded candidate binary differs from requested file")
+        result["environment"] = dict(python=sys.executable, python_version=platform.python_version(),
+            system=platform.platform(), machine=platform.machine(), processor=platform.processor(),
+            vs_package=package_vs, mvu_package=package_mvu, core=str(core),
+            plugin_path=str(loaded), plugin_sha256=loaded_hash,
+            plugin_version=str(plugin.version), threads=core.num_threads, kernel=kernel)
+        result["stage"] = "creation"
+        source, outputs = build(vs, core, plugin, spec)
+        if len(outputs) != spec["members"]:
+            raise ValueError(f"expected {spec['members']} outputs, got {len(outputs)}")
+        result["outputs"] = [video_info(node) for node in outputs]
+        ordinary = ["TestMarker", "_SceneChangePrev", "_SceneChangeNext", "_DurationNum", "_DurationDen"]
+        keys = ordinary + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
+        result["stage"] = "input"
+        result["inputs"] = []
+        for n in range(spec["length"]):
+            with source.get_frame(n) as frame:
+                result["inputs"].append(dict(frame=n, **snapshot(frame, ordinary)))
+        result["stage"] = "frame"
+        result["records"] = []
+        for ordinal, (member, n) in enumerate(spec["requests"]):
+            result["active_request"] = dict(request=ordinal, member=member, frame=n)
+            with outputs[member].get_frame(n) as frame:
+                result["records"].append(dict(**result["active_request"], **snapshot(frame, keys)))
+        result.pop("active_request", None)
+        result["status"] = "ok"
+        result["stage"] = "complete"
+    except Exception as error:
+        result["error"] = dict(type=type(error).__name__, message=str(error))
+        traceback.print_exc()
+    args.output.write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8")
+    return 0 if result["status"] == "ok" else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
