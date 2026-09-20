@@ -44,7 +44,7 @@ if(NEO_MV_ENABLE_HIGHWAY)
     URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(highway)
-  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp)
+  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp)
   target_link_libraries(neo_mv_highway PUBLIC neo_mv_core hwy)
   target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ALL_ATTAINABLE)
   set_target_properties(neo_mv_highway hwy PROPERTIES POSITION_INDEPENDENT_CODE ON
@@ -133,6 +133,11 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/mask.vpy" --)
         set_tests_properties(vs.mask.highway PROPERTIES TIMEOUT 120 LABELS "spec" RUN_SERIAL TRUE
           ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
+        add_test(NAME vs.interpolation.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/interpolation.vpy" --)
+        set_tests_properties(vs.interpolation.highway PROPERTIES TIMEOUT 180 LABELS "spec" RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
         add_test(NAME vs.flow.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/flow.vpy" --)
@@ -148,7 +153,7 @@ if(BUILD_TESTING)
     target_link_libraries(neo_mv_highway_tests PRIVATE neo_mv_highway)
     add_test(NAME core.highway COMMAND neo_mv_highway_tests)
     set_tests_properties(core.highway PROPERTIES LABELS "spec" TIMEOUT 180 RUN_SERIAL TRUE)
-    foreach(operator render render_ops)
+    foreach(operator render render_ops interpolation)
       add_executable(neo_mv_highway_${operator}_tests tests/highway/${operator}.cpp)
       target_link_libraries(neo_mv_highway_${operator}_tests PRIVATE neo_mv_highway)
       add_test(NAME core.highway.${operator} COMMAND neo_mv_highway_${operator}_tests)
@@ -170,7 +175,7 @@ if(BUILD_TESTING)
     target_compile_definitions(neo_mv_highway_mask_frame_tests PRIVATE NEO_MV_TEST_HIGHWAY=1)
     add_test(NAME core.highway.mask_frame COMMAND neo_mv_highway_mask_frame_tests)
     set_tests_properties(core.highway.mask_frame PROPERTIES LABELS "spec" TIMEOUT 180)
-    foreach(operator flow_dense flow_frame)
+    foreach(operator flow_dense flow_frame interpolation_frame)
       add_executable(neo_mv_highway_${operator}_tests tests/core/test_${operator}.cpp)
       target_link_libraries(neo_mv_highway_${operator}_tests PRIVATE neo_mv_highway)
       target_compile_definitions(neo_mv_highway_${operator}_tests PRIVATE NEO_MV_TEST_HIGHWAY=1)

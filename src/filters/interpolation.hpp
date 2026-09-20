@@ -3,6 +3,9 @@
 #include "core/interpolation/frame.hpp"
 #include "core/interpolation/rate.hpp"
 #include "filters/phase2.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/interpolation.hpp"
+#endif
 
 namespace neo_mv::ds2 {
 enum class TemporalKind { Inter, FPS, Blur };
@@ -207,6 +210,10 @@ struct TemporalFilter {
   static std::shared_ptr<const TemporalRuntime> make(ds::VideoInitContext& ctx) {
     const auto first = frame(*ctx.frames, 1, 0);
     const FrameSuper<T> super(first.frame, ctx.inputs[1], Params{*ctx.params}.prefix());
+#if NEO_MV_ENABLE_HIGHWAY
+    if (selected_backend() == KernelBackend::highway)
+      return std::make_shared<TypedTemporalRuntime<T, Kind, HighwayInterpolationKernels<T>>>(ctx, super);
+#endif
     return std::make_shared<TypedTemporalRuntime<T, Kind>>(ctx, super);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
