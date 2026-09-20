@@ -8,6 +8,8 @@ core = vs.core
 core.num_threads = 4
 core.std.LoadPlugin(path=plugin)
 mv = core.neomv
+selected = mv.KernelInfo()
+assert selected["backend"] in ("scalar", "highway") and selected["target"], selected
 P = "MVUtensilsAnalysis"
 MOTION = ("Depan_dx", "Depan_dy", "Depan_rot", "Depan_zoom", "Depan_goodmotion")
 
@@ -53,6 +55,18 @@ def same_frame(first, second, n, props=True):
 def motion(node, n):
     with node.get_frame(n) as frame:
         return tuple(frame.props[key] for key in MOTION)
+
+
+def check_fitted_motion(actual, expected):
+    # Only nontrivial analysis fits use this allowance. A Highway target may
+    # fuse arithmetic; the scalar oracle and all motion-validity flags stay exact.
+    assert actual[4] == expected[4], (actual, expected)
+    if selected["backend"] == "scalar":
+        assert actual == expected, (actual, expected)
+        return
+    for key, value, reference in zip(MOTION[:4], actual[:4], expected[:4]):
+        assert math.isfinite(value) and math.isfinite(reference), (key, value, reference)
+        assert abs(value - reference) <= 1e-4 + 1e-5 * max(abs(value), abs(reference)), (key, value, reference)
 
 
 def vectors(delta=-1, values=None, sad=None, length=3, missing=False):
@@ -103,8 +117,9 @@ def analysis():
     mask = blank(width=48, height=48, color=1)
     golden = mv.DepanAnalyse(clip, field, mask=mask, zoom=False, rot=False)
     expected = (0.4916095733642578, 0.0, -0.0, 1.0, 1)
-    assert motion(golden, 2) == expected
-    assert math.copysign(1, motion(golden, 2)[2]) == -1
+    check_fitted_motion(motion(golden, 2), expected)
+    if selected["backend"] == "scalar":
+        assert math.copysign(1, motion(golden, 2)[2]) == -1
     with golden.get_frame(2) as out, clip.get_frame(2) as original:
         assert pixels(out) == pixels(original)
         assert set(out.props) == set(original.props) | set(MOTION)
@@ -215,7 +230,7 @@ def analysis_current_metadata():
     # with p=4 reproduces the complete p=2 example's four observations exactly.
     doubled = vectors(values=[(2, -6), (0, 0), (8, 4), (-4, 2)])
     result = mv.DepanAnalyse(src, current(dict(Pel=4), doubled), mask=ones, zoom=False, rot=False)
-    assert motion(result, 1) == golden
+    check_fitted_motion(motion(result, 1), golden)
 
     # New centers (2,2),(6,2),(2,6),(6,6) read zeros. The old centers read 255,
     # so using creation geometry would incorrectly fit a nonzero translation.
@@ -268,10 +283,10 @@ def analysis_current_metadata():
         carrier = edit(vectors(delta=delta, values=components), change_direction)
         result = mv.DepanAnalyse(src, carrier, mask=ones, zoom=False, rot=False)
         if delta == -1:
-            assert motion(result, 1) == golden
+            check_fitted_motion(motion(result, 1), golden)
             assert motion(result, 2) == invalid
         else:
-            assert motion(result, 2) == (-golden[0], 0, 0, 1, 1)
+            check_fitted_motion(motion(result, 2), (-golden[0], 0, 0, 1, 1))
 
     # The mask dependency is indexed by output n, even for d=+1 selecting k=0.
     seen = []

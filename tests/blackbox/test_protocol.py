@@ -4,6 +4,7 @@ from enum import Enum, IntEnum
 import hashlib
 from pathlib import Path
 import tempfile
+import struct
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -16,6 +17,7 @@ from mask_cases import CASES as MASK_CASES
 from flow_cases import CASES as FLOW_CASES
 from interpolation_cases import CASES as INTERPOLATION_CASES
 from depan_cases import CASES as DEPAN_CASES
+from run import validate_depan_tolerance_selection
 
 
 class ProtocolTests(unittest.TestCase):
@@ -486,6 +488,109 @@ class ProtocolTests(unittest.TestCase):
             failed.update(outputs=[], records=[], creation_error=dict(type="Error", message="Depan creation detail"))
             validate_result(failed, spec, "mvu")
             self.assertEqual(compare(failed, failed, spec)[0], "difference")
+
+    def depan_highway_pair(self):
+        spec, reference = self.depan_result()
+        candidate = copy.deepcopy(reference)
+        candidate["backend"] = "neo"
+        candidate["environment"]["kernel"] = dict(requested="highway", effective="highway", target="AVX2")
+        return spec, reference, candidate
+
+    def test_depan_tolerance_is_explicit_and_preserves_all_original_bits(self):
+        spec, reference, candidate = self.depan_highway_pair()
+        self.assertEqual(compare(reference, candidate, spec, depan_float_tolerance=True), ("pass", None))
+        values = candidate["records"][0]["properties"]
+        values["Depan_dx"]["values"] = [struct.pack(">d", 0.50005).hex()]
+        values["Depan_dy"]["values"] = [struct.pack(">d", 0.00005).hex()]
+        values["Depan_rot"]["values"] = [struct.pack(">d", 0.0).hex()]  # -0 versus +0.
+        values["Depan_zoom"]["values"] = [struct.pack(">d", 1.00005).hex()]
+        original_reference, original_candidate = copy.deepcopy(reference), copy.deepcopy(candidate)
+        self.assertEqual(compare(reference, candidate, spec)[0], "difference")
+        status, detail = compare(reference, candidate, spec, depan_float_tolerance=True)
+        self.assertEqual(status, "within_tolerance")
+        self.assertEqual(len(detail["tolerated_differences"]), 4)
+        self.assertEqual(detail["absolute_tolerance"], 1e-4)
+        self.assertEqual(detail["relative_tolerance"], 1e-5)
+        for observation in detail["tolerated_differences"]:
+            self.assertEqual(len(observation["reference_bits"]), 16)
+            self.assertEqual(len(observation["candidate_bits"]), 16)
+            self.assertEqual(observation["absolute_difference"], abs(observation["reference"] - observation["candidate"]))
+            self.assertEqual(observation["limit"], 1e-4 + 1e-5 * max(abs(observation["reference"]), abs(observation["candidate"])))
+            self.assertLessEqual(observation["absolute_difference"], observation["limit"])
+        self.assertEqual(reference, original_reference)
+        self.assertEqual(candidate, original_candidate)
+
+    def test_depan_tolerance_bound_is_fixed_for_absolute_and_relative_scales(self):
+        for base, delta, expected in [(0.0, 0.0001, "within_tolerance"),
+                                       (0.0, 0.00010001, "difference"),
+                                       (100.0, 0.001, "within_tolerance"),
+                                       (100.0, 0.002, "difference")]:
+            spec, reference, candidate = self.depan_highway_pair()
+            reference["records"][0]["properties"]["Depan_dx"]["values"] = [struct.pack(">d", base).hex()]
+            candidate["records"][0]["properties"]["Depan_dx"]["values"] = [struct.pack(">d", base + delta).hex()]
+            with self.subTest(base=base, delta=delta):
+                status, detail = compare(reference, candidate, spec, depan_float_tolerance=True)
+                self.assertEqual(status, expected)
+                if expected == "difference":
+                    rejected = detail["rejected_float_differences"][0]
+                    self.assertGreater(rejected["absolute_difference"], rejected["limit"])
+
+    def test_depan_tolerance_cannot_cover_other_operations_backends_or_targets(self):
+        for change in ("compensate", "phase", "reference_backend", "candidate_backend", "scalar", "EMU128", "missing"):
+            spec, reference, candidate = self.depan_highway_pair()
+            spec = copy.deepcopy(spec)
+            candidate["records"][0]["properties"]["Depan_dx"]["values"] = ["3fe0000000000001"]
+            if change == "compensate":
+                spec["operation"] = "DepanCompensate"
+            elif change == "phase":
+                spec["phase"] = 4
+            elif change == "reference_backend":
+                reference["backend"] = "neo"
+            elif change == "candidate_backend":
+                candidate["backend"] = "mvu"
+            elif change == "scalar":
+                candidate["environment"]["kernel"]["effective"] = "scalar"
+            elif change == "EMU128":
+                candidate["environment"]["kernel"]["target"] = "EMU128"
+            else:
+                del candidate["environment"]["kernel"]
+            with self.subTest(change=change):
+                self.assertEqual(compare(reference, candidate, spec, depan_float_tolerance=True)[0], "difference")
+
+    def test_depan_tolerance_leaves_pixels_flags_info_types_and_errors_strict(self):
+        for change in ("pixels", "goodmotion", "info", "other_property", "type", "count", "error", "nonfinite_nan", "nonfinite_inf"):
+            spec, reference, candidate = self.depan_highway_pair()
+            props = candidate["records"][0]["properties"]
+            props["Depan_dx"]["values"] = ["3fe0000000000001"]
+            if change == "pixels":
+                candidate["records"][0]["planes"][0]["data"] = "ff"
+            elif change == "goodmotion":
+                props["Depan_goodmotion"]["values"] = [0]
+            elif change == "info":
+                props["DepanAnalyse_info"]["values"] = [b"different final digit".hex()]
+            elif change == "other_property":
+                props["DepanCompensate_info"]["values"] = [b"different inherited text".hex()]
+            elif change == "type":
+                props["Depan_dx"] = dict(type="int", count=1, values=[0])
+            elif change == "count":
+                props["Depan_dx"].update(count=2, values=["3fe0000000000001"]*2)
+            elif change == "error":
+                candidate["records"][0] = dict(request=0, member=0, frame=2, error=dict(type="Error", message="unrelated"))
+            else:
+                props["Depan_dx"]["values"] = ["7ff8000000000001" if change == "nonfinite_nan" else "7ff0000000000000"]
+            with self.subTest(change=change):
+                self.assertEqual(compare(reference, candidate, spec, depan_float_tolerance=True)[0], "difference")
+
+    def test_depan_tolerance_cli_rejects_inappropriate_selection(self):
+        analyse = next(item for item in DEPAN_CASES if item["operation"] == "DepanAnalyse")
+        compensate = next(item for item in DEPAN_CASES if item["operation"] == "DepanCompensate")
+        validate_depan_tolerance_selection(True, "highway", [analyse])
+        validate_depan_tolerance_selection(False, "scalar", [compensate])
+        for kernel, selected in [("scalar", [analyse]), ("highway", [compensate]),
+                                  ("highway", [analyse, compensate]), ("highway", [INTERPOLATION_CASES[0]]),
+                                  ("highway", [])]:
+            with self.subTest(kernel=kernel, cases=selected), self.assertRaises(ValueError):
+                validate_depan_tolerance_selection(True, kernel, selected)
 
     def test_depan_info_binds_external_or_builtin_renderer_and_defaults(self):
         spec, reference = self.depan_result(next(item for item in DEPAN_CASES if item["params"].get("info")))

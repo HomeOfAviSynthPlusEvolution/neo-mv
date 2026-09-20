@@ -2,7 +2,7 @@
 
 No benchmarks, timings, source checkout or package installation are performed.
 Use --list to inspect cases. Reports are stored in a fresh directory on each run.
-Exit status: 0 = exact matches or approved known differences only;
+Exit status: 0 = exact matches, approved known differences or explicitly enabled tolerance;
 1 = new observed differences; 2 = incomplete/failed run.
 """
 import argparse
@@ -16,7 +16,14 @@ import sys
 import tempfile
 
 from catalog import BY_ID, CASES
-from protocol import SCHEMA, compare, digest_file, validate_result
+from protocol import (SCHEMA, DEPAN_FLOAT_ABSOLUTE_TOLERANCE, DEPAN_FLOAT_RELATIVE_TOLERANCE,
+                      compare, digest_file, validate_result)
+
+
+def validate_depan_tolerance_selection(enabled, kernel, selected):
+    if enabled and (kernel != "highway" or not selected or any(
+            spec.get("phase") != 5 or spec.get("operation") != "DepanAnalyse" for spec in selected)):
+        raise ValueError("--depan-float-tolerance requires --neo-kernel highway and only Phase5 DepanAnalyse cases")
 
 
 def git_state(root):
@@ -75,8 +82,9 @@ def execute(spec, backend, args, directory):
 
 
 def write_report(directory, report):
-    (directory / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     counts = Counter(item["status"] for item in report["cases"])
+    report["counts"] = dict(counts)
+    (directory / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     lines = ["# Binary compatibility report", "", f"Status: {report['status']}",
              f"Completed: {len(report['cases'])}/{len(report['selected_cases'])}",
              f"Counts: {dict(counts)}", "", "| Case | Result |", "| --- | --- |"]
@@ -86,6 +94,7 @@ def write_report(directory, report):
             lines += ["", "## " + item["id"], "", "```json",
                       json.dumps(item["difference"], indent=2), "```"]
     lines += ["", "known_difference denotes an approved exact exception, not complete equality.",
+              "within_tolerance denotes finite DepanAnalyse motion differences within the explicitly selected fixed bounds; it is not exact equality.",
               "This is a binary compatibility result, not a specification verdict or performance measurement.",
               "Worker JSON and logs retain the full observations and errors. No reference private payload is exported."]
     (directory / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -109,6 +118,8 @@ def main():
     parser.add_argument("--mvu-version", default="8")
     parser.add_argument("--neo-kernel", choices=["scalar", "highway"], default="scalar",
                         help="select and query the loaded candidate backend; highway requires a real SIMD target")
+    parser.add_argument("--depan-float-tolerance", action="store_true",
+                        help="Highway DepanAnalyse only: allow motion abs error <= 1e-4 + 1e-5*max(abs(a),abs(b)); report separately")
     args = parser.parse_args()
     if args.cases and len(args.cases) != len(set(args.cases)):
         parser.error("duplicate case selection")
@@ -117,6 +128,10 @@ def main():
         selected = [spec for spec in selected if spec.get("phase", 1) == args.phase]
     if not selected:
         parser.error("no cases selected")
+    try:
+        validate_depan_tolerance_selection(args.depan_float_tolerance, args.neo_kernel, selected)
+    except ValueError as error:
+        parser.error(str(error))
     if args.list:
         for spec in selected:
             print(spec["id"])
@@ -139,6 +154,11 @@ def main():
                   expected=dict(vs=args.vs_version, mvu=args.mvu_version), threads=args.threads,
                   harness_sha256={p.name: digest_file(p) for p in sorted(Path(__file__).parent.glob("*.py"))},
                   selected_cases=selected, cases=[])
+    report["comparison"] = dict(mode="depan_float_tolerance" if args.depan_float_tolerance else "exact")
+    if args.depan_float_tolerance:
+        report["comparison"].update(absolute_tolerance=DEPAN_FLOAT_ABSOLUTE_TOLERANCE,
+                                     relative_tolerance=DEPAN_FLOAT_RELATIVE_TOLERANCE,
+                                     scope="Phase5 DepanAnalyse motion float properties; actual Highway only")
     if args.mvu_plugin is not None:
         report["reference"] = dict(path=str(args.mvu_plugin), sha256=args.mvu_plugin_sha256,
                                    selection="explicit; autoload disabled")
@@ -152,14 +172,16 @@ def main():
         if any(value is None for value in results.values()):
             status, difference = "execution_error", None
         else:
-            status, difference = compare(results["mvu"], results["neo"], spec)
+            status, difference = compare(results["mvu"], results["neo"], spec,
+                                         depan_float_tolerance=args.depan_float_tolerance)
         report["cases"].append(dict(id=spec["id"], status=status, difference=difference, workers=workers))
         write_report(directory, report)
         print(f"{spec['id']}: {status}", flush=True)
     statuses = {item["status"] for item in report["cases"]}
     code = 2 if statuses & {"execution_error", "input_mismatch"} else 1 if "difference" in statuses else 0
     report["status"] = ("error" if code == 2 else "difference" if code == 1 else
-                        "known_difference" if "known_difference" in statuses else "pass")
+                        "known_difference" if "known_difference" in statuses else
+                        "within_tolerance" if "within_tolerance" in statuses else "pass")
     write_report(directory, report)
     return code
 

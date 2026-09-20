@@ -141,10 +141,51 @@ Observations observations(int nx, int ny) {
       result.values.push_back({8 * x + 4, 8 * y + 4, 0, 0, 0, 1});
   return result;
 }
+// Independent correctly-rounded std::fma oracle for the permitted fusion sites.
+// All other arithmetic, accumulation order and integer sampling stay unchanged.
+float fused_add(float a, float b, float c) {
+  (void)mul(a, b);
+  return finite(std::fma(a, b, finite(c)));
+}
+struct FmaOracle : ScalarResiduals {
+  static auto prepare(const Observations& o, Transform t) {
+    if (!simd::depan_rows::native_fma()) {
+      std::vector<std::array<float, 2>> result;
+      for (const auto& v : o.values)
+        result.push_back({analysis_detail::residual_x(v, t), analysis_detail::residual_y(v, t)});
+      return result;
+    }
+    std::vector<std::array<float, 2>> result;
+    for (const auto& v : o.values) {
+      const float x = analysis_detail::integer32(static_cast<std::uint64_t>(v.x));
+      const float y = analysis_detail::integer32(static_cast<std::uint64_t>(v.y));
+      result.push_back({sub(sub(fused_add(t.v, y, fused_add(t.u, x, t.tx)), x), v.dx),
+                        sub(sub(fused_add(t.h, y, fused_add(t.w, x, t.ty)), y), v.dy)});
+    }
+    return result;
+  }
+  static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
+                                    const std::array<float, 4>& gradients, std::size_t count) {
+    if (!simd::depan_rows::native_fma())
+      return ScalarResiduals::adjust(values, scales, gradients, count);
+    for (std::size_t i = 0; i < count; ++i)
+      values[i] = fused_add(-scales[i], gradients[i], values[i]);
+    return values;
+  }
+};
+struct OracleResiduals : FmaOracle {
+  static auto prepare(const Observations& o, Transform t) {
+    return [rows = FmaOracle::prepare(o, t)](std::size_t i) { return rows[i]; };
+  }
+};
+void close_float(float a, float b) {
+  CHECK(std::isfinite(a) && std::isfinite(b));
+  CHECK(std::abs(double(a) - double(b)) <= 1e-4 + 1e-5 * (std::max)(std::abs(double(a)), std::abs(double(b))));
+}
 void update_pair(const Observations& o, const std::vector<float>& weights, Transform map, float aspect, float step,
                  bool zoom, bool rotation) {
   std::optional<FitUpdate> a, b;
-  CHECK(rejected([&] { a = fit_update(o, weights, map, aspect, step, zoom, rotation); }) ==
+  CHECK(rejected([&] { a = fit_update<OracleResiduals>(o, weights, map, aspect, step, zoom, rotation); }) ==
         rejected([&] { b = fit_update<HighwayResiduals>(o, weights, map, aspect, step, zoom, rotation); }));
   CHECK(a.has_value() == b.has_value());
   if (a) {
@@ -152,14 +193,25 @@ void update_pair(const Observations& o, const std::vector<float>& weights, Trans
     same_float(a->error, b->error);
   }
 }
-void fit_pair(const Observations& o, FitParameters p = {}) {
+void fit_pair(const Observations& o, FitParameters p = {}, bool bounded = false) {
   std::optional<FitResult> a, b;
-  CHECK(rejected([&] { a = fit(o, p); }) == rejected([&] { b = fit<HighwayResiduals>(o, p); }));
+  CHECK(rejected([&] { a = fit<OracleResiduals>(o, p); }) == rejected([&] { b = fit<HighwayResiduals>(o, p); }));
   CHECK(a.has_value() == b.has_value());
   if (a) {
     same_map(a->map, b->map);
     same_float(a->error, b->error);
     CHECK(a->iteration == b->iteration && a->good == b->good);
+    if (bounded) {
+      const auto scalar = fit(o, p);
+      close_float(scalar.map.tx, b->map.tx);
+      close_float(scalar.map.ty, b->map.ty);
+      close_float(scalar.map.u, b->map.u);
+      close_float(scalar.map.v, b->map.v);
+      close_float(scalar.map.w, b->map.w);
+      close_float(scalar.map.h, b->map.h);
+      close_float(scalar.error, b->error);
+      CHECK(scalar.good == b->good && scalar.iteration == b->iteration);
+    }
   }
 }
 void fitting() {
@@ -181,7 +233,7 @@ void fitting() {
         p.zoom = zoom;
         p.rotation = rotation;
         p.aspect = 1.25f;
-        fit_pair(o, p);
+        fit_pair(o, p, true);
       }
     o.masked = false;
     fit_pair(o);
@@ -194,11 +246,13 @@ void fitting() {
   }
   FitParameters p;
   p.zoom = p.rotation = false;
-  fit_pair(golden, p);
+  fit_pair(golden, p, true);
   const auto result = fit<HighwayResiduals>(golden, p);
   CHECK(result.good && result.iteration == 10);
-  same_float(result.map.tx, 0.49161040782928467f);
-  same_float(result.error, 1.6047950983047485f);
+  if (!simd::depan_rows::native_fma()) {
+    same_float(result.map.tx, 0.49161040782928467f);
+    same_float(result.error, 1.6047950983047485f);
+  }
   const float tiny = std::numeric_limits<float>::denorm_min();
   for (const float value : {0.0f, -0.0f, tiny, -tiny, 0x1p24f, -0x1p24f, std::numeric_limits<float>::max()}) {
     auto o = observations(17, 1);
@@ -353,8 +407,10 @@ void guarded_residuals() {
       simd::depan_rows::residuals(x.data, y.data, dx.data, dy.data, width, map, ex.data, ey.data);
       for (int i = 0; i < width; ++i) {
         const Observation value{std::int64_t(x.data[i]), std::int64_t(y.data[i]), dx.data[i], dy.data[i], 0, 1};
-        same_float(ex.data[i], analysis_detail::residual_x(value, map));
-        same_float(ey.data[i], analysis_detail::residual_y(value, map));
+        Observations single{1, 1, true, false, 400, {value}};
+        const auto expected = FmaOracle::prepare(single, map)[0];
+        same_float(ex.data[i], expected[0]);
+        same_float(ey.data[i], expected[1]);
       }
     }
     for (const float invalid : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
@@ -367,6 +423,31 @@ void guarded_residuals() {
     overflow.u = std::numeric_limits<float>::max();
     CHECK(rejected(
         [&] { simd::depan_rows::residuals(x.data, y.data, dx.data, dy.data, width, overflow, ex.data, ey.data); }));
+  }
+}
+void guarded_adjustments() {
+  for (const int width : widths) {
+    EndRow<float> values(width), scales(width), gradients(width), output(width);
+    for (int i = 0; i < width; ++i) {
+      values.data[i] = i % 2 ? -0.0f : 1.0f;
+      scales.data[i] = i % 2 ? 0.0f : 0x1.000002p0f;
+      gradients.data[i] = i % 2 ? -0.0f : 0x1.fffffcp-1f;
+    }
+    simd::depan_rows::adjust(values.data, scales.data, gradients.data, width, output.data);
+    for (int i = 0; i < width; ++i) {
+      const float expected = simd::depan_rows::native_fma()
+                                 ? fused_add(-scales.data[i], gradients.data[i], values.data[i])
+                                 : sub(values.data[i], mul(scales.data[i], gradients.data[i]));
+      same_float(output.data[i], expected);
+    }
+    CHECK(output.data[0] == (simd::depan_rows::native_fma() ? 0x1p-46f : 0.0f));
+    simd::depan_rows::adjust(values.data, scales.data, gradients.data, width, values.data);
+    CHECK(std::memcmp(values.data, output.data, std::size_t(width) * sizeof(float)) == 0);
+    // A fused cancellation must not hide a non-finite separate product.
+    values.data[width - 1] = std::numeric_limits<float>::max();
+    scales.data[width - 1] = std::numeric_limits<float>::max();
+    gradients.data[width - 1] = 2;
+    CHECK(rejected([&] { simd::depan_rows::adjust(values.data, scales.data, gradients.data, width, output.data); }));
   }
 }
 } // namespace
@@ -383,6 +464,7 @@ int main() {
       fitting();
       guarded_weighted();
       guarded_residuals();
+      guarded_adjustments();
     }
     hwy::SetSupportedTargetsForTest(0);
     std::cout << "Depan exact differentials passed\n";

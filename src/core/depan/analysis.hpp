@@ -244,6 +244,12 @@ inline std::vector<float> select_weights(const Observations& observations, const
 }
 
 struct ScalarResiduals {
+  static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
+                                    const std::array<float, 4>& gradients, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i)
+      values[i] = sub(values[i], mul(scales[i], gradients[i]));
+    return values;
+  }
   static auto prepare(const Observations& observations, Transform map) {
     return [&observations, map](std::size_t i) {
       return std::array<float, 2>{analysis_detail::residual_x(observations.values[i], map),
@@ -292,12 +298,16 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
   gyx = div(gyx, mul(mul(x2, 2.0f), 3.0f));
   const float error = sqrt32(div(residual, n));
   Transform next = map;
-  next.tx = sub(map.tx, mul(step, gx));
-  next.ty = sub(map.ty, mul(step, gy));
+  const float half_step = mul(step, 0.5f);
+  const auto adjusted = Residuals::adjust({map.tx, map.ty, map.v, map.u}, {step, step, half_step, half_step},
+                                         {gx, gy, sub(gxy, div(gyx, aspect2)), zoom ? add(gxx, gyy) : 0.0f},
+                                         zoom ? 4 : 3);
+  next.tx = adjusted[0];
+  next.ty = adjusted[1];
   if (zoom)
-    next.u = sub(map.u, mul(mul(step, 0.5f), add(gxx, gyy)));
+    next.u = adjusted[3];
   next.h = next.u;
-  next.v = sub(map.v, mul(mul(step, 0.5f), sub(gxy, div(gyx, aspect2))));
+  next.v = adjusted[2];
   next.w = mul(mul(-aspect, aspect), next.v);
   return {next, error};
 }

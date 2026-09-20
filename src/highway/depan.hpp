@@ -6,6 +6,11 @@
 
 namespace neo_mv::depan {
 struct HighwayResiduals {
+  static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
+                                    const std::array<float, 4>& gradients, std::size_t count) {
+    simd::depan_rows::adjust(values.data(), scales.data(), gradients.data(), count, values.data());
+    return values;
+  }
   struct Rows {
     std::vector<float> ex, ey;
     auto operator()(std::size_t i) const { return std::array<float, 2>{ex[i], ey[i]}; }

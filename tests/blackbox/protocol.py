@@ -1,6 +1,8 @@
 """Backend-independent result validation and exact public-output comparison."""
 import hashlib
 import json
+import math
+import struct
 
 from cases import ANALYSIS_KEYS, SUPER_KEYS
 
@@ -9,6 +11,9 @@ ORDINARY_KEYS = ("TestMarker", "TestData", "TestFloat", "_Field", "_SceneChangeP
                  "_DurationNum", "_DurationDen")
 DEPAN_KEYS = ("Depan_dx", "Depan_dy", "Depan_rot", "Depan_zoom", "Depan_goodmotion",
               "DepanAnalyse_info", "DepanCompensate_info")
+DEPAN_FLOAT_KEYS = ("Depan_dx", "Depan_dy", "Depan_rot", "Depan_zoom")
+DEPAN_FLOAT_ABSOLUTE_TOLERANCE = 1e-4
+DEPAN_FLOAT_RELATIVE_TOLERANCE = 1e-5
 
 
 def observation_keys(spec):
@@ -221,7 +226,60 @@ def mask_range_observations(reference, candidate, spec):
     return left, right, known
 
 
-def compare(reference, candidate, spec=None):
+def depan_float_observations(reference, candidate, spec, left, right):
+    """Project only finite motion values within the fixed, explicitly enabled bound.
+
+    Original records, native types, counts and bit strings remain in reports.
+    Other fields (including diagnostic text) are still compared exactly.
+    """
+    kernel = candidate.get("environment", {}).get("kernel", {})
+    if not spec or spec.get("phase") != 5 or spec.get("operation") != "DepanAnalyse" or \
+            reference.get("backend") != "mvu" or candidate.get("backend") != "neo" or \
+            kernel.get("effective") != "highway" or not kernel.get("target") or \
+            kernel["target"] in ("scalar", "SCALAR", "EMU128"):
+        return left, right, [], []
+    right, tolerated, rejected = list(right), [], []
+    for ordinal, (a, b) in enumerate(zip(left, right)):
+        if "error" in a or "error" in b:
+            continue
+        properties = dict(b.get("properties", {}))
+        for key in DEPAN_FLOAT_KEYS:
+            av, bv = a.get("properties", {}).get(key), properties.get(key)
+            if not isinstance(av, dict) or not isinstance(bv, dict) or \
+                    av.get("type") != "float64" or bv.get("type") != "float64" or \
+                    type(av.get("count")) is not int or av["count"] <= 0 or av["count"] != bv.get("count") or \
+                    not isinstance(av.get("values"), list) or not isinstance(bv.get("values"), list) or \
+                    len(av["values"]) != av["count"] or len(bv["values"]) != bv["count"]:
+                continue
+            values = list(bv["values"])
+            for index, (abits, bbits) in enumerate(zip(av["values"], bv["values"])):
+                if abits == bbits:
+                    continue
+                try:
+                    af = struct.unpack(">d", bytes.fromhex(abits))[0]
+                    bf = struct.unpack(">d", bytes.fromhex(bbits))[0]
+                except (TypeError, ValueError, struct.error):
+                    continue
+                if not math.isfinite(af) or not math.isfinite(bf):
+                    continue
+                absolute_difference = abs(af - bf)
+                limit = DEPAN_FLOAT_ABSOLUTE_TOLERANCE + DEPAN_FLOAT_RELATIVE_TOLERANCE * max(abs(af), abs(bf))
+                observation = dict(path=f"/records/{ordinal}/properties/{key}/values/{index}",
+                    request={name: a[name] for name in ("request", "member", "frame")},
+                    reference_bits=abits, candidate_bits=bbits, reference=af, candidate=bf,
+                    absolute_difference=absolute_difference if math.isfinite(absolute_difference) else "overflow",
+                    limit=limit)
+                if absolute_difference <= limit:
+                    tolerated.append(observation)
+                    values[index] = abits
+                else:
+                    rejected.append(observation)
+            properties[key] = dict(bv, values=values)
+        right[ordinal] = dict(b, properties=properties)
+    return left, right, tolerated, rejected
+
+
+def compare(reference, candidate, spec=None, *, depan_float_tolerance=False):
     # Do not compare DLL identity/host addresses/private payloads. Do compare the
     # actual generated source before assigning any difference to an algorithm.
     difference = first_difference(reference.get("environment", {}).get("text_renderer"),
@@ -269,6 +327,10 @@ def compare(reference, candidate, spec=None):
             if expected is not None:
                 difference["expected_error"] = expected
             return "difference", difference
+    tolerated, rejected = [], []
+    if depan_float_tolerance:
+        left_records, right_records, tolerated, rejected = depan_float_observations(
+            reference, candidate, spec, left_records, right_records)
     for field, left, right in (("outputs", reference["outputs"], candidate["outputs"]),
                                ("records", left_records, right_records)):
         difference = first_difference(left, right, "/" + field)
@@ -280,7 +342,15 @@ def compare(reference, candidate, spec=None):
                                              for key in ("request", "member", "frame")}
             if known:
                 difference["known_differences"] = known
+            if tolerated:
+                difference["tolerated_differences"] = tolerated
+            if rejected:
+                difference["rejected_float_differences"] = rejected
             return "difference", difference
     if known:
         return "known_difference", dict(known_differences=known)
+    if tolerated:
+        return "within_tolerance", dict(tolerated_differences=tolerated,
+            absolute_tolerance=DEPAN_FLOAT_ABSOLUTE_TOLERANCE,
+            relative_tolerance=DEPAN_FLOAT_RELATIVE_TOLERANCE)
     return "pass", None

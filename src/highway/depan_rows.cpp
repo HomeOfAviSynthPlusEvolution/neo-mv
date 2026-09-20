@@ -26,15 +26,49 @@ template <class D, class V>
 auto Mul(D d, V a, V b) {
   return Check(d, hn::Mul(a, b));
 }
+template <class D, class V>
+auto MulAdd(D d, V a, V b, V c) {
+  const auto product = Mul(d, a, b);
+#if HWY_NATIVE_FMA
+  (void)product; // Keep the separate product overflow check even when the sum can cancel it.
+  return Check(d, hn::MulAdd(a, b, c));
+#else
+  return Add(d, product, c);
+#endif
+}
+bool NativeFma() { return HWY_NATIVE_FMA != 0; }
+template <class D>
+void AdjustChunk(D d, const float* values, const float* scales, const float* gradients, float* output) {
+  const auto value = Check(d, hn::LoadU(d, values));
+  const auto scale = Check(d, hn::LoadU(d, scales));
+  const auto gradient = Check(d, hn::LoadU(d, gradients));
+  const auto product = Mul(d, scale, gradient);
+#if HWY_NATIVE_FMA
+  (void)product;
+  hn::StoreU(Check(d, hn::NegMulAdd(scale, gradient, value)), d, output);
+#else
+  hn::StoreU(Sub(d, value, product), d, output);
+#endif
+}
+void Adjust(const float* values, const float* scales, const float* gradients, std::size_t count, float* output) {
+  const hn::CappedTag<float, 4> d;
+  const auto lanes = hn::Lanes(d);
+  std::size_t i = 0;
+  for (; i + lanes <= count; i += lanes)
+    AdjustChunk(d, values + i, scales + i, gradients + i, output + i);
+  const hn::CappedTag<float, 1> one;
+  for (; i < count; ++i)
+    AdjustChunk(one, values + i, scales + i, gradients + i, output + i);
+}
 template <class D>
 void ResidualChunk(D d, const float* x, const float* y, const float* dx, const float* dy, depan::Transform t, float* ex,
                    float* ey) {
   const auto X = hn::LoadU(d, x), Y = hn::LoadU(d, y);
   const auto a =
-      Sub(d, Sub(d, Add(d, Add(d, hn::Set(d, t.tx), Mul(d, hn::Set(d, t.u), X)), Mul(d, hn::Set(d, t.v), Y)), X),
+      Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.v), Y, MulAdd(d, hn::Set(d, t.u), X, hn::Set(d, t.tx))), X),
           hn::LoadU(d, dx));
   const auto b =
-      Sub(d, Sub(d, Add(d, Add(d, hn::Set(d, t.ty), Mul(d, hn::Set(d, t.w), X)), Mul(d, hn::Set(d, t.h), Y)), Y),
+      Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.h), Y, MulAdd(d, hn::Set(d, t.w), X, hn::Set(d, t.ty))), Y),
           hn::LoadU(d, dy));
   hn::StoreU(a, d, ex);
   hn::StoreU(b, d, ey);
@@ -85,6 +119,12 @@ HWY_AFTER_NAMESPACE();
 namespace neo_mv::simd::depan_rows {
 HWY_EXPORT(Residuals);
 HWY_EXPORT(Weighted);
+HWY_EXPORT(NativeFma);
+HWY_EXPORT(Adjust);
+bool native_fma() { return HWY_DYNAMIC_DISPATCH(NativeFma)(); }
+void adjust(const float* values, const float* scales, const float* gradients, std::size_t count, float* output) {
+  HWY_DYNAMIC_DISPATCH(Adjust)(values, scales, gradients, count, output);
+}
 void residuals(const float* x, const float* y, const float* dx, const float* dy, std::size_t count,
                depan::Transform map, float* ex, float* ey) {
   HWY_DYNAMIC_DISPATCH(Residuals)(x, y, dx, dy, count, map, ex, ey);
