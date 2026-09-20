@@ -187,8 +187,8 @@ void numeric_errors() {
   }
   for (const float bad : {nan, inf, -inf, maximum, -maximum}) {
     Buffer<float> first(width, 2), second(width, 2), scalar(width, 2), highway(width, 2);
-    std::fill(first.data.begin(), first.data.end(), 0);
-    std::fill(second.data.begin(), second.data.end(), 0);
+    std::fill(first.data.begin(), first.data.end(), 0.0f);
+    std::fill(second.data.begin(), second.data.end(), 0.0f);
     // Nonfinite zero-weight operands still fail; finite maxima overflow at full weight.
     second.view().row(1)[32] = bad;
     const int time = std::isfinite(bad) ? 256 : 0;
