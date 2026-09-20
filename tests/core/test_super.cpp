@@ -126,6 +126,17 @@ void external_and_errors() {
   Input<std::uint8_t> small(p, 1), doubled(p, 2, 2);
   SuperPyramid<std::uint8_t> small_out(external_small, small.views, doubled.views);
   CHECK(small_out.phase(1, 0, 1, 1).row(0)[0] == 2);
+  SuperPlan<std::uint8_t> replacement(p, 8, 0, 0, true);
+  p.pel = 1;
+  auto assignment_plan = SuperPlan<std::uint8_t>(p, 8);
+  assignment_plan = replacement;
+  CHECK(assignment_plan.params().pel == 2 && assignment_plan.filter() == 0 && assignment_plan.external());
+  SuperPyramid<std::uint8_t> assigned(SuperPlan<std::uint8_t>(p, 8), small.views);
+  assigned = small_out;
+  CHECK(assigned.phase(1, 0, 1, 1).row(0)[0] == 2);
+  CHECK(assigned.phase(1, 0, 1, 1).data() != small_out.phase(1, 0, 1, 1).data());
+  assigned = std::move(small_out);
+  CHECK(assigned.phase(1, 0, 1, 1).row(0)[0] == 2);
 }
 
 void analysis_integration() {

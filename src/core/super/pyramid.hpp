@@ -73,6 +73,21 @@ public:
     }
   }
   const SuperGeometryParams& params() const { return params_; }
+  SuperPlan(const SuperPlan&) = default;
+  SuperPlan(SuperPlan&&) noexcept = default;
+  SuperPlan& operator=(SuperPlan other) noexcept {
+    swap(*this, other);
+    return *this;
+  }
+  friend void swap(SuperPlan& a, SuperPlan& b) noexcept {
+    using std::swap;
+    swap(a.params_, b.params_);
+    swap(a.geometry_, b.geometry_);
+    swap(a.bits_, b.bits_);
+    swap(a.sharp_, b.sharp_);
+    swap(a.filter_, b.filter_);
+    swap(a.external_, b.external_);
+  }
   const SuperGeometry& geometry() const { return geometry_; }
   int bits() const { return bits_; }
   int sharp() const { return sharp_; }
@@ -148,6 +163,19 @@ public:
     }
   }
   const SuperPlan<T>& plan() const { return plan_; }
+  SuperPyramid(const SuperPyramid&) = default;
+  SuperPyramid(SuperPyramid&&) noexcept = default;
+  // Build the entire replacement before changing either geometry or samples.
+  // An allocation failure must leave the old payload internally consistent.
+  SuperPyramid& operator=(SuperPyramid other) noexcept {
+    swap(*this, other);
+    return *this;
+  }
+  friend void swap(SuperPyramid& a, SuperPyramid& b) noexcept {
+    using std::swap;
+    swap(a.plan_, b.plan_);
+    swap(a.planes_, b.planes_);
+  }
   span2d::Plane<const T> phase(int plane, int level, int ax = 0, int ay = 0) const {
     if (plane < 0 || plane >= plan_.geometry().plane_count || level < 0 || std::size_t(level) >= planes_[plane].size())
       throw std::out_of_range("Super plane or level out of range");
