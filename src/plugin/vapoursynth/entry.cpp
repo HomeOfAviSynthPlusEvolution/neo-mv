@@ -154,6 +154,45 @@ void VS_CC create_temporal(const VSMap* in, VSMap* out, void*, VSCore* core, con
     api->mapSetError(out, "neo-mv: temporal creation failed");
   }
 }
+template <bool Analyse>
+void VS_CC create_depan(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
+  try {
+    // Use the native wrapper only for the host text-rendering dependency.
+    const bool info = integer(in, "info", 0, api) != 0;
+    MapOwner base(api->createMap(), api->freeMap);
+    if (!base)
+      throw std::bad_alloc();
+    ds::vapoursynth::create_video_filter_bridge<DepanBridge<Analyse>>(in, base.get(), core, api);
+    if (const char* error = api->mapGetError(base.get()))
+      throw std::runtime_error(error);
+    if (!info) {
+      api->copyMap(base.get(), out);
+      return;
+    }
+    auto* text = api->getPluginByNamespace("text", core);
+    require(text != nullptr, "Depan info requires text.FrameProps");
+    int error = 0;
+    std::unique_ptr<VSNode, decltype(api->freeNode)> node(api->mapGetNode(base.get(), "clip", 0, &error),
+                                                          api->freeNode);
+    require(!error && node, "Depan base node unavailable");
+    MapOwner args(api->createMap(), api->freeMap);
+    if (!args)
+      throw std::bad_alloc();
+    require(api->mapSetNode(args.get(), "clip", node.get(), maReplace) == 0 &&
+                api->mapSetData(args.get(), "props", Analyse ? "DepanAnalyse_info" : "DepanCompensate_info", -1, dtUtf8,
+                                maReplace) == 0,
+            "cannot create Depan text arguments");
+    MapOwner rendered(api->invoke(text, "FrameProps", args.get()), api->freeMap);
+    require(bool(rendered), "Depan text invocation failed");
+    if (const char* message = api->mapGetError(rendered.get()))
+      throw std::runtime_error(message);
+    api->copyMap(rendered.get(), out);
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: Depan creation failed");
+  }
+}
 template <MaskKind Kind>
 void VS_CC create_mask(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
   try {
@@ -198,4 +237,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                           reinterpret_cast<void*>(radius), plugin);
   }
   api->registerFunction("KernelInfo", "", "backend:data;target:data;", kernel_info, nullptr, plugin);
+  api->registerFunction("DepanAnalyse", depan_analysis_signature, "clip:vnode;", create_depan<true>, nullptr, plugin);
+  api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;", create_depan<false>, nullptr,
+                        plugin);
 }

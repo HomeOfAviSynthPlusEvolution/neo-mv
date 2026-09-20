@@ -4,6 +4,7 @@
 #include "filters/mask.hpp"
 #include "filters/flow.hpp"
 #include "filters/interpolation.hpp"
+#include "filters/depan.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -220,6 +221,49 @@ struct TemporalBridge : Bridge<Operation::Super> {
     d.params.push_back(parameter("thscd1", P::Integer));
     d.params.push_back(parameter("thscd2", P::Float));
     d.params.push_back(parameter("prefix", P::String));
+    return d;
+  }
+};
+inline constexpr char depan_analysis_signature[] =
+    "clip:vnode;vectors:vnode;mask:vnode:opt;zoom:int:opt;rot:int:opt;pixaspect:float:opt;error:float:opt;info:int:opt;"
+    "wrong:float:opt;zerow:float:opt;thscd1:int:opt;thscd2:float:opt;fields:int:opt;tff:int:opt;";
+inline constexpr char depan_compensation_signature[] =
+    "clip:vnode;data:vnode;offset:float:opt;subpixel:int:opt;pixaspect:float:opt;matchfields:int:opt;mirror:int:opt;"
+    "blur:int:opt;info:int:opt;fields:int:opt;tff:int:opt;";
+template <bool Analyse>
+struct DepanBridge : Bridge<Operation::Super> {
+  using Core = std::conditional_t<Analyse, DepanAnalysisFilter, DepanCompensationFilter>;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = Analyse ? depan_analysis_signature : depan_compensation_signature;
+  static bool accepts_video_format(const ds::VideoFormat&) { return true; }
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    d.params.push_back(parameter("clip", P::Clip, true));
+    d.params.push_back(parameter(Analyse ? "vectors" : "data", P::Clip, true));
+    if constexpr (Analyse) {
+      d.params.push_back(parameter("mask", P::Clip));
+      for (auto n : {"zoom", "rot"})
+        d.params.push_back(parameter(n, P::Boolean));
+      for (auto n : {"pixaspect", "error"})
+        d.params.push_back(parameter(n, P::Float));
+      d.params.push_back(parameter("info", P::Boolean));
+      for (auto n : {"wrong", "zerow"})
+        d.params.push_back(parameter(n, P::Float));
+      d.params.push_back(parameter("thscd1", P::Integer));
+      d.params.push_back(parameter("thscd2", P::Float));
+    } else {
+      d.params.push_back(parameter("offset", P::Float));
+      d.params.push_back(parameter("subpixel", P::Integer));
+      d.params.push_back(parameter("pixaspect", P::Float));
+      d.params.push_back(parameter("matchfields", P::Boolean));
+      for (auto n : {"mirror", "blur"})
+        d.params.push_back(parameter(n, P::Integer));
+      d.params.push_back(parameter("info", P::Boolean));
+    }
+    for (auto n : {"fields", "tff"})
+      d.params.push_back(parameter(n, P::Boolean));
     return d;
   }
 };
