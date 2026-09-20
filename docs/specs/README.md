@@ -8,4 +8,6 @@
 
 [Phase 4](phase-4/README.md): FlowInter, FlowFPS, and FlowBlur.
 
+[Phase 5](phase-5/README.md): DepanAnalyse and DepanCompensate.
+
 Each function directory contains its mathematical operators in `kernel-*.md` and its public interface in `plugin.md`. Shared operators are referenced rather than duplicated. Implement the scalar definitions before adding optimized paths.
