@@ -20,7 +20,9 @@ inline constexpr bool supported_sample =
 template <class T>
 span2d::Plane<T> checked_plane(T* data, std::int32_t width, std::int32_t height, std::ptrdiff_t stride_bytes,
                                std::size_t extent_bytes) {
-  static_assert(supported_sample<T>, "unsupported sample storage");
+  // Signed 16-bit views carry dense displacement components, not video samples.
+  static_assert(supported_sample<T> || std::is_same_v<std::remove_const_t<T>, std::int16_t>,
+                "unsupported plane storage");
   if (!data || width <= 0 || height <= 0 || stride_bytes <= 0)
     throw std::invalid_argument("invalid plane dimensions, address or stride");
   const auto address = reinterpret_cast<std::uintptr_t>(data);
