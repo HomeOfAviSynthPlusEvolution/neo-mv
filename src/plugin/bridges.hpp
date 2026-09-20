@@ -3,6 +3,7 @@
 #include "filters/phase2.hpp"
 #include "filters/mask.hpp"
 #include "filters/flow.hpp"
+#include "filters/interpolation.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -177,6 +178,47 @@ struct FlowBridge : Bridge<Operation::Super> {
     d.params.push_back(parameter("thscd1", P::Integer));
     d.params.push_back(parameter("thscd2", P::Float));
     d.params.push_back(parameter("tff", P::Boolean));
+    d.params.push_back(parameter("prefix", P::String));
+    return d;
+  }
+};
+inline constexpr char flow_inter_signature[] = "clip:vnode;super:vnode;vectors:vnode[];time:float:opt;ml:float:opt;"
+                                               "blend:int:opt;thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
+inline constexpr char flow_fps_signature[] =
+    "clip:vnode;super:vnode;vectors:vnode[];num:int:opt;den:int:opt;extramask:int:opt;ml:float:opt;blend:int:opt;"
+    "thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
+inline constexpr char flow_blur_signature[] = "clip:vnode;super:vnode;vectors:vnode[];blur:float:opt;prec:int:opt;"
+                                              "thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
+template <TemporalKind Kind>
+struct TemporalBridge : Bridge<Operation::Super> {
+  using Core = TemporalFilter<Kind>;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = Kind == TemporalKind::Inter ? flow_inter_signature
+                                              : Kind == TemporalKind::FPS ? flow_fps_signature
+                                                                          : flow_blur_signature;
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    d.params.push_back(parameter("clip", P::Clip, true));
+    d.params.push_back(parameter("super", P::Clip, true));
+    d.params.push_back(parameter("vectors", P::Clip, true, true));
+    if constexpr (Kind == TemporalKind::Inter)
+      d.params.push_back(parameter("time", P::Float));
+    if constexpr (Kind == TemporalKind::FPS) {
+      d.params.push_back(parameter("num", P::Integer));
+      d.params.push_back(parameter("den", P::Integer));
+      d.params.push_back(parameter("extramask", P::Boolean));
+    }
+    if constexpr (Kind == TemporalKind::Blur) {
+      d.params.push_back(parameter("blur", P::Float));
+      d.params.push_back(parameter("prec", P::Integer));
+    } else {
+      d.params.push_back(parameter("ml", P::Float));
+      d.params.push_back(parameter("blend", P::Boolean));
+    }
+    d.params.push_back(parameter("thscd1", P::Integer));
+    d.params.push_back(parameter("thscd2", P::Float));
     d.params.push_back(parameter("prefix", P::String));
     return d;
   }

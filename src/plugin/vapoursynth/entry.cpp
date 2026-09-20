@@ -143,6 +143,17 @@ void VS_CC create_flow(const VSMap* in, VSMap* out, void*, VSCore* core, const V
     api->mapSetError(out, "neo-mv: Flow creation failed");
   }
 }
+template <TemporalKind Kind>
+void VS_CC create_temporal(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
+  try {
+    check_prefix(in, api);
+    ds::vapoursynth::create_video_filter_bridge<TemporalBridge<Kind>>(in, out, core, api);
+  } catch (const std::exception& e) {
+    api->mapSetError(out, e.what());
+  } catch (...) {
+    api->mapSetError(out, "neo-mv: temporal creation failed");
+  }
+}
 template <MaskKind Kind>
 void VS_CC create_mask(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
   try {
@@ -169,6 +180,12 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("SCDetection", scene_signature, "clip:vnode;", create<Operation::SCDetection>, nullptr, plugin);
   api->registerFunction("Compensate", compensate_signature, "clip:vnode;", create_render<false>, nullptr, plugin);
   api->registerFunction("Flow", flow_signature, "clip:vnode;", create_flow, nullptr, plugin);
+  api->registerFunction("FlowInter", flow_inter_signature, "clip:vnode;", create_temporal<TemporalKind::Inter>, nullptr,
+                        plugin);
+  api->registerFunction("FlowFPS", flow_fps_signature, "clip:vnode;", create_temporal<TemporalKind::FPS>, nullptr,
+                        plugin);
+  api->registerFunction("FlowBlur", flow_blur_signature, "clip:vnode;", create_temporal<TemporalKind::Blur>, nullptr,
+                        plugin);
   api->registerFunction("Degrain", degrain_signature, "clip:vnode;", create_render<true>, nullptr, plugin);
   api->registerFunction("VectorLengthMask", mask_signature, "clip:vnode;", create_mask<MaskKind::VectorLength>, nullptr,
                         plugin);
