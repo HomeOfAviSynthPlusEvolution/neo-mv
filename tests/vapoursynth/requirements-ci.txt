@@ -1,0 +1,2 @@
+# Official Windows x64 wheel; host only, no reference MV plugin.
+vapoursynth==79 --hash=sha256:643d9708df7e98807a66d4e8804e2e9a1380af22bea2873387d8af103e69aa5b
