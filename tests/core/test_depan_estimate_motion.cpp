@@ -2,6 +2,7 @@
 
 #include <array>
 #include <iostream>
+#include <string>
 
 namespace {
 using namespace neo_mv;

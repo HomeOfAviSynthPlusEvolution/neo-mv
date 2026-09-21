@@ -154,7 +154,7 @@ void VS_CC create_temporal(const VSMap* in, VSMap* out, void*, VSCore* core, con
     api->mapSetError(out, "neo-mv: temporal creation failed");
   }
 }
-template <bool Analyse>
+template <class Adapter>
 void VS_CC create_depan(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
   try {
     // Use the native wrapper only for the host text-rendering dependency.
@@ -162,7 +162,7 @@ void VS_CC create_depan(const VSMap* in, VSMap* out, void*, VSCore* core, const 
     MapOwner base(api->createMap(), api->freeMap);
     if (!base)
       throw std::bad_alloc();
-    ds::vapoursynth::create_video_filter_bridge<DepanBridge<Analyse>>(in, base.get(), core, api);
+    ds::vapoursynth::create_video_filter_bridge<Adapter>(in, base.get(), core, api);
     if (const char* error = api->mapGetError(base.get()))
       throw std::runtime_error(error);
     if (!info) {
@@ -179,8 +179,7 @@ void VS_CC create_depan(const VSMap* in, VSMap* out, void*, VSCore* core, const 
     if (!args)
       throw std::bad_alloc();
     require(api->mapSetNode(args.get(), "clip", node.get(), maReplace) == 0 &&
-                api->mapSetData(args.get(), "props", Analyse ? "DepanAnalyse_info" : "DepanCompensate_info", -1, dtUtf8,
-                                maReplace) == 0,
+                api->mapSetData(args.get(), "props", Adapter::diagnostic_property, -1, dtUtf8, maReplace) == 0,
             "cannot create Depan text arguments");
     MapOwner rendered(api->invoke(text, "FrameProps", args.get()), api->freeMap);
     require(bool(rendered), "Depan text invocation failed");
@@ -237,7 +236,10 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                           reinterpret_cast<void*>(radius), plugin);
   }
   api->registerFunction("KernelInfo", "", "backend:data;target:data;", kernel_info, nullptr, plugin);
-  api->registerFunction("DepanAnalyse", depan_analysis_signature, "clip:vnode;", create_depan<true>, nullptr, plugin);
-  api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;", create_depan<false>, nullptr,
-                        plugin);
+  api->registerFunction("DepanAnalyse", depan_analysis_signature, "clip:vnode;", create_depan<DepanBridge<true>>,
+                        nullptr, plugin);
+  api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;", create_depan<DepanBridge<false>>,
+                        nullptr, plugin);
+  api->registerFunction("DepanEstimate", depan_estimate_signature, "clip:vnode;", create_depan<DepanEstimateBridge>,
+                        nullptr, plugin);
 }

@@ -133,6 +133,11 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/depan.vpy" --)
       set_tests_properties(vs.depan PROPERTIES TIMEOUT 180 LABELS "spec" RUN_SERIAL TRUE
         ENVIRONMENT "NEO_MV_KERNEL=scalar" FAIL_REGULAR_EXPRESSION "Core freed but")
+      add_test(NAME vs.depan_estimate COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+        --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/depan_estimate.vpy" --)
+      set_tests_properties(vs.depan_estimate PROPERTIES TIMEOUT 180 LABELS "spec" RUN_SERIAL TRUE
+        ENVIRONMENT "NEO_MV_KERNEL=scalar" FAIL_REGULAR_EXPRESSION "Core freed but")
       if(NEO_MV_ENABLE_HIGHWAY)
         add_test(NAME vs.acceptance.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>" --arg "kernel=highway"

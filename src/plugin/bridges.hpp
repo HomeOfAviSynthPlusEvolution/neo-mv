@@ -5,6 +5,7 @@
 #include "filters/flow.hpp"
 #include "filters/interpolation.hpp"
 #include "filters/depan.hpp"
+#include "filters/depan_estimate.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -235,6 +236,7 @@ struct DepanBridge : Bridge<Operation::Super> {
   using Core = std::conditional_t<Analyse, DepanAnalysisFilter, DepanCompensationFilter>;
   static constexpr const char* vs_name = Core::name;
   static constexpr const char* vs_signature = Analyse ? depan_analysis_signature : depan_compensation_signature;
+  static constexpr const char* diagnostic_property = Analyse ? "DepanAnalyse_info" : "DepanCompensate_info";
   static bool accepts_video_format(const ds::VideoFormat&) { return true; }
   static ds::FilterDescriptor descriptor() {
     using P = ds::ParamType;
@@ -263,6 +265,30 @@ struct DepanBridge : Bridge<Operation::Super> {
       d.params.push_back(parameter("info", P::Boolean));
     }
     for (auto n : {"fields", "tff"})
+      d.params.push_back(parameter(n, P::Boolean));
+    return d;
+  }
+};
+inline constexpr char depan_estimate_signature[] =
+    "clip:vnode;trust:float:opt;winx:int:opt;winy:int:opt;wleft:int:opt;wtop:int:opt;dxmax:int:opt;dymax:int:opt;"
+    "zoommax:float:opt;stab:float:opt;pixaspect:float:opt;info:int:opt;show:int:opt;fields:int:opt;tff:int:opt;";
+struct DepanEstimateBridge : Bridge<Operation::Super> {
+  using Core = DepanEstimateFilter;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = depan_estimate_signature;
+  static constexpr const char* diagnostic_property = "DepanEstimate_info";
+  static bool accepts_video_format(const ds::VideoFormat&) { return true; }
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    d.params.push_back(parameter("clip", P::Clip, true));
+    d.params.push_back(parameter("trust", P::Float));
+    for (auto n : {"winx", "winy", "wleft", "wtop", "dxmax", "dymax"})
+      d.params.push_back(parameter(n, P::Integer));
+    for (auto n : {"zoommax", "stab", "pixaspect"})
+      d.params.push_back(parameter(n, P::Float));
+    for (auto n : {"info", "show", "fields", "tff"})
       d.params.push_back(parameter(n, P::Boolean));
     return d;
   }
