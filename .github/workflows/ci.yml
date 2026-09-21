@@ -19,8 +19,6 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # Keep the whole run within four build/test workers, including VS threads.
-      max-parallel: 1
       matrix:
         include:
           - name: Windows x64 / MSVC
