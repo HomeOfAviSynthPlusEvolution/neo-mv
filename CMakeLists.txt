@@ -55,7 +55,7 @@ if(NEO_MV_ENABLE_HIGHWAY)
     URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(highway)
-  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp src/highway/depan_rows.cpp)
+  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp src/highway/depan_rows.cpp src/highway/depan_estimate.cpp)
   target_link_libraries(neo_mv_highway PUBLIC neo_mv_core hwy)
   target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ALL_ATTAINABLE)
   set_target_properties(neo_mv_highway hwy PROPERTIES POSITION_INDEPENDENT_CODE ON
@@ -164,6 +164,11 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/depan.vpy" --)
         set_tests_properties(vs.depan.highway PROPERTIES TIMEOUT 180 LABELS "spec" RUN_SERIAL TRUE
           ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
+        add_test(NAME vs.depan_estimate.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/depan_estimate.vpy" --)
+        set_tests_properties(vs.depan_estimate.highway PROPERTIES TIMEOUT 180 LABELS "spec" RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=highway" FAIL_REGULAR_EXPRESSION "Core freed but")
         add_test(NAME vs.flow.highway COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
           --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/flow.vpy" --)
@@ -178,6 +183,10 @@ if(BUILD_TESTING)
     add_executable(neo_mv_highway_tests tests/highway/differential.cpp)
     target_link_libraries(neo_mv_highway_tests PRIVATE neo_mv_highway)
     add_test(NAME core.highway COMMAND neo_mv_highway_tests)
+    add_executable(neo_mv_highway_depan_estimate_tests tests/highway/depan_estimate.cpp)
+    target_link_libraries(neo_mv_highway_depan_estimate_tests PRIVATE neo_mv_highway neo_mv_fft)
+    add_test(NAME core.highway.depan_estimate COMMAND neo_mv_highway_depan_estimate_tests)
+    set_tests_properties(core.highway.depan_estimate PROPERTIES LABELS "spec" TIMEOUT 60)
     set_tests_properties(core.highway PROPERTIES LABELS "spec" TIMEOUT 180 RUN_SERIAL TRUE)
     foreach(operator render render_ops interpolation depan)
       add_executable(neo_mv_highway_${operator}_tests tests/highway/${operator}.cpp)

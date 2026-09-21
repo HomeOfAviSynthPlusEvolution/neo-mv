@@ -4,6 +4,9 @@
 #include "core/depan/estimate_geometry.hpp"
 #include "core/depan/estimate_image.hpp"
 #include "core/depan/estimate_motion.hpp"
+#if NEO_MV_ENABLE_HIGHWAY
+#include "highway/depan_estimate.hpp"
+#endif
 
 namespace neo_mv::ds2 {
 struct DepanEstimateFilter {
@@ -95,7 +98,13 @@ struct DepanEstimateFilter {
       auto window = [&](int left, int slot) {
         auto a = est::extract_window(plane<T>(current.plane(0)), left, g.top, g.width, g.height, bits);
         auto b = est::extract_window(plane<T>(previous.plane(0)), left, g.top, g.width, g.height, bits);
-        auto correlation = s.fft->correlate(a, b);
+        std::vector<float> correlation;
+#if NEO_MV_ENABLE_HIGHWAY
+        if (selected_backend() == KernelBackend::highway)
+          correlation = simd::estimate::correlate(*s.fft, a, b);
+        else
+#endif
+          correlation = s.fft->correlate(a, b);
         auto surface =
             checked_plane<const float>(correlation.data(), g.width, g.height, std::ptrdiff_t(g.width) * sizeof(float),
                                        correlation.size() * sizeof(float));
