@@ -61,13 +61,20 @@ void Chunk(D d, float* current, const float* previous) {
   Check(d, ai);
   Check(d, br);
   Check(d, bi);
-  // Phase 6 requires each product and sum separately rounded, including
-  // rejection of a non-finite product even if a later sum would cancel it.
+  // Separate product overflow checks are preserved even when the sum can cancel them.
   const auto rr = Check(d, hn::Mul(ar, br)), ii = Check(d, hn::Mul(ai, bi));
   const auto ri = Check(d, hn::Mul(ar, bi)), ir = Check(d, hn::Mul(ai, br));
+#if HWY_NATIVE_FMA
+  (void)rr;
+  (void)ir;
+  const auto real = Check(d, hn::MulAdd(ar, br, ii));
+  const auto imag = Check(d, hn::NegMulAdd(ai, br, ri));
+#else
   const auto real = Check(d, hn::Add(rr, ii)), imag = Check(d, hn::Sub(ri, ir));
+#endif
   hn::StoreInterleaved2(real, imag, d, current);
 }
+bool NativeFma() { return HWY_NATIVE_FMA != 0; }
 void Product(std::complex<float>* current, const std::complex<float>* previous, std::size_t count) {
   const hn::ScalableTag<float> d;
   const auto lanes = hn::Lanes(d);
@@ -84,6 +91,10 @@ void Product(std::complex<float>* current, const std::complex<float>* previous, 
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd::estimate {
+HWY_EXPORT(NativeFma);
+bool native_fma() {
+  return HWY_DYNAMIC_DISPATCH(NativeFma)();
+}
 HWY_EXPORT(SamplesFinite);
 HWY_EXPORT(ScanRow);
 void samples_finite(const float* values, std::size_t count) {

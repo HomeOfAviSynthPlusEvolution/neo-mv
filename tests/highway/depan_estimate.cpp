@@ -80,6 +80,11 @@ struct EndRow {
 };
 Complex expected(Complex a, Complex b) {
   using namespace depan;
+  if (simd::estimate::native_fma()) {
+    const float ii = mul(a.imag(), b.imag()), ri = mul(a.real(), b.imag());
+    return {finite(std::fma(a.real(), b.real(), ii)),
+            finite(std::fma(-a.imag(), b.real(), ri))};
+  }
   return {add(mul(a.real(), b.real()), mul(a.imag(), b.imag())), sub(mul(a.real(), b.imag()), mul(a.imag(), b.real()))};
 }
 void products() {
@@ -152,7 +157,16 @@ void correlations() {
       // Isolate the product differential from any FFT profile rounding.
       const auto scalar = native.correlate(a, b), vector = simd::estimate::correlate(native, a, b);
       CHECK(scalar.size() == vector.size());
-      CHECK(std::memcmp(scalar.data(), vector.data(), scalar.size() * sizeof(float)) == 0);
+      if (simd::estimate::native_fma()) {
+        for (std::size_t i = 0; i < scalar.size(); ++i) {
+          CHECK(std::isfinite(scalar[i]) && std::isfinite(vector[i]));
+          const auto diff = std::abs(double(scalar[i]) - double(vector[i]));
+          const auto limit = 1e-3 + 1e-4 * (std::max)(std::abs(double(scalar[i])), std::abs(double(vector[i])));
+          CHECK(diff <= limit);
+        }
+      } else {
+        CHECK(std::memcmp(scalar.data(), vector.data(), scalar.size() * sizeof(float)) == 0);
+      }
     }
 }
 template <class F>

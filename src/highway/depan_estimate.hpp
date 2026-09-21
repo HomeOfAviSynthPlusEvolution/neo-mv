@@ -3,6 +3,7 @@
 #include "core/depan/estimate_motion.hpp"
 
 namespace neo_mv::simd::estimate {
+bool native_fma();
 // Validate count readable float samples; an empty range is allowed.
 void samples_finite(const float* values, std::size_t count);
 // Inputs and accumulators must be finite. Preserve ordered binary32 addition
