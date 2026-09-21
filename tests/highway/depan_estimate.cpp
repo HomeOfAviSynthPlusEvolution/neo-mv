@@ -1,7 +1,9 @@
 #include "highway/depan_estimate.hpp"
+#include "highway/estimate_image.hpp"
 #include "highway/rows.hpp"
 #include "core/depan/numeric.hpp"
 #include "hwy/targets.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -10,6 +12,7 @@
 #include <new>
 #include <random>
 #include <string>
+#include <type_traits>
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -28,9 +31,10 @@ void check(bool value, int line) {
     throw std::runtime_error("DepanEstimate SIMD assertion at " + std::to_string(line));
 }
 #define CHECK(c) check((c), __LINE__)
+template <class T = Complex>
 struct EndRow {
   void* memory;
-  Complex* data;
+  T* data;
   std::size_t page, committed;
   explicit EndRow(std::size_t count) {
 #if defined(_WIN32)
@@ -42,7 +46,7 @@ struct EndRow {
     CHECK(size > 0);
     page = static_cast<std::size_t>(size);
 #endif
-    committed = ((count * sizeof(Complex) + page - 1) / page) * page;
+    committed = ((count * sizeof(T) + page - 1) / page) * page;
 #if defined(_WIN32)
     memory = VirtualAlloc(nullptr, committed + page, MEM_RESERVE, PAGE_NOACCESS);
     if (!memory)
@@ -60,9 +64,9 @@ struct EndRow {
       throw std::bad_alloc();
     }
 #endif
-    data = reinterpret_cast<Complex*>(static_cast<unsigned char*>(memory) + committed - count * sizeof(Complex));
+    data = reinterpret_cast<T*>(static_cast<unsigned char*>(memory) + committed - count * sizeof(T));
     for (std::size_t i = 0; i < count; ++i)
-      ::new (data + i) Complex(0);
+      ::new (data + i) T(0);
   }
   ~EndRow() {
 #if defined(_WIN32)
@@ -151,6 +155,170 @@ void correlations() {
       CHECK(std::memcmp(scalar.data(), vector.data(), scalar.size() * sizeof(float)) == 0);
     }
 }
+template <class F>
+void rejects(F&& call) {
+  bool caught = false;
+  try {
+    call();
+  } catch (const std::invalid_argument&) {
+    caught = true;
+  } catch (const std::overflow_error&) {
+    caught = true;
+  }
+  CHECK(caught);
+}
+bool same(float a, float b) {
+  return std::memcmp(&a, &b, sizeof(float)) == 0;
+}
+template <class T>
+void images(int bits) {
+  namespace scalar = depan::estimate;
+  namespace vector = simd::estimate;
+  const float maximum = scalar::image_detail::maximum<T>(bits);
+  for (int width : {1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 129, 257}) {
+    // Source and destination end exactly at a guard page; row tails cannot overread.
+    EndRow<T> source(width + 1), output(width + 1);
+    EndRow<float> converted(width + 1), surface(width + 1);
+    source.data[0] = output.data[0] = T(77);
+    converted.data[0] = surface.data[0] = 77;
+    for (int x = 0; x < width; ++x) {
+      if constexpr (std::is_same_v<T, float>)
+        source.data[x + 1] = x % 3 == 0 ? -0.0f : float(x - 10) / 7;
+      else
+        source.data[x + 1] = T((x * 113) % (int(maximum) + 1));
+      surface.data[x + 1] = float(x % 19);
+    }
+    vector::extract_row(source.data + 1, converted.data + 1, width, maximum);
+    for (int x = 0; x < width; ++x)
+      CHECK(same(converted.data[x + 1], float(source.data[x + 1])));
+    vector::display_row(surface.data + 1, output.data + 1, width, 0, maximum / 18, maximum);
+    for (int x = 0; x < width; ++x) {
+      const auto q = depan::mul(surface.data[x + 1], maximum / 18);
+      const T expected = static_cast<T>(q);
+      CHECK(std::memcmp(output.data + x + 1, &expected, sizeof(T)) == 0);
+    }
+    CHECK(source.data[0] == T(77) && output.data[0] == T(77));
+    CHECK(converted.data[0] == 77 && surface.data[0] == 77);
+
+    const int stride = width + 5, height = 4;
+    const T unused = std::is_same_v<T, float> ? T(std::numeric_limits<float>::quiet_NaN()) : T(77);
+    std::vector<T> padded(stride * height, unused), a(stride * height, T(77)), b = a;
+    auto source_view =
+        checked_plane<const T>(padded.data(), width + 2, height, stride * sizeof(T), padded.size() * sizeof(T));
+    auto av = checked_plane(a.data(), width + 2, height, stride * sizeof(T), a.size() * sizeof(T));
+    auto bv = checked_plane(b.data(), width + 2, height, stride * sizeof(T), b.size() * sizeof(T));
+    for (int y = 1; y <= 2; ++y)
+      std::copy_n(source.data + 1, width, padded.data() + y * stride + 1);
+    const auto before_source = padded;
+    auto sa = scalar::extract_window(source_view, 1, 1, width, 2, bits);
+    auto sb = vector::extract_window(source_view, 1, 1, width, 2, bits);
+    CHECK(std::memcmp(sa.data(), sb.data(), sa.size() * sizeof(float)) == 0);
+    CHECK(std::memcmp(padded.data(), before_source.data(), padded.size() * sizeof(T)) == 0);
+    for (std::size_t i = 0; i < sa.size(); ++i)
+      sa[i] = float(i % 23);
+    scalar::display_surface(av, sa, 1, 1, width, 2, bits);
+    vector::display_surface(bv, sa, 1, 1, width, 2, bits);
+    CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
+    const auto before = b;
+    for (float bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+      sa.back() = bad;
+      rejects([&] { vector::display_surface(bv, sa, 1, 1, width, 2, bits); });
+      CHECK(std::memcmp(before.data(), b.data(), b.size() * sizeof(T)) == 0);
+    }
+    sa.assign(sa.size(), 1);
+    rejects([&] { vector::display_surface(bv, sa, 1, 1, width, 2, bits); });
+    CHECK(std::memcmp(before.data(), b.data(), b.size() * sizeof(T)) == 0);
+    sa.front() = -std::numeric_limits<float>::max();
+    sa.back() = std::numeric_limits<float>::max();
+    rejects([&] { vector::display_surface(bv, sa, 1, 1, width, 2, bits); });
+    CHECK(std::memcmp(before.data(), b.data(), b.size() * sizeof(T)) == 0);
+    if constexpr (std::is_same_v<T, float>) {
+      source.data[width] = std::numeric_limits<float>::infinity();
+      rejects([&] { vector::extract_row(source.data + 1, converted.data + 1, width, maximum); });
+    } else if (bits < int(sizeof(T) * 8)) {
+      source.data[width] = T(int(maximum) + 1);
+      rejects([&] { vector::extract_row(source.data + 1, converted.data + 1, width, maximum); });
+    }
+  }
+}
+void scans() {
+  namespace scalar = depan::estimate;
+  namespace vector = simd::estimate;
+  vector::samples_finite(nullptr, 0);
+  for (int count : {1, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65, 129, 257}) {
+    EndRow<float> values(count);
+    for (int i = 0; i < count; ++i)
+      values.data[i] = i % 3 == 0 ? 16777216.0f : i % 3 == 1 ? 1.0f : -16777216.0f;
+    float ss = 0, vs = 0, sm = -1, vm = -1;
+    const auto si = scalar::motion_detail::ScalarScan::scan(values.data, count, ss, sm);
+    const auto vi = vector::scan_row(values.data, count, vs, vm);
+    CHECK(si == vi && same(ss, vs) && same(sm, vm));
+    vector::samples_finite(values.data, count);
+    for (float bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+      values.data[count - 1] = bad;
+      rejects([&] { vector::samples_finite(values.data, count); });
+    }
+    for (int i = 0; i < count; ++i)
+      values.data[i] = i % 2 ? 0.0f : -0.0f;
+    float minimum, maximum;
+    vector::extrema(values.data, count, minimum, maximum);
+    CHECK(same(minimum, -0.0f) && same(maximum, -0.0f));
+    values.data[0] = 0.0f;
+    vector::extrema(values.data, count, minimum, maximum);
+    CHECK(same(minimum, 0.0f) && same(maximum, 0.0f));
+  }
+  constexpr int width = 66, height = 7, stride = 69;
+  std::vector<float> surface(stride * height, std::numeric_limits<float>::quiet_NaN());
+  for (int y = 0; y < height; ++y)
+    for (int x = 0; x < width; ++x)
+      surface[y * stride + x] = float((x * 13 + y * 17) % 101) / 8;
+  surface[2] = surface[width - 1] = surface[stride + 1] = 100;
+  auto view =
+      checked_plane<const float>(surface.data(), width, height, stride * sizeof(float), surface.size() * sizeof(float));
+  for (int mx : {0, 1, 15, 16, 31, 32})
+    for (int my : {0, 1, 2}) {
+      const auto a = scalar::find_peak(view, mx, my, 0.5f, 0);
+      const auto b = scalar::find_peak<vector::MotionScan>(view, mx, my, 0.5f, 0);
+      CHECK(a.ix == b.ix && a.iy == b.iy && a.dx == b.dx && a.dy == b.dy);
+      CHECK(same(a.confidence, b.confidence) && a.good == b.good);
+      if (mx >= 2)
+        CHECK(b.ix == 2 && b.iy == 0);
+      const auto ar = scalar::refine_motion(view, a, mx, my, 1.1f, true, false);
+      const auto br = scalar::refine_motion<vector::MotionScan>(view, b, mx, my, 1.1f, true, false);
+      CHECK(same(ar.dx, br.dx) && same(ar.dy, br.dy) && same(ar.confidence, br.confidence) && ar.good == br.good);
+    }
+  surface[3 * stride + 33] = std::numeric_limits<float>::quiet_NaN();
+  rejects([&] { scalar::find_peak<vector::MotionScan>(view, 1, 1, 0, 0); });
+  rejects([&] { scalar::refine_motion<vector::MotionScan>(view, {}, 1, 1, 1, false, false); });
+}
+std::vector<std::size_t> validation_counts;
+void recording_validator(const float* data, std::size_t count) {
+  validation_counts.push_back(count);
+  simd::estimate::samples_finite(data, count);
+}
+void fft_validation() {
+  const depan::estimate::FftPlan plan(10, 3);
+  std::vector<float> input(plan.real_count(), 1);
+  validation_counts.clear();
+  const auto frequency = plan.forward(input, recording_validator);
+  CHECK(validation_counts == std::vector<std::size_t>({plan.real_count(), 2 * plan.complex_count()}));
+  validation_counts.clear();
+  const auto result = plan.inverse(frequency, recording_validator);
+  CHECK(validation_counts == std::vector<std::size_t>({2 * plan.complex_count(), plan.real_count()}));
+  const auto expected = plan.inverse(frequency);
+  CHECK(std::memcmp(result.data(), expected.data(), result.size() * sizeof(float)) == 0);
+  validation_counts.clear();
+  rejects([&] { plan.forward({}, recording_validator); });
+  CHECK(validation_counts.empty());
+  input.back() = std::numeric_limits<float>::infinity();
+  rejects([&] { plan.forward(input, recording_validator); });
+  CHECK(validation_counts == std::vector<std::size_t>({plan.real_count()}));
+  auto bad_frequency = frequency;
+  bad_frequency.back().imag(std::numeric_limits<float>::quiet_NaN());
+  validation_counts.clear();
+  rejects([&] { plan.inverse(bad_frequency, recording_validator); });
+  CHECK(validation_counts == std::vector<std::size_t>({2 * plan.complex_count()}));
+}
 } // namespace
 int main() {
   try {
@@ -161,6 +329,12 @@ int main() {
       products();
       errors();
       correlations();
+      images<std::uint8_t>(8);
+      for (int bits : {9, 10, 12, 14, 16})
+        images<std::uint16_t>(bits);
+      images<float>(32);
+      scans();
+      fft_validation();
     }
     hwy::SetSupportedTargetsForTest(0);
     return 0;

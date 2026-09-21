@@ -22,6 +22,25 @@ struct BasicMotion {
   bool good = false;
 };
 namespace motion_detail {
+struct ScalarScan {
+  static void validate(const float* values, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i)
+      finite(values[i]);
+  }
+  // Return count when the initial maximum is not exceeded. Addition remains
+  // ordered even when another policy vectorizes the maximum search.
+  static std::size_t scan(const float* values, std::size_t count, float& sum, float& maximum) {
+    std::size_t index = count;
+    for (std::size_t i = 0; i < count; ++i) {
+      sum = add(sum, values[i]);
+      if (values[i] > maximum) {
+        maximum = values[i];
+        index = i;
+      }
+    }
+    return index;
+  }
+};
 // Round exact integer counts directly, avoiding a binary64 double rounding.
 inline float count32(std::uint64_t n) {
   int shift = 0;
@@ -36,13 +55,13 @@ inline float count32(std::uint64_t n) {
     ++significand;
   return f32(std::ldexp(static_cast<double>(significand), shift));
 }
+template <class Scan = ScalarScan>
 inline void surface_valid(span2d::Plane<const float> surface, int mx, int my) {
   validate_plane(surface);
   if (surface.width() % 2 || mx < 0 || my < 0 || mx >= surface.width() / 2 || my >= surface.height() / 2)
     throw std::invalid_argument("invalid DepanEstimate search geometry");
   for (int y = 0; y < surface.height(); ++y)
-    for (int x = 0; x < surface.width(); ++x)
-      finite(surface.row(y)[x]);
+    Scan::validate(surface.row(y).data(), static_cast<std::size_t>(surface.width()));
 }
 inline void trust_valid(float trust) {
   if (finite(trust) < 0 || trust > 100)
@@ -67,8 +86,9 @@ inline void index_valid(int n, int frames) {
 }
 } // namespace motion_detail
 
+template <class Scan = motion_detail::ScalarScan>
 inline Peak find_peak(span2d::Plane<const float> surface, int mx, int my, float stab, float trust) {
-  motion_detail::surface_valid(surface, mx, my);
+  motion_detail::surface_valid<Scan>(surface, mx, my);
   motion_detail::trust_valid(trust);
   finite(stab);
   Peak result;
@@ -77,16 +97,15 @@ inline Peak find_peak(span2d::Plane<const float> surface, int mx, int my, float 
   // Mapped iteration visits the positive interval before the negative interval.
   for (int j = 0; j < 2 * my + 1; ++j) {
     const int y = j <= my ? j : height - (2 * my + 1 - j);
-    for (int i = 0; i < 2 * mx + 1; ++i) {
-      const int x = i <= mx ? i : width - (2 * mx + 1 - i);
-      const float value = surface.row(y)[x];
-      sum = add(sum, value);
-      if (value > maximum) {
-        maximum = value;
-        result.ix = x;
+    const auto scan_interval = [&](int start, int count) {
+      const auto index = Scan::scan(surface.row(y).data() + start, static_cast<std::size_t>(count), sum, maximum);
+      if (index < static_cast<std::size_t>(count)) {
+        result.ix = start + static_cast<int>(index);
         result.iy = y;
       }
-    }
+    };
+    scan_interval(0, mx + 1);
+    scan_interval(width - mx, mx);
   }
   result.dx = std::int64_t(result.ix) * 2 < width ? result.ix : result.ix - width;
   result.dy = std::int64_t(result.iy) * 2 < height ? result.iy : result.iy - height;
@@ -103,17 +122,18 @@ inline Peak find_peak(span2d::Plane<const float> surface, int mx, int my, float 
   return result;
 }
 
+template <class Scan = motion_detail::ScalarScan>
 inline WindowMotion refine_motion(span2d::Plane<const float> surface, Peak peak, int mx, int my, float aspect,
                                   bool fields, bool top) {
-  motion_detail::surface_valid(surface, mx, my);
+  motion_detail::surface_valid<Scan>(surface, mx, my);
   if (finite(aspect) <= 0)
     throw std::invalid_argument("invalid DepanEstimate aspect");
   finite(peak.confidence);
   const int width = surface.width(), height = surface.height();
   if (peak.ix < 0 || peak.ix >= width || peak.iy < 0 || peak.iy >= height ||
       peak.dx != (std::int64_t(peak.ix) * 2 < width ? peak.ix : peak.ix - width) ||
-      peak.dy != (std::int64_t(peak.iy) * 2 < height ? peak.iy : peak.iy - height) ||
-      std::abs(peak.dx) > mx || std::abs(peak.dy) > my)
+      peak.dy != (std::int64_t(peak.iy) * 2 < height ? peak.iy : peak.iy - height) || std::abs(peak.dx) > mx ||
+      std::abs(peak.dy) > my)
     throw std::invalid_argument("invalid DepanEstimate peak");
   if (!peak.good)
     return {0, 0, peak.confidence, false};
@@ -132,8 +152,8 @@ inline WindowMotion refine_motion(span2d::Plane<const float> surface, Peak peak,
   return {add(f32(peak.dx), ax), div(add(f32(static_cast<double>(dy)), ay), aspect), peak.confidence, true};
 }
 
-inline BasicMotion combine(WindowMotion first, std::optional<WindowMotion> second, float zoommax,
-                           int separation, std::int64_t n) {
+inline BasicMotion combine(WindowMotion first, std::optional<WindowMotion> second, float zoommax, int separation,
+                           std::int64_t n) {
   motion_detail::window_valid(first);
   finite(zoommax);
   if (n < 0)

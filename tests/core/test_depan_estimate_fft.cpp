@@ -211,7 +211,14 @@ int main() {
   try {
     CHECK(fft_lanes(FftProfile::scalar) == 1);
     CHECK(fft_lanes(FftProfile::native) >= 1);
-    for (const auto profile : {FftProfile::scalar, FftProfile::native}) {
+    std::vector<FftProfile> profiles = {FftProfile::scalar, FftProfile::native};
+#if NEO_MV_FFT_X86_TARGETS
+    for (auto target_profile : {FftProfile::sse2, FftProfile::avx2, FftProfile::avx512}) {
+      if (fft_lanes(target_profile) > 1)
+        profiles.push_back(target_profile);
+    }
+#endif
+    for (const auto profile : profiles) {
       CHECK(fft_profile_name(profile) != nullptr);
       std::cout << "FFT profile=" << fft_profile_name(profile)
                 << " lanes=" << fft_lanes(profile) << '\n';

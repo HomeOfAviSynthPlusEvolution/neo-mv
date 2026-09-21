@@ -1,12 +1,25 @@
 #include "core/depan/estimate_fft_backend.hpp"
 
-// Built twice with separate dependency namespaces. Both copies have no shared
-// cache or worker pool. Native SIMD uses the compiler's baseline ISA only.
-#if NEO_MV_FFT_NATIVE
-#define POCKETFFT_NAMESPACE neo_mv_pocketfft_native_c90e55b3
-#else
-#define POCKETFFT_NAMESPACE neo_mv_pocketfft_c90e55b3
+// Built multiple times with separate dependency namespaces. No shared
+// cache or worker pool exists between targets.
+#if defined(NEO_MV_FFT_SCALAR)
+#define POCKETFFT_NAMESPACE neo_mv_pocketfft_scalar_c90e55b3
+#ifndef POCKETFFT_NO_VECTORS
 #define POCKETFFT_NO_VECTORS
+#endif
+#define BACKEND_FN scalar_fft
+#elif defined(NEO_MV_FFT_SSE2)
+#define POCKETFFT_NAMESPACE neo_mv_pocketfft_sse2_c90e55b3
+#define BACKEND_FN sse2_fft
+#elif defined(NEO_MV_FFT_AVX2)
+#define POCKETFFT_NAMESPACE neo_mv_pocketfft_avx2_c90e55b3
+#define BACKEND_FN avx2_fft
+#elif defined(NEO_MV_FFT_AVX512)
+#define POCKETFFT_NAMESPACE neo_mv_pocketfft_avx512_c90e55b3
+#define BACKEND_FN avx512_fft
+#else
+#define POCKETFFT_NAMESPACE neo_mv_pocketfft_native_c90e55b3
+#define BACKEND_FN native_target_fft
 #endif
 #define POCKETFFT_NO_MULTITHREADING
 #define POCKETFFT_CACHE_SIZE 0
@@ -30,11 +43,8 @@ void inverse(int width, int height, const std::complex<float>* input, float* out
   pf::c2r(shape, complex, real, axes, pf::BACKWARD, input, output, 1.0f, 1);
 }
 } // namespace
-#if NEO_MV_FFT_NATIVE
-const FftBackend& native_fft() noexcept {
-#else
-const FftBackend& scalar_fft() noexcept {
-#endif
+
+const FftBackend& BACKEND_FN() noexcept {
   static const FftBackend backend{int(pf::detail::VLEN<float>::val), forward, inverse};
   return backend;
 }

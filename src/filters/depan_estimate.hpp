@@ -6,6 +6,7 @@
 #include "core/depan/estimate_motion.hpp"
 #if NEO_MV_ENABLE_HIGHWAY
 #include "highway/depan_estimate.hpp"
+#include "highway/estimate_image.hpp"
 #endif
 
 namespace neo_mv::ds2 {
@@ -101,8 +102,15 @@ struct DepanEstimateFilter {
       const bool top = s.fields ? parity(current, n, s.tff) : false;
       const auto& previous = source((std::max)(0, n - 1));
       auto window = [&](int left, int slot) {
-        auto a = est::extract_window(plane<T>(current.plane(0)), left, g.top, g.width, g.height, bits);
-        auto b = est::extract_window(plane<T>(previous.plane(0)), left, g.top, g.width, g.height, bits);
+        auto extract = [&](const ds::VideoFrameView& frame) {
+#if NEO_MV_ENABLE_HIGHWAY
+          if (selected_backend() == KernelBackend::highway)
+            return simd::estimate::extract_window(plane<T>(frame.plane(0)), left, g.top, g.width, g.height, bits);
+#endif
+          return est::extract_window(plane<T>(frame.plane(0)), left, g.top, g.width, g.height, bits);
+        };
+        auto a = extract(current);
+        auto b = extract(previous);
         std::vector<float> correlation;
 #if NEO_MV_ENABLE_HIGHWAY
         if (selected_backend() == KernelBackend::highway)
@@ -113,8 +121,17 @@ struct DepanEstimateFilter {
         auto surface =
             checked_plane<const float>(correlation.data(), g.width, g.height, std::ptrdiff_t(g.width) * sizeof(float),
                                        correlation.size() * sizeof(float));
-        const auto peak = est::find_peak(surface, g.mx, g.my, s.stab, s.trust);
-        const auto motion = est::refine_motion(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
+        auto compute_motion = [&] {
+#if NEO_MV_ENABLE_HIGHWAY
+          if (selected_backend() == KernelBackend::highway) {
+            const auto peak = est::find_peak<simd::estimate::MotionScan>(surface, g.mx, g.my, s.stab, s.trust);
+            return est::refine_motion<simd::estimate::MotionScan>(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
+          }
+#endif
+          const auto peak = est::find_peak(surface, g.mx, g.my, s.stab, s.trust);
+          return est::refine_motion(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
+        };
+        const auto motion = compute_motion();
         if (s.show && n == ctx.output_frame)
           display[slot] = std::move(correlation);
         return motion;
@@ -129,9 +146,18 @@ struct DepanEstimateFilter {
     const auto motion = est::temporal_motion(basic[current], previous, next, s.trust);
     if (s.show) {
       auto output = plane<T>(ctx.dst.plane(0));
-      est::display_surface(output, display[0], g.left, g.top, g.width, g.height, bits);
+      auto show = [&](int slot, int left) {
+#if NEO_MV_ENABLE_HIGHWAY
+        if (selected_backend() == KernelBackend::highway) {
+          simd::estimate::display_surface(output, display[slot], left, g.top, g.width, g.height, bits);
+          return;
+        }
+#endif
+        est::display_surface(output, display[slot], left, g.top, g.width, g.height, bits);
+      };
+      show(0, g.left);
       if (g.two)
-        est::display_surface(output, display[1], g.left2, g.top, g.width, g.height, bits);
+        show(1, g.left2);
     }
     auto& props = properties(ctx.dst);
     write_motion(props, motion);
