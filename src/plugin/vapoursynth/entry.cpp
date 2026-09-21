@@ -6,8 +6,11 @@ namespace {
 using MapOwner = std::unique_ptr<VSMap, decltype(VSAPI::freeMap)>;
 void VS_CC kernel_info(const VSMap*, VSMap* out, void*, VSCore*, const VSAPI* api) {
   try {
+    const auto fft = estimate_fft_profile();
     require(api->mapSetData(out, "backend", selected_backend_name(), -1, dtUtf8, maReplace) == 0 &&
-                api->mapSetData(out, "target", selected_target_name(), -1, dtUtf8, maReplace) == 0,
+                api->mapSetData(out, "target", selected_target_name(), -1, dtUtf8, maReplace) == 0 &&
+                api->mapSetData(out, "fft", depan::estimate::fft_profile_name(fft), -1, dtUtf8, maReplace) == 0 &&
+                api->mapSetInt(out, "fft_lanes", depan::estimate::fft_lanes(fft), maReplace) == 0,
             "cannot report kernel selection");
   } catch (const std::exception& e) {
     api->mapSetError(out, e.what());
@@ -235,7 +238,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
     api->registerFunction(name.c_str(), degrain_signature, "clip:vnode;", create_render<true>,
                           reinterpret_cast<void*>(radius), plugin);
   }
-  api->registerFunction("KernelInfo", "", "backend:data;target:data;", kernel_info, nullptr, plugin);
+  api->registerFunction("KernelInfo", "", "backend:data;target:data;fft:data;fft_lanes:int;", kernel_info, nullptr, plugin);
   api->registerFunction("DepanAnalyse", depan_analysis_signature, "clip:vnode;", create_depan<DepanBridge<true>>,
                         nullptr, plugin);
   api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;", create_depan<DepanBridge<false>>,

@@ -78,8 +78,16 @@ def configure_kernel(backend, requested, plugin=None):
         raise ValueError(f"SIMD requested but got non-SIMD target {target}")
     if requested == "scalar" and target != "scalar":
         raise ValueError(f"scalar requested but got target {target}")
-    return dict(requested=requested, effective=effective, target=target,
-                selection="NEO_MV_KERNEL + loaded plugin KernelInfo")
+    result = dict(requested=requested, effective=effective, target=target,
+                  selection="NEO_MV_KERNEL + loaded plugin KernelInfo")
+    if "fft" in info or "fft_lanes" in info:
+        lanes = info.get("fft_lanes")
+        if type(lanes) is not int or lanes < 1 or \
+                info.get("fft") != ("pocketfft-native" if lanes > 1 else "pocketfft-scalar") or \
+                (requested == "scalar" and lanes != 1):
+            raise ValueError("invalid FFT profile identity")
+        result.update(fft=info["fft"], fft_lanes=lanes)
+    return result
 
 
 def video_info(node):

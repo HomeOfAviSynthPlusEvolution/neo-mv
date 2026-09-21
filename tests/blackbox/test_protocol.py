@@ -490,6 +490,22 @@ class ProtocolTests(unittest.TestCase):
             validate_result(failed, spec, "mvu")
             self.assertEqual(compare(failed, failed, spec)[0], "difference")
 
+    def test_fft_profile_provenance_preserves_actual_fallback(self):
+        for lanes, profile in [(1, "pocketfft-scalar"), (4, "pocketfft-native")]:
+            info = dict(backend="highway", target="AVX2", fft=profile, fft_lanes=lanes)
+            plugin = SimpleNamespace(KernelInfo=lambda: info)
+            observed = configure_kernel("neo", "highway", plugin)
+            self.assertEqual((observed["fft"], observed["fft_lanes"]), (profile, lanes))
+        for update in [dict(fft_lanes=0), dict(fft_lanes=True), dict(fft="pocketfft-scalar"),
+                       dict(fft_lanes=None)]:
+            info = dict(backend="highway", target="AVX2", fft="pocketfft-native", fft_lanes=4)
+            info.update(update)
+            with self.assertRaises(ValueError):
+                configure_kernel("neo", "highway", SimpleNamespace(KernelInfo=lambda: info))
+        info = dict(backend="scalar", target="scalar", fft="pocketfft-native", fft_lanes=4)
+        with self.assertRaises(ValueError):
+            configure_kernel("neo", "scalar", SimpleNamespace(KernelInfo=lambda: info))
+
     def estimate_result(self, spec=None):
         _, result = self.depan_result()
         spec = spec or ESTIMATE_CASES[0]

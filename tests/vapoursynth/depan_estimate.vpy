@@ -10,6 +10,10 @@ core.std.LoadPlugin(path=plugin)
 mv = core.neomv
 selected = mv.KernelInfo()
 assert selected["backend"] in ("scalar", "highway") and selected["target"], selected
+assert selected["fft_lanes"] >= 1, selected
+assert selected["fft"] == ("pocketfft-native" if selected["fft_lanes"] > 1 else "pocketfft-scalar"), selected
+if selected["backend"] == "scalar":
+    assert selected["fft_lanes"] == 1, selected
 MOTION = ("Depan_dx", "Depan_dy", "Depan_rot", "Depan_zoom", "Depan_goodmotion")
 REMOVED = ("DepanEstimateFFT", "DepanEstimateFFT2", "DepanEstimateX", "DepanEstimateY",
            "DepanEstimateZoom", "DepanEstimateGood", "DepanEstimateTrust")

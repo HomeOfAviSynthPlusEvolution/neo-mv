@@ -4,14 +4,19 @@
 #include <vector>
 
 namespace neo_mv::depan::estimate {
+enum class FftProfile { scalar, native };
+// Compiled lane capacity, not a promise that every small transform uses SIMD.
+int fft_lanes(FftProfile profile) noexcept;
+const char* fft_profile_name(FftProfile profile) noexcept;
 // Immutable shape; all writable transform storage belongs to the calling request.
-// The pinned float PocketFFT profile is scalar, single-threaded and unnormalized.
+// Both pinned float profiles are single-threaded and unnormalized.
 class FftPlan {
   int width_, height_;
   std::size_t real_count_, complex_count_;
+  FftProfile profile_;
 
 public:
-  FftPlan(int width, int height);
+  FftPlan(int width, int height, FftProfile profile = FftProfile::scalar);
   int width() const { return width_; }
   int height() const { return height_; }
   std::size_t real_count() const { return real_count_; }

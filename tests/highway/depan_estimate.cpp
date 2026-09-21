@@ -144,7 +144,9 @@ void correlations() {
         a[i] = float(int(random() % 1001) - 500) / 127;
         b[i] = float(int(random() % 1001) - 500) / 255;
       }
-      const auto scalar = plan.correlate(a, b), vector = simd::estimate::correlate(plan, a, b);
+      const depan::estimate::FftPlan native(width, height, depan::estimate::FftProfile::native);
+      // Isolate the product differential from any FFT profile rounding.
+      const auto scalar = native.correlate(a, b), vector = simd::estimate::correlate(native, a, b);
       CHECK(scalar.size() == vector.size());
       CHECK(std::memcmp(scalar.data(), vector.data(), scalar.size() * sizeof(float)) == 0);
     }

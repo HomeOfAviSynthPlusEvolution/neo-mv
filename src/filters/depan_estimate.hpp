@@ -9,6 +9,10 @@
 #endif
 
 namespace neo_mv::ds2 {
+inline depan::estimate::FftProfile estimate_fft_profile() {
+  return selected_backend() == KernelBackend::highway ? depan::estimate::FftProfile::native
+                                                      : depan::estimate::FftProfile::scalar;
+}
 struct DepanEstimateFilter {
   static constexpr const char* name = "DepanEstimate";
   static constexpr int input_count = ds::dynamic_video_inputs;
@@ -50,17 +54,18 @@ struct DepanEstimateFilter {
                                                          {p.integer("winx", 0), p.integer("winy", 0),
                                                           p.integer("wleft", -1), p.integer("wtop", -1),
                                                           p.integer("dxmax", -1), p.integer("dymax", -1), zoommax});
-    State state{clip,
-                geometry,
-                std::make_shared<const depan::estimate::FftPlan>(geometry.width, geometry.height),
-                trust,
-                zoommax,
-                stab,
-                aspect,
-                p.boolean("info", false),
-                p.boolean("show", false),
-                p.boolean("fields", false),
-                p.tff()};
+    State state{
+        clip,
+        geometry,
+        std::make_shared<const depan::estimate::FftPlan>(geometry.width, geometry.height, estimate_fft_profile()),
+        trust,
+        zoommax,
+        stab,
+        aspect,
+        p.boolean("info", false),
+        p.boolean("show", false),
+        p.boolean("fields", false),
+        p.tff()};
     return ds::Result<ds::VideoInitStateResult<State>>::success({output_info(clip), std::move(state)});
   }
   static ds::VideoRequestPattern request_pattern(int, const State&) { return ds::VideoRequestPattern::General; }
