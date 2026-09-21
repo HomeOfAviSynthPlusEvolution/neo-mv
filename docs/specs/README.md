@@ -10,4 +10,6 @@
 
 [Phase 5](phase-5/README.md): DepanAnalyse and DepanCompensate.
 
+[Phase 6](phase-6/README.md): DepanEstimate.
+
 Each function directory contains its mathematical operators in `kernel-*.md` and its public interface in `plugin.md`. Shared operators are referenced rather than duplicated. Implement the scalar definitions before adding optimized paths.
