@@ -2,6 +2,9 @@
 
 Exact raw comparisons intentionally retain FFT-library rounding differences.
 The fixture generates inputs only; it does not manufacture motion properties.
+Missing field parity, constant-surface display and nonfinite used samples are
+covered by the independent VS acceptance tests. Their required rejection is
+not a binary compatibility contract with the reference implementation.
 """
 
 REMOVED_KEYS = ("DepanEstimateFFT", "DepanEstimateFFT2", "DepanEstimateX", "DepanEstimateY",
@@ -36,18 +39,15 @@ CASES = [
     case("fields_property", params=dict(fields=True)),
     case("fields_tff", params=dict(fields=True, tff=True, pixaspect=2.0), omit_field=True),
     case("fields_bff", params=dict(fields=True, tff=False)),
-    case("fields_missing_error", params=dict(fields=True, trust=100.0), omit_field=True),
     # Zero search has exactly P=M, so confidence=0 equals trust and passes.
     case("trust_zero_equality", params=dict(dxmax=0, dymax=0, trust=0.0), stationary=True),
     case("zero_image", pattern="zero", params=dict(trust=0.0)),
     case("show_integer", params=dict(show=True)),
     case("show_float", format="GRAYS", params=dict(show=True)),
-    case("show_constant_error", pattern="zero", params=dict(show=True, trust=0.0)),
     # Host text pixels follow the existing Phase-5 renderer-provenance policy.
     # No fixture-side pixel substitution or numerical tolerance is applied.
     case("info", width=320, height=48, params=dict(info=True)),
     case("unused_nan_copy", format="GRAYS", width=8, nan_position=[7, 3]),
-    case("used_nan_error", format="GRAYS", width=8, nan_position=[0, 3]),
     # Deliberately nontrivial transforms retain library differences in reports.
     case("gradient", width=8, height=6, pattern="gradient",
          params=dict(winx=8, winy=6, dxmax=2, dymax=1), rectangles=[[0, 0, 8, 6]]),

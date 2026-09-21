@@ -596,7 +596,8 @@ class ProtocolTests(unittest.TestCase):
         creation.update(outputs=[], records=[], creation_error=dict(type="Error", message="invalid geometry"))
         validate_result(creation, spec, "mvu")
         self.assertEqual(compare(creation, creation, spec)[0], "difference")
-        for message in ["constant correlation display", "nonfinite used sample", "missing field parity"]:
+        # Unexpected failures in the retained positive fixtures must stay red.
+        for message in ["input frame unavailable", "allocation failed"]:
             failed = copy.deepcopy(reference)
             old = failed["records"][0]
             failed["records"][0] = dict(request=old["request"], member=old["member"], frame=old["frame"],
