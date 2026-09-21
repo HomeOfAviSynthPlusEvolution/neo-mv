@@ -10,13 +10,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from cases import CASES
-from protocol import SCHEMA, compare, digest_json, validate_result
+from protocol import SCHEMA, compare, digest_json, observation_keys, output_observation_keys, validate_result
 from worker import configure_kernel, explicit_plugin_environment, property_value, snapshot, verify_explicit_plugin
 from render_cases import CASES as RENDER_CASES
 from mask_cases import CASES as MASK_CASES
 from flow_cases import CASES as FLOW_CASES
 from interpolation_cases import CASES as INTERPOLATION_CASES
 from depan_cases import CASES as DEPAN_CASES
+from estimate_cases import CASES as ESTIMATE_CASES, OBSERVATION_KEYS as ESTIMATE_KEYS
 from run import validate_depan_tolerance_selection
 
 
@@ -488,6 +489,153 @@ class ProtocolTests(unittest.TestCase):
             failed.update(outputs=[], records=[], creation_error=dict(type="Error", message="Depan creation detail"))
             validate_result(failed, spec, "mvu")
             self.assertEqual(compare(failed, failed, spec)[0], "difference")
+
+    def estimate_result(self, spec=None):
+        _, result = self.depan_result()
+        spec = spec or ESTIMATE_CASES[0]
+        result.update(case_id=spec["id"], case_sha256=digest_json(spec), auxiliary_inputs=[])
+        result["inputs"] = result["inputs"][:spec["length"]]
+        sample = {key: copy.deepcopy(value) for key, value in result["records"][0].items()
+                  if key not in ("request", "member", "frame")}
+        sample["properties"].update(
+            DepanEstimate_info=property_value(b"inherited estimate"),
+            DepanEstimateFFT3=property_value(b"preserved near-match"),
+            DepanEstimateTrustExtra=property_value([19, 0]),
+            DepanEstimateX_extra=property_value([0.5, -0.0]))
+        sample["property_names"] = sorted(sample["properties"])
+        result["records"] = [dict(request=i, member=m, frame=n, **copy.deepcopy(sample))
+                             for i, (m, n) in enumerate(spec["requests"])]
+        return spec, result
+
+    def test_estimate_requires_metadata_inventory_and_no_auxiliary_inputs(self):
+        spec, reference = self.estimate_result()
+        validate_result(reference, spec, "mvu")
+        for mutate in [lambda r: r.pop("input_video"),
+                       lambda r: r.pop("auxiliary_inputs"),
+                       lambda r: r.update(auxiliary_inputs=[dict(name="data")]),
+                       lambda r: r["inputs"].pop(),
+                       lambda r: r["records"][0].pop("property_names"),
+                       lambda r: r["records"][0]["properties"].pop("Depan_dx"),
+                       lambda r: r["records"][0]["properties"].pop("DepanEstimateFFT3")]:
+            changed = copy.deepcopy(reference)
+            mutate(changed)
+            with self.subTest(mutation=mutate), self.assertRaises(ValueError):
+                validate_result(changed, spec, "mvu")
+        self.assertTrue(set(ESTIMATE_KEYS).issubset(observation_keys(spec)))
+        # Native removed keys must be observed when unexpectedly present.
+        changed = copy.deepcopy(reference)
+        changed["records"][0]["property_names"] = sorted(
+            changed["records"][0]["property_names"] + ["DepanEstimateFFT", "DepanEstimateFFT2"])
+        validate_result(changed, spec, "mvu")
+        self.assertEqual(compare(reference, changed, spec)[0], "difference")
+
+    def test_estimate_output_spectra_names_never_read_or_export_payloads(self):
+        spec, reference = self.estimate_result()
+        private_keys = {"DepanEstimateFFT", "DepanEstimateFFT2"}
+        class GuardedProperties(dict):
+            def __getitem__(self, key):
+                if key in private_keys:
+                    raise AssertionError("private spectrum payload must not be accessed")
+                return super().__getitem__(key)
+        frame = SimpleNamespace(format=SimpleNamespace(num_planes=0),
+            props=GuardedProperties(DepanEstimateFFT=object(), DepanEstimateFFT2=object(), Depan_dx=1.0))
+        self.assertTrue(private_keys.issubset(observation_keys(spec)))
+        self.assertFalse(private_keys.intersection(output_observation_keys(spec)))
+        observed = snapshot(frame, output_observation_keys(spec))
+        self.assertEqual(observed["properties"], {"Depan_dx": property_value(1.0)})
+        self.assertTrue(private_keys.issubset(sorted(frame.props)))
+        # Our explicitly constructed input bytes remain available as evidence.
+        frame.props = dict(DepanEstimateFFT=b"fixture", DepanEstimateFFT2=b"fixture2")
+        inputs = snapshot(frame, observation_keys(spec))
+        self.assertEqual(inputs["properties"]["DepanEstimateFFT"], property_value(b"fixture"))
+        self.assertEqual(inputs["properties"]["DepanEstimateFFT2"], property_value(b"fixture2"))
+        invalid = copy.deepcopy(reference)
+        invalid["records"][0]["properties"]["DepanEstimateFFT"] = property_value(b"forbidden output payload")
+        invalid["records"][0]["property_names"] = sorted(invalid["records"][0]["properties"])
+        with self.assertRaises(ValueError):
+            validate_result(invalid, spec, "mvu")
+
+    def test_estimate_motion_flags_pixels_and_properties_remain_strict(self):
+        spec, reference = self.estimate_result()
+        candidate = copy.deepcopy(reference)
+        candidate["backend"] = "neo"
+        candidate["environment"]["kernel"] = dict(effective="highway", target="AVX2")
+        self.assertEqual(compare(reference, candidate, spec), ("pass", None))
+        for key, value in [("Depan_dx", "3fe0000000000001"),
+                           ("Depan_rot", "0000000000000000"),
+                           ("Depan_goodmotion", 0),
+                           ("DepanEstimate_info", b"changed".hex()),
+                           ("DepanEstimateFFT3", b"changed near-match".hex())]:
+            changed = copy.deepcopy(candidate)
+            changed["records"][0]["properties"][key]["values"] = [value]
+            before = copy.deepcopy(changed)
+            validate_result(changed, spec, "neo")
+            for tolerant in [False, True]:
+                self.assertEqual(compare(reference, changed, spec, depan_float_tolerance=tolerant)[0],
+                                 "difference")
+            self.assertEqual(changed, before)
+        changed = copy.deepcopy(candidate)
+        plane = changed["records"][0]["planes"][0]
+        plane.update(data="01", sha256=hashlib.sha256(b"\1").hexdigest())
+        validate_result(changed, spec, "neo")
+        self.assertEqual(compare(reference, changed, spec, depan_float_tolerance=True)[0], "difference")
+        with self.assertRaises(ValueError):
+            validate_depan_tolerance_selection(True, "highway", [spec])
+
+    def test_estimate_input_pixels_and_metadata_compare_before_outputs(self):
+        spec, reference = self.estimate_result()
+        for mutate in [lambda r: r["input_video"].update(width=2),
+                       lambda r: r["inputs"][0]["planes"][0].update(data="01")]:
+            changed = copy.deepcopy(reference)
+            mutate(changed)
+            self.assertEqual(compare(reference, changed, spec)[0], "input_mismatch")
+
+    def test_estimate_errors_remain_differences_even_when_matching(self):
+        spec, reference = self.estimate_result()
+        creation = copy.deepcopy(reference)
+        creation.update(outputs=[], records=[], creation_error=dict(type="Error", message="invalid geometry"))
+        validate_result(creation, spec, "mvu")
+        self.assertEqual(compare(creation, creation, spec)[0], "difference")
+        for message in ["constant correlation display", "nonfinite used sample", "missing field parity"]:
+            failed = copy.deepcopy(reference)
+            old = failed["records"][0]
+            failed["records"][0] = dict(request=old["request"], member=old["member"], frame=old["frame"],
+                                         error=dict(type="Error", message=message))
+            validate_result(failed, spec, "mvu")
+            self.assertEqual(compare(failed, failed, spec)[0], "difference")
+
+    def test_estimate_info_requires_renderer_provenance_and_exact_pixels(self):
+        spec = next(item for item in ESTIMATE_CASES if item["params"].get("info"))
+        spec, reference = self.estimate_result(spec)
+        with self.assertRaises(ValueError):
+            validate_result(reference, spec, "mvu")
+        reference["environment"]["text_renderer"] = dict(plugin_path=None, plugin_sha256=None,
+            builtin_core="R79", plugin_version="1", entry="text.FrameProps",
+            arguments=dict(props=["DepanEstimate_info"]))
+        validate_result(reference, spec, "mvu")
+        changed = copy.deepcopy(reference)
+        changed["environment"]["text_renderer"]["arguments"]["props"] = ["DepanAnalyse_info"]
+        with self.assertRaises(ValueError):
+            validate_result(changed, spec, "mvu")
+        self.assertEqual(compare(reference, changed, spec)[0], "input_mismatch")
+        changed = copy.deepcopy(reference)
+        changed["records"][0]["planes"][0].update(data="01", sha256=hashlib.sha256(b"\1").hexdigest())
+        validate_result(changed, spec, "mvu")
+        self.assertEqual(compare(reference, changed, spec)[0], "difference")
+
+    def test_estimate_inventory_and_catalog_dispatch_are_complete(self):
+        from catalog import BY_ID
+        self.assertGreaterEqual(len(ESTIMATE_CASES), 15)
+        self.assertLessEqual(len(ESTIMATE_CASES), 25)
+        for spec in ESTIMATE_CASES:
+            self.assertIs(BY_ID[spec["id"]], spec)
+            self.assertEqual(spec["phase"], 6)
+            self.assertEqual(spec["operation"], "DepanEstimate")
+            self.assertNotIn("expected_output_errors", spec)
+            for member, n in spec["requests"]:
+                self.assertEqual(member, 0)
+                self.assertGreaterEqual(n, 0)
+                self.assertLess(n, spec["length"])
 
     def depan_highway_pair(self):
         spec, reference = self.depan_result()
