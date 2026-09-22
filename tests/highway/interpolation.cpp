@@ -232,6 +232,17 @@ void integer_blur(int bits) {
         if (bits == 16 && count == 65537 && pattern == 0)
           CHECK(exact == UINT32_MAX);
     }
+  if constexpr (std::is_same_v<T, std::uint16_t>)
+    if (bits < 16) {
+      std::vector<T> values(65, 0);
+      for (std::size_t i = 0; i < values.size(); ++i) {
+        values[i] = T(1u << bits);
+        T output = 19;
+        CHECK(rejected([&] { HighwayBlurAverage{}(values.data(), values.size(), bits, &output); }));
+        CHECK(output == 19);
+        values[i] = 0;
+      }
+    }
   T sample = 0, output = 0;
   CHECK(rejected([&] { HighwayBlurAverage{}(&sample, 0, bits, &output); }));
   CHECK(rejected([&] { HighwayBlurAverage{}(&sample, 65538, bits, &output); }));

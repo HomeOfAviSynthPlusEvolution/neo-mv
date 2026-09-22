@@ -274,8 +274,7 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
   SubpixelPhases<T> result{pel, {}};
   result.planes[0] = base;
   for (int y = 0; y < base.height(); ++y)
-    for (int x = 0; x < base.width(); ++x)
-      valid_sample(base.row(y)[x], maximum);
+    detail::scan(base.row(y).data(), base.width(), maximum);
   if (pel == 1)
     return result; // The external pixels are unused for pel=1.
   validate_plane(external);

@@ -209,6 +209,7 @@ int main() {
       sampled_motion<std::uint16_t>();
       sampled_motion<float>();
       extra_cases();
+      external_base_validation();
       external_float_contract();
     }
     hwy::SetSupportedTargetsForTest(0);

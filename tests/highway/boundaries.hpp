@@ -192,6 +192,22 @@ void extra_cases() {
   rejects([&] { neo_mv::checked_plane(reinterpret_cast<std::uint16_t *>(base.data.data() + 1), 4, 1, 9, 20); });
 }
 
+void external_base_validation() {
+  for (int width : {1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65, 129}) {
+    Buffer<float> floats(width, 2);
+    Buffer<std::uint16_t> integers(width, 2);
+    for (int x = 0; x < width; ++x) {
+      floats.view().row(1)[x] = std::numeric_limits<float>::quiet_NaN();
+      integers.view().row(1)[x] = 1024;
+      // Even pel=1, which ignores the external clip, validates the base image.
+      rejects([&] { neo_mv::simd::extract_external_subpixels(floats.read(), {}, width, 2, 0, 0, 1, 32, {}); });
+      rejects([&] { neo_mv::simd::extract_external_subpixels(integers.read(), {}, width, 2, 0, 0, 1, 10, {}); });
+      floats.view().row(1)[x] = 0;
+      integers.view().row(1)[x] = 0;
+    }
+  }
+}
+
 void external_float_contract() {
   Buffer<float> base(32, 8), external(64, 16);
   std::vector<Buffer<float>> dst;

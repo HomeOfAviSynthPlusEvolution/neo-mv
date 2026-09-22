@@ -3,6 +3,7 @@
 #include "highway/grid_resampling.hpp"
 #include "highway/interpolation_rows.hpp"
 #include "highway/scene.hpp"
+#include "highway/rows.hpp"
 #include "highway/interpolation_sampling.hpp"
 #include "kernels/interpolation_scalar.hpp"
 
@@ -23,9 +24,7 @@ struct HighwayBlurAverage {
       ordered_blur_average(samples, count, bits, output);
     } else {
       const auto maximum = (std::uint32_t{1} << bits) - 1;
-      for (std::size_t i = 0; i < count; ++i)
-        if (samples[i] > maximum)
-          throw std::invalid_argument("blur sample exceeds render precision");
+      simd::detail::scan(samples, static_cast<int>(count), maximum);
       *output = static_cast<T>(simd::interpolation_rows::sum(samples, count) / count);
     }
   }
