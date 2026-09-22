@@ -238,11 +238,14 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
     api->registerFunction(name.c_str(), degrain_signature, "clip:vnode;", create_render<true>,
                           reinterpret_cast<void*>(radius), plugin);
   }
-  api->registerFunction("KernelInfo", "", "backend:data;target:data;fft:data;fft_lanes:int;", kernel_info, nullptr, plugin);
+  api->registerFunction("KernelInfo", "", "backend:data;target:data;fft:data;fft_lanes:int;", kernel_info, nullptr,
+                        plugin);
   api->registerFunction("DepanAnalyse", depan_analysis_signature, "clip:vnode;", create_depan<DepanBridge<true>>,
                         nullptr, plugin);
-  api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;", create_depan<DepanBridge<false>>,
-                        nullptr, plugin);
+  api->registerFunction("DepanCompensate", depan_compensation_signature, "clip:vnode;",
+                        create_depan<DepanBridge<false>>, nullptr, plugin);
   api->registerFunction("DepanEstimate", depan_estimate_signature, "clip:vnode;", create_depan<DepanEstimateBridge>,
+                        nullptr, plugin);
+  api->registerFunction("DepanStabilise", depan_stabilise_signature, "clip:vnode;", create_depan<DepanStabiliseBridge>,
                         nullptr, plugin);
 }

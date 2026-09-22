@@ -250,6 +250,17 @@ if(NEO_MV_BUILD_VAPOURSYNTH)
   endif()
 endif()
 if(BUILD_TESTING)
+  if(NEO_MV_BUILD_VAPOURSYNTH AND NEO_MV_TEST_VAPOURSYNTH)
+    foreach(backend scalar highway)
+      if(backend STREQUAL "scalar" OR NEO_MV_ENABLE_HIGHWAY)
+        add_test(NAME vs.depan_stabilise.${backend} COMMAND "${NEO_MV_VSPIPE_EXECUTABLE}"
+          --arg "plugin=$<TARGET_FILE:neo_mv_vs>"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/depan_stabilise.vpy" --)
+        set_tests_properties(vs.depan_stabilise.${backend} PROPERTIES LABELS "spec" TIMEOUT 180 RUN_SERIAL TRUE
+          ENVIRONMENT "NEO_MV_KERNEL=${backend}" FAIL_REGULAR_EXPRESSION "Core freed but")
+      endif()
+    endforeach()
+  endif()
   if(NEO_MV_ENABLE_HIGHWAY)
     add_executable(neo_mv_highway_tests tests/highway/differential.cpp)
     target_link_libraries(neo_mv_highway_tests PRIVATE neo_mv_highway)

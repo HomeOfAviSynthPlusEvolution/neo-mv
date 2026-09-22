@@ -9,10 +9,7 @@ inline void frame_valid(int n, int frames) {
   if (frames <= 0 || n < 0 || n >= frames)
     throw std::invalid_argument("invalid DepanStabilise frame index");
 }
-// The callback must decode all five properties and reject malformed tuples.
-// It may retain decoded values for subsequent cumulative and neighbor passes.
-template <class Decode>
-Interval select_interval(int n, int frames, const Parameters& p, const Coefficients& c, Decode&& decode) {
+inline Interval initial_interval(int n, int frames, const Parameters& p, const Coefficients& c) {
   frame_valid(n, frames);
   int lower, upper;
   if (p.method == 0) {
@@ -35,6 +32,14 @@ Interval select_interval(int n, int frames, const Parameters& p, const Coefficie
     lower = static_cast<int>((std::max)(std::int64_t(0), std::int64_t(n) - c.radius));
     upper = static_cast<int>((std::min)(std::int64_t(frames - 1), std::int64_t(n) + c.radius));
   }
+  return {lower, upper};
+}
+// The callback must decode all five properties and reject malformed tuples.
+// It may retain decoded values for subsequent cumulative and neighbor passes.
+template <class Decode>
+Interval select_interval(int n, int frames, const Parameters& p, const Coefficients& c, Decode&& decode) {
+  const auto initial = initial_interval(n, frames, p, c);
+  const int lower = initial.begin, upper = initial.end;
   int begin = lower, end = upper;
   for (int k = n; k >= lower; --k) {
     if (k == 0 || !decode(k).good) {

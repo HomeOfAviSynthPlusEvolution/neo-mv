@@ -6,6 +6,7 @@
 #include "filters/interpolation.hpp"
 #include "filters/depan.hpp"
 #include "filters/depan_estimate.hpp"
+#include "filters/depan_stabilise.hpp"
 
 namespace neo_mv::ds2 {
 inline ds::ParamSpec parameter(const char* name, ds::ParamType type, bool required = false, bool array = false) {
@@ -290,6 +291,40 @@ struct DepanEstimateBridge : Bridge<Operation::Super> {
       d.params.push_back(parameter(n, P::Float));
     for (auto n : {"info", "show", "fields", "tff"})
       d.params.push_back(parameter(n, P::Boolean));
+    return d;
+  }
+};
+inline constexpr char depan_stabilise_signature[] =
+    "clip:vnode;data:vnode;cutoff:float:opt;damping:float:opt;initzoom:float:opt;addzoom:int:opt;"
+    "prev:int:opt;next:int:opt;mirror:int:opt;blur:int:opt;dxmax:float:opt;dymax:float:opt;zoommax:float:opt;"
+    "rotmax:float:opt;subpixel:int:opt;pixaspect:float:opt;fitlast:int:opt;tzoom:float:opt;info:int:opt;method:int:opt;"
+    "fields:int:opt;";
+struct DepanStabiliseBridge : Bridge<Operation::Super> {
+  using Core = DepanStabiliseFilter;
+  static constexpr const char* vs_name = Core::name;
+  static constexpr const char* vs_signature = depan_stabilise_signature;
+  static constexpr const char* diagnostic_property = "DepanStabilise_info";
+  static bool accepts_video_format(const ds::VideoFormat&) { return true; }
+  static ds::FilterDescriptor descriptor() {
+    using P = ds::ParamType;
+    ds::FilterDescriptor d;
+    d.name = Core::name;
+    d.params.push_back(parameter("clip", P::Clip, true));
+    d.params.push_back(parameter("data", P::Clip, true));
+    for (auto n : {"cutoff", "damping", "initzoom"})
+      d.params.push_back(parameter(n, P::Float));
+    d.params.push_back(parameter("addzoom", P::Boolean));
+    for (auto n : {"prev", "next", "mirror", "blur"})
+      d.params.push_back(parameter(n, P::Integer));
+    for (auto n : {"dxmax", "dymax", "zoommax", "rotmax"})
+      d.params.push_back(parameter(n, P::Float));
+    d.params.push_back(parameter("subpixel", P::Integer));
+    d.params.push_back(parameter("pixaspect", P::Float));
+    d.params.push_back(parameter("fitlast", P::Integer));
+    d.params.push_back(parameter("tzoom", P::Float));
+    d.params.push_back(parameter("info", P::Boolean));
+    d.params.push_back(parameter("method", P::Integer));
+    d.params.push_back(parameter("fields", P::Boolean));
     return d;
   }
 };
