@@ -268,6 +268,19 @@ std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::u
   }
   return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
 }
+std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
+  const hn::CappedTag<std::uint8_t, 8> d;
+  const hn::Repartition<std::uint64_t, decltype(d)> wide;
+  auto sum = hn::Zero(wide);
+  for (int y = 0; y < 4; ++y) {
+    sum = hn::Add(sum, hn::SumsOf8AbsDiff(hn::LoadN(d, a, 4), hn::LoadN(d, b, 4)));
+    if (y + 1 < 4) {
+      a += as;
+      b += bs;
+    }
+  }
+  return static_cast<std::int64_t>(hn::ReduceSum(wide, sum));
+}
 template <class D>
 std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b,
                           std::ptrdiff_t bs, int w, int h) {
@@ -540,10 +553,15 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
     else
       errors[0] = SmallSad(hn::CappedTag<std::int32_t, 8>{}, y.source, y.source_stride,
                            y.reference, y.reference_stride, 8, 8);
-    errors[1] = SmallSad(hn::CappedTag<std::int32_t, 4>{}, u.source, u.source_stride,
-                         u.reference, u.reference_stride, 4, 4);
-    errors[2] = SmallSad(hn::CappedTag<std::int32_t, 4>{}, v.source, v.source_stride,
-                         v.reference, v.reference_stride, 4, 4);
+    if constexpr (std::is_same_v<T, std::uint8_t>) {
+      errors[1] = FixedByteSad4(u.source, u.source_stride, u.reference, u.reference_stride);
+      errors[2] = FixedByteSad4(v.source, v.source_stride, v.reference, v.reference_stride);
+    } else {
+      errors[1] = SmallSad(hn::CappedTag<std::int32_t, 4>{}, u.source, u.source_stride,
+                           u.reference, u.reference_stride, 4, 4);
+      errors[2] = SmallSad(hn::CappedTag<std::int32_t, 4>{}, v.source, v.source_stride,
+                           v.reference, v.reference_stride, 4, 4);
+    }
     return;
   }
 #endif
