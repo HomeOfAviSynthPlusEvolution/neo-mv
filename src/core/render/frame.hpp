@@ -261,11 +261,21 @@ public:
         grid_.validate_image(images[i]); // Required even for zero user coefficients.
     auto output = grid_.make_output(clip, false, destination);
     std::array<typename Kernels::DegrainPlane, 3> prepared;
-    for (int k = 0; k < grid_.plane_count(); ++k)
-      if (grid_.processed(k))
-        prepared[k] = Kernels::template prepare_degrain<true>(
-            grid_.composition(k), grid_.phase_geometry(k), fields, selected, current.planes[k], images, weights_, k,
-            k == 2 && grid_.processed(1) ? &prepared[1].weights : nullptr);
+    const bool pair_chroma = grid_.plane_count() == 3 && grid_.processed(1) && grid_.processed(2);
+    for (int k = 0; k < grid_.plane_count(); ++k) {
+      if (grid_.processed(k) && !(pair_chroma && k == 2)) {
+        if (pair_chroma && k == 1) {
+          auto pair = Kernels::prepare_degrain_chroma({&grid_.composition(1), &grid_.composition(2)},
+                                                      grid_.phase_geometry(1), fields, selected,
+                                                      {&current.planes[1], &current.planes[2]}, images, weights_);
+          prepared[1] = std::move(pair[0]);
+          prepared[2] = std::move(pair[1]);
+        } else
+          prepared[k] =
+              Kernels::template prepare_degrain<true>(grid_.composition(k), grid_.phase_geometry(k), fields, selected,
+                                                      current.planes[k], images, weights_, k, nullptr);
+      }
+    }
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k)) {
         const auto g = grid_.phase_geometry(k);

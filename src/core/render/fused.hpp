@@ -118,6 +118,63 @@ struct RenderPreparation {
       }
     return result;
   }
+  // U and V have identical sampling geometry, so prepare their borrowed
+  // rectangles and reliability weights in one grid walk. Their pixel storage
+  // and coefficient windows remain independent.
+  template <class Images>
+  static std::array<DegrainPlane, 2>
+  prepare_degrain_chroma(const std::array<const OverlapCompositionPlan*, 2>& plans, const RenderPhaseGeometry& geometry,
+                         const std::vector<AnalysisField>& fields,
+                         const std::vector<std::optional<std::int64_t>>& selected,
+                         const std::array<const SubpixelPhases<T>*, 2>& current, const Images& images,
+                         const DegrainWeightPlan& weight_plan) {
+    const auto& g = plans[0]->geometry();
+    std::array<DegrainPlane, 2> result;
+    const auto references = selected.size();
+    if (references > 50 || std::size_t(g.blocks_x) > std::size_t(-1) / std::size_t(g.blocks_y))
+      throw std::overflow_error("Degrain block storage size is unrepresentable");
+    const auto blocks = std::size_t(g.blocks_x) * g.blocks_y;
+    const auto stride = references + 1;
+    for (auto& plane : result) {
+      plane.references = int(references);
+      if (blocks > plane.sources.max_size() / stride || blocks > plane.weights.max_size() / stride)
+        throw std::overflow_error("Degrain block storage size is unrepresentable");
+      plane.sources.reserve(blocks * stride);
+      plane.weights.resize(blocks * stride);
+    }
+    std::array<ReferenceReliability, 50> reliability{};
+    for (int by = 0; by < g.blocks_y; ++by)
+      for (int bx = 0; bx < g.blocks_x; ++bx) {
+        const auto index = std::size_t(by) * g.blocks_x + bx;
+        const BlockRegion block{bx * (g.block_width - g.overlap_x) * geometry.ratio_x,
+                                by * (g.block_height - g.overlap_y) * geometry.ratio_y,
+                                g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
+        const std::array<const std::uint16_t*, 2> windows{
+            plans[0]->has_overlap() ? plans[0]->coefficient_row(bx, by, 0) : nullptr,
+            plans[1]->has_overlap() ? plans[1]->coefficient_row(bx, by, 0) : nullptr};
+        const auto append = [&](const RenderFootprint& f, const std::array<const SubpixelPhases<T>*, 2>& pair) {
+          for (int k = 0; k < 2; ++k) {
+            const auto view = pair[k]->planes[f.phase];
+            result[k].sources.push_back({view.row(f.y).data() + f.x, view.stride(), windows[k]});
+          }
+        };
+        append(render_footprint_domain_proven(geometry, block, {0, 0}), current);
+        for (std::size_t r = 0; r < references; ++r) {
+          reliability[r] = {bool(selected[r]), selected[r] ? fields[r].grid.values[index].error : 0};
+          if (selected[r]) {
+            const auto v = fields[r].grid.values[index].vector;
+            append(render_footprint_domain_proven(geometry, block, {v.x, v.y}),
+                   {&images[r].planes[1], &images[r].planes[2]});
+          } else
+            for (auto& plane : result)
+              plane.sources.push_back({nullptr, 0, nullptr});
+        }
+        auto* u_weights = result[0].weights.data() + index * stride;
+        weight_plan.compute(reliability.data(), references, 1, u_weights);
+        std::copy_n(u_weights, stride, result[1].weights.data() + index * stride);
+      }
+    return result;
+  }
 };
 
 template <class T, class Read, class Window, class Finish>
