@@ -61,10 +61,16 @@ struct RenderPreparation {
     const auto& g = plan.geometry();
     DegrainPlane result;
     result.references = int(selected.size());
-    const auto count = std::size_t(g.blocks_x) * g.blocks_y * (selected.size() + 1);
+    if (selected.size() > 50 || std::size_t(g.blocks_x) > std::size_t(-1) / std::size_t(g.blocks_y))
+      throw std::overflow_error("Degrain block storage size is unrepresentable");
+    const auto blocks = std::size_t(g.blocks_x) * g.blocks_y;
+    const auto stride = selected.size() + 1;
+    if (blocks > result.sources.max_size() / stride || blocks > result.weights.max_size() / stride)
+      throw std::overflow_error("Degrain block storage size is unrepresentable");
+    const auto count = blocks * stride;
     result.sources.reserve(count);
-    result.weights.reserve(count);
-    std::vector<ReferenceReliability> reliability(selected.size());
+    result.weights.resize(count);
+    std::array<ReferenceReliability, 50> reliability{};
     for (int by = 0; by < g.blocks_y; ++by)
       for (int bx = 0; bx < g.blocks_x; ++bx) {
         const auto index = std::size_t(by) * g.blocks_x + bx;
@@ -86,9 +92,8 @@ struct RenderPreparation {
           } else
             result.sources.push_back({nullptr, 0, nullptr});
         }
-        const auto weights = weight_plan(reliability, plane_index);
-        result.weights.push_back(weights.centre);
-        result.weights.insert(result.weights.end(), weights.reference.begin(), weights.reference.end());
+        weight_plan.compute(reliability.data(), selected.size(), plane_index,
+                            result.weights.data() + index * (selected.size() + 1));
       }
     return result;
   }

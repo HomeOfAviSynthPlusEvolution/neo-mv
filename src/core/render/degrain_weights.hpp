@@ -92,28 +92,37 @@ public:
       throw std::invalid_argument("Degrain threshold index out of range");
     return thresholds_[plane == 0 ? 0 : 1][pair];
   }
-  DegrainWeights operator()(const std::vector<ReferenceReliability>& references, int plane) const {
-    if (references.size() != std::size_t(2 * pairs_))
-      throw std::invalid_argument("Degrain reliability count mismatch");
-    std::vector<std::int64_t> products(references.size());
+  // Internal block path: caller supplies 2*pairs+1 slots, centre first.
+  // The public vector-returning API below retains its original admission.
+  void compute(const ReferenceReliability* references, std::size_t count, int plane, int* output) const {
+    if (!references || !output || count != std::size_t(2 * pairs_) || plane < 0 || plane > 2)
+      throw std::invalid_argument("invalid Degrain reliability output");
+    std::array<std::int64_t, 50> products{};
     std::int64_t total = 256 * centre_ + 1;
-    for (std::size_t i = 0; i < references.size(); ++i) {
+    const auto& thresholds = thresholds_[plane == 0 ? 0 : 1];
+    for (std::size_t i = 0; i < count; ++i) {
       const auto& r = references[i];
-      const int t = threshold(static_cast<int>(i / 2), plane);
-      // Complete-field validation is a separate mandatory step even when this
-      // reference is unavailable. An absent field has no SAD to inspect here.
-      products[i] = (r.available ? degrain_reliability(r.sad, t) : 0) * user_[i];
+      products[i] = (r.available ? degrain_reliability(r.sad, thresholds[i / 2]) : 0) * user_[i];
       total += products[i];
     }
     const double g = 256.0 / double(total);
-    DegrainWeights result{256, {}};
-    for (auto product : products) {
-      const int value = static_cast<int>(double(product) * g);
-      result.reference.push_back(value);
-      result.centre -= value;
+    output[0] = 256;
+    for (std::size_t i = 0; i < count; ++i) {
+      const int value = static_cast<int>(double(products[i]) * g);
+      output[i + 1] = value;
+      output[0] -= value;
     }
-    if (result.centre < 0)
+    if (output[0] < 0)
       throw std::overflow_error("negative normalized Degrain centre weight");
+  }
+  DegrainWeights operator()(const std::vector<ReferenceReliability>& references, int plane) const {
+    if (references.size() != std::size_t(2 * pairs_))
+      throw std::invalid_argument("Degrain reliability count mismatch");
+    DegrainWeights result{0, std::vector<int>(references.size())};
+    std::array<int, 51> values{};
+    compute(references.data(), references.size(), plane, values.data());
+    result.centre = values[0];
+    std::copy(values.begin() + 1, values.begin() + 1 + references.size(), result.reference.begin());
     return result;
   }
 };

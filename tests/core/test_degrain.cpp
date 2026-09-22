@@ -53,6 +53,12 @@ void weights() {
         inputs.push_back({(trial + i) % 5 != 0, (trial * 67 + i * 79) % 1100});
       for (int plane = 0; plane < 3; ++plane) {
         const auto normalized = bounded(inputs, plane);
+        std::array<int, 53> direct{};
+        direct.front() = direct.back() = -19;
+        bounded.compute(inputs.data(), inputs.size(), plane, direct.data() + 1);
+        CHECK(direct.front() == -19 && direct.back() == -19);
+        CHECK(direct[1] == normalized.centre);
+        CHECK(std::equal(normalized.reference.begin(), normalized.reference.end(), direct.begin() + 2));
         int sum = normalized.centre;
         CHECK(sum >= 0 && sum <= 256);
         for (int v : normalized.reference) {
