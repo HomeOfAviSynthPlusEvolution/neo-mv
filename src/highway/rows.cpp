@@ -14,6 +14,7 @@ std::int64_t Target() {
   return HWY_TARGET;
 }
 template <class T> using Wide = std::conditional_t<std::is_same_v<T, float>, float, std::int32_t>;
+template <class T> using FormulaWide = std::conditional_t<std::is_same_v<T, std::uint8_t>, std::int16_t, Wide<T>>;
 template <class D, class V> HWY_INLINE void finite(D d, V v) {
   if constexpr (std::is_same_v<hn::TFromD<D>, float>)
     if (!hn::AllTrue(d, hn::IsFinite(v)))
@@ -71,10 +72,10 @@ template <class T> void Fill(T v, T *q, int count) {
   for (; x < count; ++x)
     q[x] = v;
 }
-template <class T, class D> auto LoadWide(D d, const T *p, int step) {
+template <int Step, class T, class D> auto LoadWide(D d, const T *p) {
   const hn::Rebind<T, D> narrow;
   auto v = hn::Zero(narrow);
-  if (step == 1)
+  if constexpr (Step == 1)
     v = hn::LoadU(narrow, p);
   else {
     auto unused = v;
@@ -132,43 +133,49 @@ template <class D, class V> HWY_INLINE auto Calculate(D d, V a, V b, V c, V e, V
     return hn::Min(hn::Max(hn::ShiftRightSame(hn::Add(v, hn::Set(d, 1 << (shift - 1))), shift), hn::Zero(d)),
                    hn::Set(d, static_cast<A>(maximum)));
 }
-template <class T, class D>
-HWY_INLINE void FormulaChunk(D d, const T *const *p, int step, T *out, Formula op, std::int64_t maximum) {
+template <Formula Op, int Step, class T, class D>
+HWY_INLINE void FormulaChunk(D d, const T *const *p, T *out, std::int64_t maximum) {
   const hn::Rebind<T, D> narrow;
-  auto a = LoadWide(d, p[0], step), b = LoadWide(d, p[1], step), c = hn::Zero(d), e = c, f = c, g = c;
-  if (op != Formula::average) {
-    c = LoadWide(d, p[2], step);
-    e = LoadWide(d, p[3], step);
+  auto a = LoadWide<Step>(d, p[0]), b = LoadWide<Step>(d, p[1]), c = hn::Zero(d), e = c, f = c, g = c;
+  if constexpr (Op != Formula::average) {
+    c = LoadWide<Step>(d, p[2]);
+    e = LoadWide<Step>(d, p[3]);
   }
-  if (op == Formula::reduce6 || op == Formula::sharp6) {
-    f = LoadWide(d, p[4], step);
-    g = LoadWide(d, p[5], step);
+  if constexpr (Op == Formula::reduce6 || Op == Formula::sharp6) {
+    f = LoadWide<Step>(d, p[4]);
+    g = LoadWide<Step>(d, p[5]);
   }
-  auto v = Calculate(d, a, b, c, e, f, g, op, maximum);
+  auto v = Calculate(d, a, b, c, e, f, g, Op, maximum);
   if constexpr (std::is_same_v<T, float>)
     hn::StoreU(v, narrow, out);
   else
     hn::StoreU(hn::DemoteTo(narrow, v), narrow, out);
 }
-template <Formula Op, class T>
-void FormulaRowKnown(const T *const *p, int step, T *out, int count, std::int64_t maximum) {
-  constexpr auto op = Op;
-  const hn::ScalableTag<Wide<T>> d;
+template <Formula Op, int Step, class T>
+void FormulaRowKnownStep(const T *const *p, T *out, int count, std::int64_t maximum) {
+  const hn::ScalableTag<FormulaWide<T>> d;
   const int n = int(hn::Lanes(d));
   int x = 0;
-  const int nt = op == Formula::average ? 2 : ((op == Formula::reduce6 || op == Formula::sharp6) ? 6 : 4);
+  constexpr int nt = Op == Formula::average ? 2 : ((Op == Formula::reduce6 || Op == Formula::sharp6) ? 6 : 4);
   const T *taps[6]{};
   for (; x <= count - n; x += n) {
     for (int j = 0; j < nt; ++j)
-      taps[j] = p[j] + x * step;
-    FormulaChunk(d, taps, step, out + x, op, maximum);
+      taps[j] = p[j] + x * Step;
+    FormulaChunk<Op, Step>(d, taps, out + x, maximum);
   }
-  const hn::CappedTag<Wide<T>, 1> one;
+  const hn::CappedTag<FormulaWide<T>, 1> one;
   for (; x < count; ++x) {
     for (int j = 0; j < nt; ++j)
-      taps[j] = p[j] + x * step;
-    FormulaChunk(one, taps, 1, out + x, op, maximum);
+      taps[j] = p[j] + x * Step;
+    FormulaChunk<Op, 1>(one, taps, out + x, maximum);
   }
+}
+template <Formula Op, class T>
+void FormulaRowKnown(const T *const *p, int step, T *out, int count, std::int64_t maximum) {
+  if (step == 1)
+    FormulaRowKnownStep<Op, 1>(p, out, count, maximum);
+  else
+    FormulaRowKnownStep<Op, 2>(p, out, count, maximum);
 }
 template <class T>
 void FormulaRow(const T *const *p, int step, T *out, int count, Formula op, std::int64_t maximum) {
@@ -211,7 +218,7 @@ std::int64_t SmallSad(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdi
         const auto difference = hn::AbsDiff(hn::LoadU(narrow, a + x), hn::LoadU(narrow, b + x));
         sum = hn::Add(sum, hn::PromoteTo(d, difference));
       } else {
-        sum = hn::Add(sum, hn::Abs(hn::Sub(LoadWide(d, a + x, 1), LoadWide(d, b + x, 1))));
+        sum = hn::Add(sum, hn::Abs(hn::Sub(LoadWide<1>(d, a + x), LoadWide<1>(d, b + x))));
       }
     }
     for (; x < w; ++x)
@@ -323,7 +330,7 @@ std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::
       const T *br = b + y * bs;
       int x = 0;
       for (; x <= w - n; x += n) {
-        auto av = LoadWide(d, ar + x, 1), bv = LoadWide(d, br + x, 1);
+        auto av = LoadWide<1>(d, ar + x), bv = LoadWide<1>(d, br + x);
         finite(d, av);
         finite(d, bv);
         auto diff = hn::Abs(hn::Sub(av, bv));
