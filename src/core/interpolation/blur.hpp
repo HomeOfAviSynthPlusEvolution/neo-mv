@@ -55,6 +55,7 @@ struct ScalarBlurAverage {
 };
 
 class BlurSamplingPlan {
+protected:
   RenderPhaseGeometry geometry_;
   int width_, height_, precision_, time_;
   struct Direction {
@@ -125,11 +126,10 @@ public:
       }
   }
 
-  template <class T, class Average = ScalarBlurAverage>
-  void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
-              span2d::Plane<T> output, int bits, Average average = {}) const {
-    mask_detail::validate_storage<T>(bits);
-    preflight(forward, backward);
+protected:
+  template <class T>
+  void validate_storage(const DenseFlowField& forward, const DenseFlowField& backward,
+                        const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
     validate_plane(output);
     if (source.pel != geometry_.pel || output.width() != width_ || output.height() != height_)
       throw std::invalid_argument("blur storage geometry mismatch");
@@ -146,6 +146,14 @@ public:
         if (active_rows_overlap(input, output))
           throw std::invalid_argument("blur output aliases dense input");
       }
+  }
+public:
+  template <class T, class Average = ScalarBlurAverage>
+  void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
+              span2d::Plane<T> output, int bits, Average average = {}) const {
+    mask_detail::validate_storage<T>(bits);
+    preflight(forward, backward);
+    validate_storage(forward, backward, source, output);
     std::vector<T> samples;
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {

@@ -107,7 +107,7 @@ template <class T, class Kernels = ScalarInterpolationKernels<T>>
 class BlurFramePlan : public TemporalFrameBase<T, Kernels> {
   using Base = TemporalFrameBase<T, Kernels>;
   std::vector<typename Kernels::DenseFlow> dense_;
-  std::vector<BlurSamplingPlan> plans_;
+  std::vector<typename Kernels::BlurSampling> plans_;
 
 public:
   BlurFramePlan(InterpolationInputPlan<T> input, RenderVideo video, double blur, std::int64_t precision)

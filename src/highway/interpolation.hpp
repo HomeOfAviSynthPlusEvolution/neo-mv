@@ -4,6 +4,7 @@
 #include "highway/interpolation_rows.hpp"
 #include "highway/scene.hpp"
 #include "highway/rows.hpp"
+#include "highway/blur_sampling.hpp"
 #include "highway/interpolation_sampling.hpp"
 #include "kernels/interpolation_scalar.hpp"
 
@@ -33,6 +34,7 @@ struct HighwayBlurAverage {
 template <class T>
 struct HighwayInterpolationKernels {
   static constexpr auto scene_count = &simd::scene_count;
+  using BlurSampling = simd::BlurSamplingPlan;
   using Sampling = simd::InterpolationSamplingPlan;
   using Dense = DenseInterpolationPlan<simd::GridResamplingPlan>;
   using DenseFlow = DenseFlowPlan<simd::GridResamplingPlan>;
