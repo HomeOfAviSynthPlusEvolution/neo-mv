@@ -199,6 +199,8 @@ void exact_costs_and_errors() {
   CHECK(candidate_cost({1, 0}, {0, 0}, 256, 0, {5, 0, 5}) == 6);
   CHECK(candidate_cost({0, 0}, {0, 0}, 0, 1, {128, 128, 256}) == 256); // separate floors
   CHECK(candidate_cost({0, 0}, {0, 0}, 0, 256, {5, 3, 8}) == 16);
+  CHECK(candidate_cost({32767, -32767}, {0, 0}, INT32_MAX, 256,
+                       {1LL << 27, 1LL << 27, 1LL << 28}) == 18013299543114239LL);
   CHECK(candidate_cost({1, 0}, {0, 0}, INT64_MAX, 0, {0, 0, 0}) == INT64_MAX / 256);
   constexpr std::uint64_t d = 4294967295ULL;
   CHECK(candidate_cost({INT32_MAX, INT32_MAX}, {INT32_MIN, INT32_MIN}, 64, 0, {0, 0, 0}) ==

@@ -57,6 +57,14 @@ inline std::int64_t candidate_cost(MotionVector vector, MotionVector predictor, 
   const auto raw = metric_detail::accumulate(error.luma, error.chroma);
   if (error.raw != raw)
     throw std::invalid_argument("inconsistent raw block error");
+  const auto dx = std::int64_t(vector.x) - predictor.x;
+  const auto dy = std::int64_t(vector.y) - predictor.y;
+  if (raw <= (1LL << 28) && lambda <= INT32_MAX && dx >= -32767 && dx <= 32767 && dy >= -32767 && dy <= 32767) {
+    // The distance product is below 2^62 and each penalty product is at most
+    // 2^36, so no checked accumulation is needed for this common case.
+    return raw + lambda * (dx * dx + dy * dy) / 256 + error.luma * penalty / 256 +
+           error.chroma * penalty / 256;
+  }
   auto cost = metric_detail::accumulate(search_detail::distance(vector, predictor, lambda), raw);
   cost = metric_detail::accumulate(cost, search_detail::penalty(error.luma, penalty));
   return metric_detail::accumulate(cost, search_detail::penalty(error.chroma, penalty));
