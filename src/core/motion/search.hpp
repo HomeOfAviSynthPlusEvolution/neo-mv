@@ -30,6 +30,11 @@ inline std::int64_t distance(MotionVector v, MotionVector predictor, std::int64_
   const auto dx = std::int64_t(v.x) - predictor.x, dy = std::int64_t(v.y) - predictor.y;
   const auto x = static_cast<std::uint64_t>(dx < 0 ? -dx : dx);
   const auto y = static_cast<std::uint64_t>(dy < 0 ? -dy : dy);
+  // In the ordinary bounded search, the complete product fits signed 64-bit:
+  // 2 * 32767^2 * INT32_MAX < INT64_MAX. Keep the split calculation for
+  // public callers with larger vectors or lambda values.
+  if (x <= 32767 && y <= 32767 && lambda >= 0 && lambda <= INT32_MAX)
+    return lambda * (dx * dx + dy * dy) / 256;
   // Each square fits uint64, but their sum may not. Split before addition
   // and multiplication so an exactly representable final cost also works on
   // MSVC x86 without a native 128-bit integer type.
