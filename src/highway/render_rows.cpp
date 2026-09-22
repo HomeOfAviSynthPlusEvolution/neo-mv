@@ -206,8 +206,55 @@ HWY_INLINE void ComposeDirectSegment(const DirectInput<T>* inputs, int count, T*
 }
 
 template <class T>
+void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
+                          span2d::Plane<T> output, std::int64_t maximum) {
+  for (int ty = 0, oy = 0; oy < g.visible_height; ++ty, oy += 8) {
+    const int tile_height = std::min(8, g.visible_height - oy);
+    const int first_y = ty ? ty - 1 : 0;
+    const int last_y = std::min(ty, g.blocks_y - 1);
+    for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += 8) {
+      const int tile_width = std::min(8, g.visible_width - ox);
+      const int first_x = tx ? tx - 1 : 0;
+      const int last_x = std::min(tx, g.blocks_x - 1);
+      DirectInput<T> inputs[4];
+      std::ptrdiff_t strides[4];
+      int n = 0;
+      for (int by = first_y; by <= last_y; ++by)
+        for (int bx = first_x; bx <= last_x; ++bx) {
+          const auto& block = blocks[std::size_t(by) * g.blocks_x + bx];
+          const int local_y = by == ty ? 0 : 8;
+          const int local_x = bx == tx ? 0 : 8;
+          inputs[n] = {block.data + local_y * block.stride + local_x,
+                       block.coefficients + std::size_t(local_y) * 16 + local_x};
+          strides[n++] = block.stride;
+        }
+      auto* dst = output.row(oy).data() + ox;
+      for (int row = 0; row < tile_height; ++row) {
+        if (n == 1)
+          ComposeDirectSegment<1>(inputs, tile_width, dst, maximum);
+        else if (n == 2)
+          ComposeDirectSegment<2>(inputs, tile_width, dst, maximum);
+        else
+          ComposeDirectSegment<4>(inputs, tile_width, dst, maximum);
+        if (row + 1 < tile_height) {
+          dst += output.stride();
+          for (int i = 0; i < n; ++i) {
+            inputs[i].samples += strides[i];
+            inputs[i].coefficients += 16;
+          }
+        }
+      }
+    }
+  }
+}
+
+template <class T>
 void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
                           span2d::Plane<T> output, std::int64_t maximum) {
+  if constexpr (std::is_same_v<T, std::uint16_t>) {
+    if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
+      return ComposeDirectTiled16(g, blocks, output, maximum);
+  }
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   for (int y = 0; y < g.visible_height; ++y) {
     const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
