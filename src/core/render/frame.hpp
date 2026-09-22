@@ -172,12 +172,19 @@ public:
       throw std::invalid_argument("missing required compensation reference");
     grid_.validate_image(*reference_image);
     const int shift = rule_.field_shift(n, current_top, reference_top);
+    std::vector<CompensationDecision> decisions;
+    decisions.reserve(field.grid.values.size());
+    for (const auto& v : field.grid.values) {
+      const auto selected_block = rule_.select(v.vector, v.error, shift);
+      decisions.push_back({selected_block, selected_block.reference ? selected_block.displacement
+                                                                    : rule_.reference_displacement(v.vector, shift)});
+    }
     // Admit every plane's actual footprints before any plane samples pixels.
     // Descriptors borrow the source; no temporary pixel blocks are produced.
     std::array<typename Kernels::CompensationBlocks, 3> blocks;
     for (int k = 0; k < grid_.plane_count(); ++k)
       blocks[k] = Kernels::prepare_compensated(grid_.composition(k), rule_, grid_.phase_geometry(k), field.grid, shift,
-                                               current.planes[k], reference_image->planes[k]);
+                                               current.planes[k], reference_image->planes[k], &decisions);
     for (int k = 0; k < grid_.plane_count(); ++k)
       Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
     return output;

@@ -21,6 +21,10 @@ struct DegrainPlane {
   std::vector<SampledRenderBlock<T>> sources;
   std::vector<int> weights;
 };
+struct CompensationDecision {
+  CompensationSelection selected;
+  RenderDisplacement reference_displacement;
+};
 
 // All prepared views borrow admitted image storage and immutable plan windows.
 // Callers prepare every processed plane before reading samples into owned output.
@@ -29,8 +33,11 @@ struct RenderPreparation {
   using CompensationBlocks = std::vector<SampledRenderBlock<T>>;
   static CompensationBlocks prepare_compensated(const OverlapCompositionPlan& plan, const CompensationRule& rule,
                                                 const RenderPhaseGeometry& geometry, const MotionGrid& field, int shift,
-                                                const SubpixelPhases<T>& current, const SubpixelPhases<T>& reference) {
+                                                const SubpixelPhases<T>& current, const SubpixelPhases<T>& reference,
+                                                const std::vector<CompensationDecision>* decisions = nullptr) {
     const auto& g = plan.geometry();
+    if (decisions && decisions->size() != field.values.size())
+      throw std::invalid_argument("compensation decision count mismatch");
     CompensationBlocks blocks;
     blocks.reserve(field.values.size());
     for (int by = 0; by < g.blocks_y; ++by)
@@ -38,11 +45,13 @@ struct RenderPreparation {
         const BlockRegion block{bx * (g.block_width - g.overlap_x) * geometry.ratio_x,
                                 by * (g.block_height - g.overlap_y) * geometry.ratio_y,
                                 g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
-        const auto v = field.values[std::size_t(by) * g.blocks_x + bx];
-        const auto selected = rule.select(v.vector, v.error, shift);
+        const auto index = std::size_t(by) * g.blocks_x + bx;
+        const auto v = field.values[index];
+        const auto selected = decisions ? (*decisions)[index].selected : rule.select(v.vector, v.error, shift);
         // Preflight the actual reference even when SAD selects current pixels.
-        const auto reference_footprint =
-            render_footprint_admitted(geometry, block, rule.reference_displacement(v.vector, shift));
+        const auto reference_footprint = render_footprint_admitted(
+            geometry, block,
+            decisions ? (*decisions)[index].reference_displacement : rule.reference_displacement(v.vector, shift));
         const auto footprint = selected.reference ? reference_footprint
                                                   : render_footprint_admitted(geometry, block, selected.displacement);
         const auto plane = (selected.reference ? reference : current).planes[footprint.phase];
@@ -53,12 +62,11 @@ struct RenderPreparation {
   }
   using DegrainPlane = neo_mv::DegrainPlane<T>;
   template <class Images>
-  static DegrainPlane prepare_degrain(const OverlapCompositionPlan& plan, const RenderPhaseGeometry& geometry,
-                                      const std::vector<AnalysisField>& fields,
-                                      const std::vector<std::optional<std::int64_t>>& selected,
-                                      const SubpixelPhases<T>& current, const Images& images,
-                                      const DegrainWeightPlan& weight_plan, int plane_index,
-                                      const std::vector<int>* shared_weights = nullptr) {
+  static DegrainPlane
+  prepare_degrain(const OverlapCompositionPlan& plan, const RenderPhaseGeometry& geometry,
+                  const std::vector<AnalysisField>& fields, const std::vector<std::optional<std::int64_t>>& selected,
+                  const SubpixelPhases<T>& current, const Images& images, const DegrainWeightPlan& weight_plan,
+                  int plane_index, const std::vector<int>* shared_weights = nullptr) {
     const auto& g = plan.geometry();
     DegrainPlane result;
     result.references = int(selected.size());
