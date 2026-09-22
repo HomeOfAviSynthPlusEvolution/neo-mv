@@ -35,15 +35,16 @@ public:
         throw std::invalid_argument("temporal clip storage dimensions changed");
     }
   }
-  RenderOutput<T> allocate() const {
+  RenderOutput<T> allocate(const RenderDestination<T>* destination = nullptr) const {
     RenderOutput<T> result;
     for (int k = 0; k < input_.plane_count(); ++k)
-      result.emplace_back(video_.width / (k ? video_.ratio_x : 1), video_.height / (k ? video_.ratio_y : 1));
+      result.emplace_back(video_.width / (k ? video_.ratio_x : 1), video_.height / (k ? video_.ratio_y : 1),
+                          destination, k);
     return result;
   }
-  RenderOutput<T> copy(const RenderPixels<T>& clip) const {
+  RenderOutput<T> copy(const RenderPixels<T>& clip, const RenderDestination<T>* destination = nullptr) const {
     validate_clip(clip);
-    auto result = allocate();
+    auto result = allocate(destination);
     for (int k = 0; k < input_.plane_count(); ++k) {
       auto out = result[k].view();
       for (int y = 0; y < out.height(); ++y)
@@ -61,14 +62,15 @@ class InterpolationFramePlan : public TemporalFrameBase<T, Kernels> {
 public:
   InterpolationFramePlan(InterpolationInputPlan<T> input, RenderVideo video, double ml = 100)
       : Base(std::move(input), video) {
-    for (int k = 0; k < this->input_.plane_count(); ++k)
+    for (int k = 0; k < (std::min)(2, this->input_.plane_count()); ++k)
       dense_.emplace_back(this->input_.metadata(0), this->input_.metadata(1), k ? video.ratio_x : 1,
                           k ? video.ratio_y : 1, ml);
   }
-  RenderOutput<T> blend(const RenderPixels<T>& a, const RenderPixels<T>& b, int time) const {
+  RenderOutput<T> blend(const RenderPixels<T>& a, const RenderPixels<T>& b, int time,
+                        const RenderDestination<T>* destination = nullptr) const {
     this->validate_clip(a);
     this->validate_clip(b);
-    auto result = this->allocate();
+    auto result = this->allocate(destination);
     for (int k = 0; k < this->input_.plane_count(); ++k)
       Kernels::blend(a[k], b[k], result[k].view(), time, this->video_.bits);
     return result;
@@ -76,8 +78,8 @@ public:
   // Eligible is internal: the same immutable fields passed main/extra eligibility.
   template <bool Eligible = false>
   RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const AnalysisField* BB,
-                         const AnalysisField* FF, const RenderImage<T>& left, const RenderImage<T>& right,
-                         int time) const {
+                         const AnalysisField* FF, const RenderImage<T>& left, const RenderImage<T>& right, int time,
+                         const RenderDestination<T>* destination = nullptr) const {
     if constexpr (!Eligible)
       if (!this->main_eligible(B, F) || bool(BB) != bool(FF) || (BB && !this->extra_eligible(*BB, *FF)))
         throw std::invalid_argument("motion interpolation requires eligible fields");
@@ -87,8 +89,9 @@ public:
     std::vector<DenseResult> fields;
     std::vector<typename Kernels::Sampling> plans;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      fields.push_back(
-          dense_[k].template generate<true>(B.grid, F.grid, time, BB ? &BB->grid : nullptr, FF ? &FF->grid : nullptr));
+      if (k < 2)
+        fields.push_back(dense_[k].template generate<true>(B.grid, F.grid, time, BB ? &BB->grid : nullptr,
+                                                           FF ? &FF->grid : nullptr));
       const auto g = this->input_.phase_geometry(k);
       plans.emplace_back(g, g, this->video_.width / g.ratio_x, this->video_.height / g.ratio_y, time,
                          this->video_.bits);
@@ -96,9 +99,9 @@ public:
       plans.back().preflight(f.B, f.F, f.BB ? &*f.BB : nullptr, f.FF ? &*f.FF : nullptr);
     }
     // Every used plane has passed preflight before any reference pixel is read.
-    auto result = this->allocate();
+    auto result = this->allocate(destination);
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      const auto& f = fields[k];
+      const auto& f = fields[(std::min)(k, 1)];
       plans[k].render_preflighted(left.planes[k], right.planes[k], f.B, f.F, f.BB ? &*f.BB : nullptr,
                                   f.FF ? &*f.FF : nullptr, f.mF, f.mB, result[k].view());
     }
@@ -119,27 +122,31 @@ public:
     const int time = blur_time_coefficient(mask_detail::binary32(blur));
     for (int k = 0; k < this->input_.plane_count(); ++k) {
       const auto g = this->input_.phase_geometry(k);
-      dense_.emplace_back(this->input_.metadata(0), g.ratio_x, g.ratio_y);
+      if (k < 2)
+        dense_.emplace_back(this->input_.metadata(0), g.ratio_x, g.ratio_y);
       plans_.emplace_back(g, video.width / g.ratio_x, video.height / g.ratio_y, prec, time);
     }
   }
   // Eligible is internal: the same immutable fields passed main/extra eligibility.
   template <bool Eligible = false>
-  RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const RenderImage<T>& image) const {
+  RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const RenderImage<T>& image,
+                         const RenderDestination<T>* destination = nullptr) const {
     if constexpr (!Eligible)
       if (!this->main_eligible(B, F))
         throw std::invalid_argument("motion blur requires eligible fields");
     this->input_.validate_image(image);
     std::vector<DenseFlowField> backward, forward;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      backward.push_back(dense_[k].template generate<true>(B.grid, 0));
-      forward.push_back(dense_[k].template generate<true>(F.grid, 0));
+      if (k < 2) {
+        backward.push_back(dense_[k].template generate<true>(B.grid, 0));
+        forward.push_back(dense_[k].template generate<true>(F.grid, 0));
+      }
       plans_[k].preflight(forward.back(), backward.back());
     }
-    auto result = this->allocate();
+    auto result = this->allocate(destination);
     for (int k = 0; k < this->input_.plane_count(); ++k)
-      plans_[k].template sample<T, typename Kernels::BlurAverage, true, true>(forward[k], backward[k], image.planes[k],
-                                                                              result[k].view(), this->video_.bits);
+      plans_[k].template sample<T, typename Kernels::BlurAverage, true, true>(
+          forward[(std::min)(k, 1)], backward[(std::min)(k, 1)], image.planes[k], result[k].view(), this->video_.bits);
     return result;
   }
 };

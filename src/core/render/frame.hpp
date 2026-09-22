@@ -14,8 +14,38 @@ struct RenderImage {
 };
 template <class T>
 using RenderPixels = std::array<span2d::Plane<const T>, 3>;
+// A destination is internal host integration: all active planes must be fresh,
+// mutually disjoint, and disjoint from every input. Its lifetime spans the call.
 template <class T>
-using RenderOutput = std::vector<super_detail::PlaneBuffer<T>>;
+using RenderDestination = std::array<span2d::Plane<T>, 3>;
+
+template <class T>
+class RenderPlane {
+  std::optional<super_detail::PlaneBuffer<T>> owner_;
+  std::optional<span2d::Plane<T>> destination_;
+
+public:
+  RenderPlane(int width, int height) : owner_(std::in_place, width, height, overwrite) {}
+  RenderPlane(int width, int height, const RenderDestination<T>* destination, int k) {
+    if (!destination) {
+      owner_.emplace(width, height, overwrite);
+    } else {
+      const auto view = destination->at(k);
+      validate_plane(view);
+      if (view.width() != width || view.height() != height)
+        throw std::invalid_argument("render output storage mismatch");
+      destination_ = view;
+    }
+  }
+  span2d::Plane<T> view() { return destination_ ? *destination_ : owner_->view(); }
+  span2d::Plane<const T> view() const {
+    if (destination_)
+      return *destination_;
+    return owner_->view();
+  }
+};
+template <class T>
+using RenderOutput = std::vector<RenderPlane<T>>;
 
 // Shared immutable grid. Only consumed level-zero geometry participates in
 // compatibility; pyramid levels and Super's block hints are not render inputs.
@@ -85,14 +115,15 @@ public:
       }
     }
   }
-  RenderOutput<T> make_output(const RenderPixels<T>& pixels, bool copy_processed) const {
+  RenderOutput<T> make_output(const RenderPixels<T>& pixels, bool copy_processed,
+                              const RenderDestination<T>* destination = nullptr) const {
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
       const int rx = k ? clip_.ratio_x : 1, ry = k ? clip_.ratio_y : 1;
       validate_plane(pixels[k]);
       if (pixels[k].width() != clip_.width / rx || pixels[k].height() != clip_.height / ry)
         throw std::invalid_argument("render clip storage geometry changed");
-      output.emplace_back(pixels[k].width(), pixels[k].height());
+      output.emplace_back(pixels[k].width(), pixels[k].height(), destination, k);
       auto dst = output.back().view();
       if (copy_processed || !processed_[k])
         for (int y = 0; y < dst.height(); ++y)
@@ -130,10 +161,11 @@ public:
   }
   RenderOutput<T> render(std::int64_t n, const AnalysisField& field, const RenderPixels<T>& clip,
                          const RenderImage<T>& current, const RenderImage<T>* reference_image,
-                         std::optional<bool> current_top = {}, std::optional<bool> reference_top = {}) const {
+                         std::optional<bool> current_top = {}, std::optional<bool> reference_top = {},
+                         const RenderDestination<T>* destination = nullptr) const {
     validate_current(current);
     const auto selected = reference(field, n);
-    auto output = grid_.make_output(clip, !selected);
+    auto output = grid_.make_output(clip, !selected, destination);
     if (!selected)
       return output;
     if (!reference_image)
@@ -205,7 +237,8 @@ public:
     return result;
   }
   RenderOutput<T> render(std::int64_t n, const std::vector<AnalysisField>& fields, const RenderPixels<T>& clip,
-                         const RenderImage<T>& current, const std::vector<RenderImage<T>>& images) const {
+                         const RenderImage<T>& current, const std::vector<RenderImage<T>>& images,
+                         const RenderDestination<T>* destination = nullptr) const {
     validate_current(current);
     const auto selected = references(fields, n);
     if (images.size() != selected.size())
@@ -213,7 +246,7 @@ public:
     for (std::size_t i = 0; i < selected.size(); ++i)
       if (selected[i])
         grid_.validate_image(images[i]); // Required even for zero user coefficients.
-    auto output = grid_.make_output(clip, false);
+    auto output = grid_.make_output(clip, false, destination);
     std::array<typename Kernels::DegrainPlane, 3> prepared;
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k))

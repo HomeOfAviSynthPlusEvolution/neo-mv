@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <vector>
 
 namespace neo_mv {
 struct GridResamplingGeometry {
@@ -113,6 +114,12 @@ class GridResamplingPlan {
   GridResamplingGeometry geometry_;
   std::int64_t covered_width_, covered_height_;
   bool horizontal_first_;
+  struct Entry {
+    grid_detail::Axis axis;
+    std::uint32_t weight;
+    double fraction;
+  };
+  std::vector<Entry> horizontal_, vertical_;
 
 public:
   explicit GridResamplingPlan(GridResamplingGeometry g) : geometry_(g) {
@@ -125,6 +132,18 @@ public:
     if (g.width > covered_width_ || g.height > covered_height_)
       throw std::invalid_argument("resampling grid does not cover visible image");
     horizontal_first_ = grid_detail::horizontal_first(covered_width_, covered_height_, g.blocks_x, g.blocks_y);
+    const auto prepare = [](int size, int blocks, std::int64_t covered) {
+      std::vector<Entry> entries;
+      entries.reserve(size);
+      for (int i = 0; i < size; ++i) {
+        const auto a = grid_detail::axis(i, blocks, covered);
+        entries.push_back(
+            {a, grid_detail::coefficient(a.remainder, a.denominator), double(a.remainder) / double(a.denominator)});
+      }
+      return entries;
+    };
+    horizontal_ = prepare(g.width, g.blocks_x, covered_width_);
+    vertical_ = prepare(g.height, g.blocks_y, covered_height_);
   }
   const GridResamplingGeometry& geometry() const { return geometry_; }
 
@@ -161,14 +180,13 @@ public:
         }
     }
     for (int y = 0; y < output.height(); ++y) {
-      const auto ay = grid_detail::axis(y, g.blocks_y, covered_height_);
+      const auto& ay = vertical_[y].axis;
       for (int x = 0; x < output.width(); ++x) {
-        const auto ax = grid_detail::axis(x, g.blocks_x, covered_width_);
+        const auto& ax = horizontal_[x].axis;
         const std::array<T, 4> s{input.row(ay.first)[ax.first], input.row(ay.first)[ax.second],
                                  input.row(ay.second)[ax.first], input.row(ay.second)[ax.second]};
         if constexpr (std::is_same_v<T, float>) {
-          const double a = double(ax.remainder) / double(ax.denominator),
-                       b = double(ay.remainder) / double(ay.denominator);
+          const double a = horizontal_[x].fraction, b = vertical_[y].fraction;
           const double c = 1.0 - a, e = 1.0 - b;
           const double h0 = c * double(s[0]) + a * double(s[1]);
           const double h1 = c * double(s[2]) + a * double(s[3]);
@@ -181,8 +199,8 @@ public:
           std::array<std::uint32_t, 4> biased{};
           for (int i = 0; i < 4; ++i)
             biased[i] = static_cast<std::uint32_t>(int(s[i]) + offset);
-          const auto a = grid_detail::coefficient(ax.remainder, ax.denominator);
-          const auto b = grid_detail::coefficient(ay.remainder, ay.denominator);
+          const auto a = horizontal_[x].weight;
+          const auto b = vertical_[y].weight;
           using grid_detail::interpolate;
           const auto value =
               horizontal_first_

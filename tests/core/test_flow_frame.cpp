@@ -1,3 +1,4 @@
+#include "render_destination.hpp"
 #include "core/flow/frame.hpp"
 #if NEO_MV_TEST_HIGHWAY
 #include "highway/flow.hpp"
@@ -91,6 +92,10 @@ void simple(int bits) {
   Plan<T> plan(video, super, 2, m, 2);
   constant(plan.render(clip.pixels(), f, 0, &ref), 0, T{80});
   constant(plan.render(clip.pixels(), f, 1), 0, T{5});
+  for (int n : {0, 1})
+    test::verify_destination<T>([&](const RenderDestination<T>* dst) {
+      return plan.render(clip.pixels(), f, n, n ? nullptr : &ref, {}, {}, dst);
+    });
   FlowParameters p;
   p.time = 0;
   constant(Plan<T>(video, super, 2, m, 2, p).render(clip.pixels(), f, 0, &ref), 0, T{80});

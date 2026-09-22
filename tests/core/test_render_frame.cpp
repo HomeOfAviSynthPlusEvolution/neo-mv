@@ -1,3 +1,4 @@
+#include "render_destination.hpp"
 #include "core/render/frame.hpp"
 #if NEO_MV_TEST_HIGHWAY
 #include "highway/render_ops.hpp"
@@ -96,6 +97,10 @@ void compensation(int bits) {
   constant(plan.render(0, field(eight, 99), clip.pixels(), current.view(), &r), 0, T(80));
   constant(plan.render(0, field(eight, 100), clip.pixels(), current.view(), &r), 0, T(10));
   constant(plan.render(2, field(eight), clip.pixels(), current.view(), nullptr), 0, T(5));
+  for (int n : {0, 2})
+    test::verify_destination<T>([&](const RenderDestination<T>* dst) {
+      return plan.render(n, field(eight, 99), clip.pixels(), current.view(), n ? nullptr : &r, {}, {}, dst);
+    });
   auto absent = field(eight);
   absent.state = FieldState::metadata_only;
   absent.grid = {0, 0, {}};
@@ -174,6 +179,9 @@ void degrain() {
   Image<std::uint8_t> clip(super, 5), centre(super, 100), past(super, 80), future(super, 140);
   TestDegrain<std::uint8_t> plan(video, super, 3, {a, b}, {3, 3});
   std::vector<AnalysisField> fields{field(a), field(b)};
+  test::verify_destination<std::uint8_t>([&](const RenderDestination<std::uint8_t>* dst) {
+    return plan.render(1, fields, clip.pixels(), centre.view(), {past.view(), future.view()}, dst);
+  });
   constant(plan.render(1, fields, clip.pixels(), centre.view(), {past.view(), future.view()}), 0, std::uint8_t(107));
   constant(plan.render(2, fields, clip.pixels(), centre.view(), {past.view(), {}}), 0, std::uint8_t(90));
   auto absent = fields;

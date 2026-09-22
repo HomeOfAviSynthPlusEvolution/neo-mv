@@ -39,12 +39,12 @@ public:
     }
     // Zero-displacement basic samples were admitted by construction.
   }
-  // Frame-only entry: all planes passed preflight; output is newly owned.
-  template <class T>
+  // Frame-only entry: all planes passed preflight; output is independent.
+  template <class T, class MaskAllocator>
   void render_preflighted(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
                           const DenseFlowField& F, const DenseFlowField* BB, const DenseFlowField* FF,
-                          const std::vector<std::uint8_t>& mF, const std::vector<std::uint8_t>& mB,
-                          span2d::Plane<T> out) const {
+                          const std::vector<std::uint8_t, MaskAllocator>& mF,
+                          const std::vector<std::uint8_t, MaskAllocator>& mB, span2d::Plane<T> out) const {
     interpolation_rows::render(
         interpolation_rows::SampledPlane<T>{
             left_.geometry(), right_.geometry(), {left, right}, {&F, &B, FF, BB}, {mF.data(), mB.data()}, time_, bits_},

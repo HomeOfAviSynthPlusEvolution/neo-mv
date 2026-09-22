@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/super/border_extension.hpp"
+#include "core/base/overwrite.hpp"
 #include "core/super/geometry.hpp"
 #include "core/super/pyramid_reduction.hpp"
 #include "core/super/subpixel.hpp"
@@ -23,10 +24,12 @@ std::size_t sample_count(int width, int height) {
 template <class T>
 class PlaneBuffer {
   int width_, height_;
-  std::vector<T> data_;
+  OverwriteVector<T> data_;
 
 public:
-  PlaneBuffer(int width, int height) : width_(width), height_(height), data_(sample_count<T>(width, height)) {}
+  PlaneBuffer(int width, int height) : width_(width), height_(height), data_(sample_count<T>(width, height), T{}) {}
+  PlaneBuffer(int width, int height, OverwriteTag)
+      : width_(width), height_(height), data_(sample_count<T>(width, height)) {}
   span2d::Plane<T> view() {
     return checked_plane(data_.data(), width_, height_, std::ptrdiff_t(width_) * sizeof(T), data_.size() * sizeof(T));
   }

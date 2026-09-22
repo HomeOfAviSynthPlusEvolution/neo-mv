@@ -1,3 +1,4 @@
+#include "render_destination.hpp"
 #include "core/interpolation/frame.hpp"
 #if NEO_MV_TEST_HIGHWAY
 #include "highway/interpolation.hpp"
@@ -104,6 +105,12 @@ void complete_frames(int bits, bool chroma) {
   const auto extra = plan.motion(B, F, &B, &F, left.view(), right.view(), 128);
   const auto blended = plan.blend(left.pixels(), right.pixels(), 128);
   const auto blurred = blur.motion(B, F, left.view());
+  test::verify_destination<T>(
+      [&](const RenderDestination<T>* dst) { return plan.motion(B, F, &B, &F, left.view(), right.view(), 128, dst); });
+  test::verify_destination<T>([&](const RenderDestination<T>* dst) { return blur.motion(B, F, left.view(), dst); });
+  test::verify_destination<T>(
+      [&](const RenderDestination<T>* dst) { return plan.blend(left.pixels(), right.pixels(), 128, dst); });
+  test::verify_destination<T>([&](const RenderDestination<T>* dst) { return plan.copy(left.pixels(), dst); });
   for (int k = 0; k < (chroma ? 3 : 1); ++k) {
     const T expected = static_cast<T>((std::is_same_v<T, float> ? 15.5 : 15) + 16 * k);
     constant(basic, k, expected);

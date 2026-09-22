@@ -85,15 +85,9 @@ public:
         reference_top = parity(source.frame, n, {});
       }
     }
+    const auto destination = fresh_render_destination<T>(ctx);
     const auto output = plan_.render(pixels, request.field, ctx.output_frame, request.reference ? &reference : nullptr,
-                                     current_top, reference_top);
-    for (int k = 0; k < clip_.format.plane_count; ++k) {
-      const auto src = output.at(k).view();
-      auto dst = plane<T>(ctx.dst.plane(k));
-      require(dst.width() == src.width() && dst.height() == src.height(), "Flow output storage mismatch");
-      for (int y = 0; y < src.height(); ++y)
-        std::memcpy(dst.row(y).data(), src.row(y).data(), std::size_t(src.width()) * sizeof(T));
-    }
+                                     current_top, reference_top, &destination);
   }
 };
 

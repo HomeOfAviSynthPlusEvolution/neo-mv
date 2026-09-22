@@ -42,10 +42,10 @@ class FlowFramePlan {
         throw std::invalid_argument("Flow clip storage dimensions changed");
     }
   }
-  RenderOutput<T> copy_clip(const RenderPixels<T>& clip) const {
+  RenderOutput<T> copy_clip(const RenderPixels<T>& clip, const RenderDestination<T>* destination) const {
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
-      output.emplace_back(clip[k].width(), clip[k].height());
+      output.emplace_back(clip[k].width(), clip[k].height(), destination, k);
       auto out = output.back().view();
       for (int y = 0; y < out.height(); ++y)
         std::memcpy(out.row(y).data(), clip[k].row(y).data(), std::size_t(out.width()) * sizeof(T));
@@ -65,7 +65,8 @@ public:
     const int time256 = static_cast<int>((parameters.time * 256.0) / 100.0);
     for (int k = 0; k < plane_count(); ++k) {
       const int rx = k ? clip.ratio_x : 1, ry = k ? clip.ratio_y : 1;
-      dense_.emplace_back(metadata, rx, ry);
+      if (k < 2)
+        dense_.emplace_back(metadata, rx, ry);
       sampling_plans_.emplace_back(render_phase_geometry(sampling_, k), clip.width / rx, clip.height / ry, time256);
     }
   }
@@ -107,24 +108,26 @@ public:
 
   RenderOutput<T> render(const RenderPixels<T>& clip, const AnalysisField& field, std::int64_t n,
                          const RenderImage<T>* reference_image = nullptr, std::optional<bool> current_top = {},
-                         std::optional<bool> reference_top = {}) const {
+                         std::optional<bool> reference_top = {},
+                         const RenderDestination<T>* destination = nullptr) const {
     validate_clip(clip);
     if (!reference(field, n))
-      return copy_clip(clip);
+      return copy_clip(clip, destination);
     if (!reference_image)
       throw std::invalid_argument("missing available Flow reference");
     validate_reference(*reference_image);
     const int shift = field_shift(n, current_top, reference_top);
     std::vector<DenseFlowField> fields;
-    for (int k = 0; k < plane_count(); ++k)
+    for (int k = 0; k < (std::min)(2, plane_count()); ++k)
       fields.push_back(dense_[k].template generate<true>(field.grid, shift));
     // No reference sample is read until every plane's actual coordinates pass.
     for (int k = 0; k < plane_count(); ++k)
-      sampling_plans_[k].preflight(fields[k]);
+      sampling_plans_[k].preflight(fields[(std::min)(k, 1)]);
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
-      output.emplace_back(sampling_plans_[k].width(), sampling_plans_[k].height());
-      Kernels::sample_preflighted(sampling_plans_[k], fields[k], reference_image->planes[k], output.back().view());
+      output.emplace_back(sampling_plans_[k].width(), sampling_plans_[k].height(), destination, k);
+      Kernels::sample_preflighted(sampling_plans_[k], fields[(std::min)(k, 1)], reference_image->planes[k],
+                                  output.back().view());
     }
     return output;
   }

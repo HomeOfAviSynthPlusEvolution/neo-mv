@@ -2,11 +2,16 @@
 #include "core/mask/grid_resampling.hpp"
 #include "highway/mask_rows.hpp"
 #include <vector>
+#include "core/base/overwrite.hpp"
 namespace neo_mv::simd {
 class GridResamplingPlan {
   GridResamplingGeometry geometry_;
   std::int64_t covered_width_, covered_height_;
   bool horizontal_first_;
+  std::vector<std::int32_t> left_, right_, weights_, vertical_weights_;
+  std::vector<std::int64_t> left_float_, right_float_;
+  std::vector<double> remainders_;
+  std::vector<grid_detail::Axis> vertical_;
 
 public:
   explicit GridResamplingPlan(GridResamplingGeometry g) : geometry_(g) {
@@ -19,6 +24,28 @@ public:
     if (g.width > covered_width_ || g.height > covered_height_)
       throw std::invalid_argument("resampling grid does not cover visible image");
     horizontal_first_ = grid_detail::horizontal_first(covered_width_, covered_height_, g.blocks_x, g.blocks_y);
+    left_.reserve(g.width);
+    right_.reserve(g.width);
+    weights_.reserve(g.width);
+    left_float_.reserve(g.width);
+    right_float_.reserve(g.width);
+    remainders_.reserve(g.width);
+    vertical_.reserve(g.height);
+    vertical_weights_.reserve(g.height);
+    for (int x = 0; x < g.width; ++x) {
+      const auto a = grid_detail::axis(x, g.blocks_x, covered_width_);
+      left_.push_back(a.first);
+      right_.push_back(a.second);
+      left_float_.push_back(a.first);
+      right_float_.push_back(a.second);
+      weights_.push_back(static_cast<std::int32_t>(grid_detail::coefficient(a.remainder, a.denominator)));
+      remainders_.push_back(double(a.remainder));
+    }
+    for (int y = 0; y < g.height; ++y) {
+      const auto a = grid_detail::axis(y, g.blocks_y, covered_height_);
+      vertical_.push_back(a);
+      vertical_weights_.push_back(static_cast<std::int32_t>(grid_detail::coefficient(a.remainder, a.denominator)));
+    }
   }
   const GridResamplingGeometry& geometry() const { return geometry_; }
 
@@ -55,23 +82,12 @@ public:
         }
     }
     const auto dx = std::uint64_t(covered_width_) * 2, dy = std::uint64_t(covered_height_) * 2;
-    using Index = std::conditional_t<std::is_same_v<T, float>, std::int64_t, std::int32_t>;
     using Sample = std::conditional_t<std::is_same_v<T, float>, double, std::int32_t>;
-    std::vector<Index> left(g.width), right(g.width);
-    std::vector<Sample> weights(g.width), top(g.blocks_x), bottom(g.blocks_x);
-    for (int x = 0; x < g.width; ++x) {
-      const auto axis = grid_detail::axis(x, g.blocks_x, covered_width_);
-      left[x] = axis.first;
-      right[x] = axis.second;
-      if constexpr (std::is_same_v<T, float>)
-        weights[x] = double(axis.remainder);
-      else
-        weights[x] = static_cast<std::int32_t>(grid_detail::coefficient(axis.remainder, axis.denominator));
-    }
+    OverwriteVector<Sample> top(g.blocks_x), bottom(g.blocks_x);
     int first = -1, second = -1;
     constexpr int offset = std::is_same_v<T, std::int16_t> ? 32768 : 0;
     for (int y = 0; y < g.height; ++y) {
-      const auto axis = grid_detail::axis(y, g.blocks_y, covered_height_);
+      const auto& axis = vertical_[y];
       if (first != axis.first) {
         for (int x = 0; x < g.blocks_x; ++x)
           if constexpr (std::is_same_v<T, std::int16_t>)
@@ -89,12 +105,11 @@ public:
         second = axis.second;
       }
       if constexpr (std::is_same_v<T, float>)
-        mask_rows::resize(top.data(), bottom.data(), left.data(), right.data(), weights.data(), g.width, double(dx),
-                          double(dy), double(axis.remainder), output.row(y).data());
+        mask_rows::resize(top.data(), bottom.data(), left_float_.data(), right_float_.data(), remainders_.data(),
+                          g.width, double(dx), double(dy), double(axis.remainder), output.row(y).data());
       else
-        mask_rows::resize(top.data(), bottom.data(), left.data(), right.data(), weights.data(), g.width,
-                          static_cast<std::int32_t>(grid_detail::coefficient(axis.remainder, axis.denominator)),
-                          horizontal_first_, output.row(y).data());
+        mask_rows::resize(top.data(), bottom.data(), left_.data(), right_.data(), weights_.data(), g.width,
+                          vertical_weights_[y], horizontal_first_, output.row(y).data());
     }
   }
 };

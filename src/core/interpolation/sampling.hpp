@@ -101,12 +101,12 @@ public:
         (void)positions(x, y, B, F, BB, FF);
   }
   // Frame-only fused entry: image storage, fields and all plane coordinates
-  // were admitted; masks match the visible dimensions and output is owned.
-  template <class T>
+  // were admitted; masks match the visible dimensions and output is independent.
+  template <class T, class MaskAllocator>
   void render_preflighted(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
                           const DenseFlowField& F, const DenseFlowField* BB, const DenseFlowField* FF,
-                          const std::vector<std::uint8_t>& mF, const std::vector<std::uint8_t>& mB,
-                          span2d::Plane<T> out) const {
+                          const std::vector<std::uint8_t, MaskAllocator>& mF,
+                          const std::vector<std::uint8_t, MaskAllocator>& mB, span2d::Plane<T> out) const {
     for (int y = 0; y < height(); ++y)
       for (int x = 0; x < width(); ++x) {
         const auto at = positions<true>(x, y, B, F, BB, FF);

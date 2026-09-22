@@ -9,6 +9,13 @@
 #include <dualsynth/staged_video.hpp>
 
 namespace neo_mv::ds2 {
+template <class T>
+RenderDestination<T> fresh_render_destination(ds::VideoProcessContext& ctx) {
+  RenderDestination<T> destination{};
+  for (int k = 0; k < ctx.dst.plane_count; ++k)
+    destination[k] = plane<T>(ctx.dst.plane(k));
+  return destination;
+}
 
 inline CompensateParameters compensate_parameters(const ds::ParamValues& values) {
   const Params p{values};
@@ -155,9 +162,10 @@ public:
         images.push_back(render_image(*owners.back()));
       }
     }
+    const auto destination = fresh_render_destination<T>(ctx);
     RenderOutput<T> output;
     if constexpr (Degrain) {
-      output = plan_.render(ctx.output_frame, request.fields, pixels, render_image(centre), images);
+      output = plan_.render(ctx.output_frame, request.fields, pixels, render_image(centre), images, &destination);
     } else {
       std::optional<bool> current_top, reference_top;
       if (request.references.at(0) && compensation_.fields && !compensation_.tff &&
@@ -166,15 +174,9 @@ public:
         const auto n = static_cast<int>(*request.references[0]);
         reference_top = parity(frame(ctx.frames, 1, n).frame, n, {});
       }
-      output = plan_.render(ctx.output_frame, request.fields.at(0), pixels, render_image(centre),
-                            request.references.at(0) ? &images.at(0) : nullptr, current_top, reference_top);
-    }
-    for (int k = 0; k < clip_.format.plane_count; ++k) {
-      const auto src = std::as_const(output.at(k)).view();
-      auto dst = plane<T>(ctx.dst.plane(k));
-      require(dst.width() == src.width() && dst.height() == src.height(), "render output storage mismatch");
-      for (int y = 0; y < src.height(); ++y)
-        std::memcpy(dst.row(y).data(), src.row(y).data(), std::size_t(src.width()) * sizeof(T));
+      output =
+          plan_.render(ctx.output_frame, request.fields.at(0), pixels, render_image(centre),
+                       request.references.at(0) ? &images.at(0) : nullptr, current_top, reference_top, &destination);
     }
   }
 };

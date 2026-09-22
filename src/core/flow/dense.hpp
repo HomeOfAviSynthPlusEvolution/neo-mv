@@ -4,12 +4,16 @@
 #include "core/motion/analysis_field.hpp"
 
 #include <vector>
+#include "core/base/overwrite.hpp"
 
 namespace neo_mv {
 
 struct DenseFlowField {
-  int width, height;
-  std::vector<std::int16_t> x, y;
+  int width = 0, height = 0;
+  OverwriteVector<std::int16_t> x, y;
+  DenseFlowField() = default;
+  DenseFlowField(int w, int h, const std::vector<std::int16_t>& horizontal, const std::vector<std::int16_t>& vertical)
+      : width(w), height(h), x(horizontal.begin(), horizontal.end()), y(vertical.begin(), vertical.end()) {}
 };
 
 namespace dense_detail {
@@ -89,14 +93,17 @@ public:
     }
     const auto small_count = dense_detail::count(m.blocks_x, m.blocks_y);
     const auto output_count = dense_detail::count(geometry_.width, geometry_.height);
-    std::vector<std::int16_t> small_x(small_count), small_y(small_count);
+    OverwriteVector<std::int16_t> small_x(small_count), small_y(small_count);
     for (std::size_t i = 0; i < grid.values.size(); ++i) {
       const auto vector = grid.values[i].vector;
       small_x[i] = dense_detail::small_component(vector.x, ratio_x_);
       small_y[i] = dense_detail::small_component(std::int64_t(vector.y) + field_shift, ratio_y_);
     }
-    DenseFlowField output{geometry_.width, geometry_.height, std::vector<std::int16_t>(output_count),
-                          std::vector<std::int16_t>(output_count)};
+    DenseFlowField output;
+    output.width = geometry_.width;
+    output.height = geometry_.height;
+    output.x.resize(output_count);
+    output.y.resize(output_count);
     const auto x_input =
         dense_detail::plane(static_cast<const std::int16_t*>(small_x.data()), m.blocks_x, m.blocks_y, small_x.size());
     const auto y_input =

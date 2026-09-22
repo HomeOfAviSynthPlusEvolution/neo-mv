@@ -37,8 +37,8 @@ AnalysisMetadata metadata(int delta = 1, int bits = 8) {
 MotionGrid motion(int x0, int x1, int y = 0) {
   return {2, 1, {{{x0, y}, 0}, {{x1, y}, 0}}};
 }
-template <class T>
-void rows(const std::vector<T>& pixels, int width, int height, std::initializer_list<int> expected) {
+template <class T, class Allocator>
+void rows(const std::vector<T, Allocator>& pixels, int width, int height, std::initializer_list<int> expected) {
   CHECK(expected.size() == static_cast<std::size_t>(width));
   CHECK(pixels.size() == static_cast<std::size_t>(width) * height);
   for (int y = 0; y < height; ++y)

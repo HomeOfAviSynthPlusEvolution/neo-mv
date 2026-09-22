@@ -9,7 +9,7 @@ struct DenseInterpolationFields {
   int width, height;
   DenseFlowField B, F;
   std::optional<DenseFlowField> BB, FF;
-  std::vector<std::uint8_t> mB, mF;
+  OverwriteVector<std::uint8_t> mB, mF;
 };
 using DenseInterpolationField = DenseInterpolationFields;
 
@@ -42,11 +42,11 @@ class DenseInterpolationPlan {
     for (std::size_t i = 0; i < grid.values.size(); ++i)
       field_detail::vector(m, grid.values[i], static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
   }
-  std::vector<std::uint8_t> mask(const MotionGrid& grid, std::size_t direction, int time256) const {
+  OverwriteVector<std::uint8_t> mask(const MotionGrid& grid, std::size_t direction, int time256) const {
     const auto small = OcclusionMaskPlan<std::uint8_t>(mask_metadata(metadata_[direction]), f_, 1, time256)
                            .template generate<true>(grid);
     const auto& g = backward_.geometry();
-    std::vector<std::uint8_t> output(dense_detail::count(g.width, g.height));
+    OverwriteVector<std::uint8_t> output(dense_detail::count(g.width, g.height));
     masks_.template resize<std::uint8_t, true>(dense_detail::plane(small.data(), g.blocks_x, g.blocks_y, small.size()),
                                                dense_detail::plane(output.data(), g.width, g.height, output.size()), 8);
     return output;

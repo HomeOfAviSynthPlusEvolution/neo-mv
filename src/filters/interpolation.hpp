@@ -161,31 +161,25 @@ public:
   }
   void process(ds::VideoProcessContext& ctx, const TemporalRequest& r) const override {
     const auto visible = pixels(ctx, r.property_frame);
+    const auto destination = fresh_render_destination<T>(ctx);
     RenderOutput<T> output;
     if (!r.motion) {
       if constexpr (Kind == TemporalKind::Blur) {
-        output = plan_.copy(visible);
+        output = plan_.copy(visible, &destination);
       } else {
-        output = blend_ && !r.endpoint ? plan_.blend(visible, pixels(ctx, clamp_frame(r.right)), r.time)
-                                       : plan_.copy(visible);
+        output = blend_ && !r.endpoint ? plan_.blend(visible, pixels(ctx, clamp_frame(r.right)), r.time, &destination)
+                                       : plan_.copy(visible, &destination);
       }
     } else if constexpr (Kind == TemporalKind::Blur) {
       const auto source = frame(ctx.frames, 1, ctx.output_frame);
       const FrameSuper<T> image(source.frame, super_, prefix_);
-      output = plan_.template motion<true>(r.B, r.F, render_image(image));
+      output = plan_.template motion<true>(r.B, r.F, render_image(image), &destination);
     } else {
       const auto l = frame(ctx.frames, 1, static_cast<int>(r.left));
       const auto rr = frame(ctx.frames, 1, static_cast<int>(r.right));
       const FrameSuper<T> left(l.frame, super_, prefix_), right(rr.frame, super_, prefix_);
       output = plan_.template motion<true>(r.B, r.F, r.extra ? &r.BB : nullptr, r.extra ? &r.FF : nullptr,
-                                           render_image(left), render_image(right), r.time);
-    }
-    for (int k = 0; k < clip_.format.plane_count; ++k) {
-      const auto src = output[k].view();
-      auto dst = plane<T>(ctx.dst.plane(k));
-      require(dst.width() == src.width() && dst.height() == src.height(), "temporal output storage mismatch");
-      for (int y = 0; y < src.height(); ++y)
-        std::memcpy(dst.row(y).data(), src.row(y).data(), std::size_t(src.width()) * sizeof(T));
+                                           render_image(left), render_image(right), r.time, &destination);
     }
     if (rate_) {
       set_scalar(properties(ctx.dst), "_DurationNum", rate_->output_den());
