@@ -247,6 +247,14 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
     validate_sampling_frames(g, frames);
   }
   std::array<std::int64_t, 3> errors{};
+  const auto phase_quotient = [pel = g.pel](std::int64_t value) {
+    switch (pel) {
+    case 1: return value;
+    case 2: return value >= 0 ? value / 2 : -((-value + 1) / 2);
+    case 4: return value >= 0 ? value / 4 : -((-value + 3) / 4);
+    default: return sampling_detail::floor_div(value, pel);
+    }
+  };
   const auto evaluate_plane = [&](int k, int bx, int by, int bw, int bh, std::int64_t qx, std::int64_t qy,
                                   std::size_t phase) {
     const int x = g.planes[k].pad_x + bx;
@@ -265,15 +273,16 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
       errors[k] = neo_mv::simd::block_metric<T, true>(source, target, k == 0 ? metric : BlockMetric::sad);
     }
   };
-  const auto luma_x = sampling_detail::floor_div(vector.x, g.pel);
-  const auto luma_y = sampling_detail::floor_div(vector.y, g.pel);
+  const auto luma_x = phase_quotient(vector.x);
+  const auto luma_y = phase_quotient(vector.y);
   const auto luma_phase = std::size_t((vector.y - g.pel * luma_y) * g.pel + vector.x - g.pel * luma_x);
   evaluate_plane(0, b.x, b.y, b.width, b.height, luma_x, luma_y, luma_phase);
   if (g.chroma) {
-    const int bx = b.x / g.ratio_x, by = b.y / g.ratio_y;
-    const int bw = b.width / g.ratio_x, bh = b.height / g.ratio_y;
-    const auto tx = std::int64_t(vector.x) / g.ratio_x, ty = std::int64_t(vector.y) / g.ratio_y;
-    const auto qx = sampling_detail::floor_div(tx, g.pel), qy = sampling_detail::floor_div(ty, g.pel);
+    const int bx = g.ratio_x == 2 ? b.x / 2 : b.x, by = g.ratio_y == 2 ? b.y / 2 : b.y;
+    const int bw = g.ratio_x == 2 ? b.width / 2 : b.width, bh = g.ratio_y == 2 ? b.height / 2 : b.height;
+    const auto tx = g.ratio_x == 2 ? std::int64_t(vector.x) / 2 : vector.x;
+    const auto ty = g.ratio_y == 2 ? std::int64_t(vector.y) / 2 : vector.y;
+    const auto qx = phase_quotient(tx), qy = phase_quotient(ty);
     const auto phase = std::size_t((ty - g.pel * qy) * g.pel + tx - g.pel * qx);
     evaluate_plane(1, bx, by, bw, bh, qx, qy, phase);
     evaluate_plane(2, bx, by, bw, bh, qx, qy, phase);
