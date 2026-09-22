@@ -6,9 +6,11 @@
 #include "core/render/weighted_samples.hpp"
 
 namespace neo_mv {
-// Pixel policy only; admission, reference selection and weights stay in core.
+// Admission and reference-selection rules stay in core; counting and pixel
+// kernels can be selected independently of their shared orchestration.
 template <class T>
 struct ScalarRenderKernels {
+  static constexpr auto scene_count = &scalar_scene_count;
   static constexpr auto sample_render_block = &neo_mv::sample_render_block<T>;
   static constexpr auto sample_compensated_block = &neo_mv::sample_compensated_block<T>;
   static constexpr auto weighted_render_block = &neo_mv::weighted_render_block<T>;

@@ -246,6 +246,35 @@ void chroma_and_precision(int bits) {
   for (int k = 0; k < 3; ++k)
     constant(shifted, k, T(41)); // Negative odd chroma vectors use floor, not truncation.
 }
+struct CountingKernels : TestKernels<std::uint8_t> {
+  inline static int calls = 0;
+  static std::int64_t scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
+    ++calls;
+    return TestKernels<std::uint8_t>::scene_count(m, grid, threshold);
+  }
+};
+void scene_dispatch() {
+  const SuperPlan<std::uint8_t> super({8, 8, 8, 8, 0, 0, 4, 4}, 8);
+  const RenderVideo video{8, 8, 8, false, 1, 1, 3};
+  const auto a = super_analysis_metadata(super, -1), b = super_analysis_metadata(super, 1);
+  const CompensateFramePlan<std::uint8_t, CountingKernels> compensate(video, super, 3, a, 3);
+  CountingKernels::calls = 0;
+  CHECK(!compensate.reference(field(a), 0)); // Validate before temporal fallback.
+  CHECK(CountingKernels::calls == 1);
+  auto missing = field(a);
+  missing.state = FieldState::metadata_only;
+  CHECK(!compensate.reference(missing, 0));
+  CHECK(CountingKernels::calls == 1);
+  DegrainParameters p;
+  p.weights = {0, 0, 0};
+  const DegrainFramePlan<std::uint8_t, CountingKernels> degrain(video, super, 3, {a, b}, {3, 3}, p);
+  CHECK(degrain.references({field(a), field(b)}, 1).size() == 2);
+  CHECK(CountingKernels::calls == 3); // Zero weights do not bypass validation.
+  auto corrupt = field(b);
+  corrupt.grid.values.back().error = -1;
+  rejects([&] { degrain.references({field(a), corrupt}, 2); });
+  CHECK(CountingKernels::calls == 5);
+}
 } // namespace
 int main() {
   try {
@@ -254,6 +283,7 @@ int main() {
     compensation<float>(32);
     admission_and_fields();
     degrain();
+    scene_dispatch();
     chroma_and_precision<std::uint8_t>(8);
     chroma_and_precision<std::uint16_t>(16);
     chroma_and_precision<float>(32);

@@ -141,7 +141,7 @@ public:
   }
   void validate_current(const RenderImage<T>& current) const { grid_.validate_image(current); }
   std::optional<std::int64_t> reference(const AnalysisField& field, std::int64_t n) const {
-    return availability_(field, n);
+    return availability_(field, n, Kernels::scene_count);
   }
   RenderOutput<T> render(std::int64_t n, const AnalysisField& field, const RenderPixels<T>& clip,
                          const RenderImage<T>& current, const RenderImage<T>* reference_image,
@@ -219,7 +219,7 @@ public:
       throw std::invalid_argument("Degrain field count mismatch");
     std::vector<std::optional<std::int64_t>> result;
     for (std::size_t i = 0; i < fields.size(); ++i)
-      result.push_back(availability_[i](fields[i], n));
+      result.push_back(availability_[i](fields[i], n, Kernels::scene_count));
     return result;
   }
   RenderOutput<T> render(std::int64_t n, const std::vector<AnalysisField>& fields, const RenderPixels<T>& clip,

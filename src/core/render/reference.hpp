@@ -109,7 +109,8 @@ public:
 
   // An engaged result is the exact reference index, including n when d=0.
   // All checks precede temporal fallback. No reference image is accessed here.
-  std::optional<std::int64_t> operator()(const AnalysisField& field, std::int64_t n) const {
+  std::optional<std::int64_t> operator()(const AnalysisField& field, std::int64_t n,
+                                         SceneClassifier::Counter count = scalar_scene_count) const {
     if (n < 0 || n >= frames_)
       throw std::invalid_argument("render frame index outside clip");
     if (field.state == FieldState::invalid_metadata)
@@ -118,7 +119,7 @@ public:
       throw std::invalid_argument("render analysis metadata changed");
     // SceneClassifier validates all complete entries, including those after a
     // scene cut has already been established. MetadataOnly remains unavailable.
-    const bool changed = scene_(field) != 0;
+    const bool changed = scene_(field, count) != 0;
     if (field.state == FieldState::metadata_only)
       return std::nullopt;
     if (saved_.delta > 0 && n > INT64_MAX - saved_.delta)

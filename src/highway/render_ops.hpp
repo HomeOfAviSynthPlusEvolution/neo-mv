@@ -1,6 +1,7 @@
 #pragma once
 #include "highway/render.hpp"
 #include "highway/render_rows.hpp"
+#include "highway/scene.hpp"
 #include "core/render/weighted_samples.hpp"
 #include "core/render/change_limit.hpp"
 #include "core/render/overlap.hpp"
@@ -145,6 +146,7 @@ void sample_compensated_block(const CompensationRule& rule, const RenderPhaseGeo
 namespace neo_mv {
 template <class T>
 struct HighwayRenderKernels {
+  static constexpr auto scene_count = &simd::scene_count;
   static constexpr auto sample_render_block = &simd::sample_render_block<T>;
   static constexpr auto sample_compensated_block = &simd::sample_compensated_block<T>;
   static constexpr auto weighted_render_block = &simd::weighted_render_block<T>;
