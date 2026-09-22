@@ -117,7 +117,7 @@ struct AnalyseRuntime final : Runtime {
   SuperPlan<T> plan;
   AnalyseControls controls;
   AnalysisMetadata metadata;
-  std::vector<SamplingGeometry> geometry;
+  std::vector<AnalysisLayer> layers;
   std::optional<bool> tff;
   AnalyseRuntime(ds::VideoInitContext& ctx, const FrameSuper<T>& first)
       : Runtime(ctx.inputs[0]), prefix(Params{*ctx.params}.prefix()), plan(first.plan) {
@@ -127,8 +127,8 @@ struct AnalyseRuntime final : Runtime {
     tff = args.tff();
     metadata = super_analysis_metadata(plan, args.integer("delta", 1), chroma);
     target_axes(metadata, args);
-    geometry = super_sampling_geometry(plan, chroma);
-    metadata = plan_analysis(metadata, geometry, controls).front().metadata;
+    layers = plan_analysis(metadata, super_sampling_geometry(plan, chroma), controls);
+    metadata = layers.front().metadata;
   }
   void request(ds::VideoRequestContext& ctx) const override {
     ctx.request_frame(0, ctx.output_frame);
@@ -156,7 +156,7 @@ struct AnalyseRuntime final : Runtime {
         if (top != other_top)
           shift = top ? metadata.pel / 2 : -metadata.pel / 2;
       }
-      field.grid = analyse_vectors<T, Kernels>(metadata, geometry, frames, controls, shift);
+      field.grid = analyse_vectors_planned<T, Kernels>(layers, frames, controls, shift);
       field.state = FieldState::complete;
     }
     write_field(properties(ctx.dst), field, prefix);
@@ -228,7 +228,7 @@ struct RecalculateRuntime final : Runtime {
     }
     auto borrowed = sample_frames(current, ref, target.chroma);
     AnalysisField output{target, FieldState::complete,
-                         recalculate_vectors<T, Kernels>(input, target, geometry, borrowed.front(), controls)};
+                         recalculate_vectors<T, Kernels, true>(input, target, geometry, borrowed.front(), controls)};
     write_field(properties(ctx.dst), output, prefix);
   }
 };

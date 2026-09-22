@@ -55,8 +55,9 @@ inline MotionVector map(const AnalysisField& old, const AnalysisMetadata& target
 
 // target metadata describes the new Super, not the vector carrier. Call the
 // geometry-only validate_motion_layer at plugin creation as well; this frame
-// entry point rechecks it before any mapping or metric evaluation.
-template <class T, class Kernels = ScalarKernels<T>>
+// entry point rechecks it before any mapping or metric evaluation unless the
+// caller retains the unchanged creation-time target and geometry.
+template <class T, class Kernels = ScalarKernels<T>, bool GeometryValidated = false>
 MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata& target,
                                const SamplingGeometry& geometry, const SamplingFrames<T>& frames,
                                RecalculateControls controls = {}) {
@@ -66,7 +67,8 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       controls.pnew < 0 || controls.pnew > 256 ||
       (controls.satd && (target.block_width % 4 || target.block_height % 4)))
     throw std::invalid_argument("invalid Recalculate controls or input precision");
-  validate_motion_layer(target, geometry, true);
+  if constexpr (!GeometryValidated)
+    validate_motion_layer(target, geometry, true);
   validate_sampling_frames(geometry, frames);
   const auto lambda0 =
       scale_precision(scale_area(controls.mvlambda, target.block_width, target.block_height), target.bits);

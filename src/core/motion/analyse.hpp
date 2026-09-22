@@ -189,11 +189,16 @@ SearchResult block(MotionTriple predictor, const SpatialPredictors& spatial, Mot
 }
 } // namespace analyse_detail
 
+// Internal path: layers must be the unchanged result of plan_analysis for
+// these controls. Borrowed frame storage and per-request field shifts remain
+// validated below; callers may reuse the immutable creation-time geometry.
 template <class T, class Kernels = ScalarKernels<T>>
-MotionGrid analyse_vectors(AnalysisMetadata finest, const std::vector<SamplingGeometry>& geometries,
-                           const std::vector<SamplingFrames<T>>& frames, AnalyseControls controls = {},
-                           int field_shift = 0) {
-  const auto layers = plan_analysis(finest, geometries, controls);
+MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
+                                   const std::vector<SamplingFrames<T>>& frames, AnalyseControls controls,
+                                   int field_shift = 0) {
+  if (layers.empty())
+    throw std::invalid_argument("missing analysis plan layers");
+  const auto& finest = layers.front().metadata;
   validate_analysis_precision<T>(finest.bits);
   if (frames.size() < layers.size())
     throw std::invalid_argument("missing analysis frame levels");
@@ -254,6 +259,14 @@ MotionGrid analyse_vectors(AnalysisMetadata finest, const std::vector<SamplingGe
     parent_pel = m.pel;
   }
   return parent;
+}
+
+template <class T, class Kernels = ScalarKernels<T>>
+MotionGrid analyse_vectors(AnalysisMetadata finest, const std::vector<SamplingGeometry>& geometries,
+                           const std::vector<SamplingFrames<T>>& frames, AnalyseControls controls = {},
+                           int field_shift = 0) {
+  return analyse_vectors_planned<T, Kernels>(plan_analysis(finest, geometries, controls), frames, controls,
+                                             field_shift);
 }
 
 } // namespace neo_mv
