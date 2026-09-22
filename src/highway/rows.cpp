@@ -14,7 +14,7 @@ std::int64_t Target() {
   return HWY_TARGET;
 }
 template <class T> using Wide = std::conditional_t<std::is_same_v<T, float>, float, std::int32_t>;
-template <class D, class V> void finite(D d, V v) {
+template <class D, class V> HWY_INLINE void finite(D d, V v) {
   if constexpr (std::is_same_v<hn::TFromD<D>, float>)
     if (!hn::AllTrue(d, hn::IsFinite(v)))
       throw std::invalid_argument("non-finite SIMD sample/intermediate");
@@ -85,7 +85,7 @@ template <class T, class D> auto LoadWide(D d, const T *p, int step) {
   else
     return hn::PromoteTo(d, v);
 }
-template <class D, class V> auto Calculate(D d, V a, V b, V c, V e, V f, V g, Formula op, std::int64_t maximum) {
+template <class D, class V> HWY_INLINE auto Calculate(D d, V a, V b, V c, V e, V f, V g, Formula op, std::int64_t maximum) {
   using A = hn::TFromD<D>;
   auto v = a;
   int shift = 1;
@@ -133,7 +133,7 @@ template <class D, class V> auto Calculate(D d, V a, V b, V c, V e, V f, V g, Fo
                    hn::Set(d, static_cast<A>(maximum)));
 }
 template <class T, class D>
-void FormulaChunk(D d, const T *const *p, int step, T *out, Formula op, std::int64_t maximum) {
+HWY_INLINE void FormulaChunk(D d, const T *const *p, int step, T *out, Formula op, std::int64_t maximum) {
   const hn::Rebind<T, D> narrow;
   auto a = LoadWide(d, p[0], step), b = LoadWide(d, p[1], step), c = hn::Zero(d), e = c, f = c, g = c;
   if (op != Formula::average) {
@@ -150,7 +150,9 @@ void FormulaChunk(D d, const T *const *p, int step, T *out, Formula op, std::int
   else
     hn::StoreU(hn::DemoteTo(narrow, v), narrow, out);
 }
-template <class T> void FormulaRow(const T *const *p, int step, T *out, int count, Formula op, std::int64_t maximum) {
+template <Formula Op, class T>
+void FormulaRowKnown(const T *const *p, int step, T *out, int count, std::int64_t maximum) {
+  constexpr auto op = Op;
   const hn::ScalableTag<Wide<T>> d;
   const int n = int(hn::Lanes(d));
   int x = 0;
@@ -168,6 +170,24 @@ template <class T> void FormulaRow(const T *const *p, int step, T *out, int coun
     FormulaChunk(one, taps, 1, out + x, op, maximum);
   }
 }
+template <class T>
+void FormulaRow(const T *const *p, int step, T *out, int count, Formula op, std::int64_t maximum) {
+  // Select once per row so tap count, coefficients and shifts are constants
+  // throughout the vector loop, including its scalar tail.
+  switch (op) {
+#define NEO_FORMULA_CASE(NAME) \
+  case Formula::NAME: FormulaRowKnown<Formula::NAME>(p, step, out, count, maximum); return;
+    NEO_FORMULA_CASE(average)
+    NEO_FORMULA_CASE(four_average)
+    NEO_FORMULA_CASE(reduce4)
+    NEO_FORMULA_CASE(reduce6)
+    NEO_FORMULA_CASE(sharp4h)
+    NEO_FORMULA_CASE(sharp4v)
+    NEO_FORMULA_CASE(sharp6)
+#undef NEO_FORMULA_CASE
+  }
+}
+
 template <class V> void Hadamard(V &a, V &b, V &c, V &d) {
   const auto ab = hn::Add(a, b), cd = hn::Add(c, d), am = hn::Sub(a, b), cm = hn::Sub(c, d);
   a = hn::Add(ab, cd);
