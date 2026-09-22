@@ -30,7 +30,20 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
   const auto time = hn::Set(d32, plan.time_coefficient());
   const auto half = hn::Set(d32, rounding == PhaseRounding::nearest ? 128 : 0);
   const auto fraction = hn::Set(d, g.pel - 1), zero = hn::Zero(d);
+  std::array<const std::byte*, 16> source_planes{};
+  std::array<std::ptrdiff_t, 16> source_strides{};
+  std::byte* output_base = nullptr;
+  std::ptrdiff_t output_stride = 0;
+  std::size_t pixel_stride = 0;
+  if (storage) {
+    source_planes = storage->planes;
+    source_strides = storage->strides;
+    output_base = storage->output;
+    output_stride = storage->output_stride;
+    pixel_stride = storage->output_pixel_stride;
+  }
   for (int y = first_row; y < (row_count < 0 ? plan.height() : first_row + row_count); ++y) {
+    auto* output_row = storage ? output_base + std::ptrdiff_t(y - first_row) * output_stride : nullptr;
     for (int x = 0; x < plan.width();) {
       const int used = std::min(lanes, plan.width() - x);
       const auto index = std::size_t(y) * plan.width() + x;
@@ -85,9 +98,8 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
         hn::Store(phase, d, phases);
         for (int i = 0; i < used; ++i) {
           const auto a = static_cast<std::size_t>(phases[i]);
-          const auto* source = storage->planes[a] + rows[i] * storage->strides[a] + columns[i] * Bytes;
-          auto* output = storage->output + std::ptrdiff_t(y - first_row) * storage->output_stride +
-                         std::size_t(x + i) * storage->output_pixel_stride;
+          const auto* source = source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
+          auto* output = output_row + std::size_t(x + i) * pixel_stride;
           std::memcpy(output, source, Bytes);
         }
       }
