@@ -12,6 +12,7 @@ struct InterpolationSamples {
 // One visible plane. The frame caller preflights every plane before asking
 // any plane to sample, so a late invalid coordinate cannot expose pixels.
 class InterpolationSamplingPlan {
+protected:
   FlowSamplingPlan left_, right_;
   int time_, bits_;
   struct Location {

@@ -82,7 +82,7 @@ public:
     this->input_.validate_image(right);
     using DenseResult = decltype(dense_[0].generate(B.grid, F.grid, time));
     std::vector<DenseResult> fields;
-    std::vector<InterpolationSamplingPlan> plans;
+    std::vector<typename Kernels::Sampling> plans;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
       fields.push_back(dense_[k].generate(B.grid, F.grid, time, BB ? &BB->grid : nullptr, FF ? &FF->grid : nullptr));
       const auto g = this->input_.phase_geometry(k);

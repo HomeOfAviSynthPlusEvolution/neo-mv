@@ -1,11 +1,21 @@
 #include "core/interpolation/sampling.hpp"
 #include "core/super/pyramid.hpp"
+#if NEO_MV_TEST_HIGHWAY
+#include "highway/interpolation_sampling.hpp"
+#include "hwy/targets.h"
+#endif
 
 #include <iostream>
 #include <limits>
 
 namespace {
 using namespace neo_mv;
+using TestPlan =
+#if NEO_MV_TEST_HIGHWAY
+    simd::InterpolationSamplingPlan;
+#else
+    InterpolationSamplingPlan;
+#endif
 void check(bool condition, int line) {
   if (!condition)
     throw std::runtime_error("interpolation sampling assertion at " + std::to_string(line));
@@ -57,7 +67,7 @@ void direction_and_extra() {
   auto B = field(2, 2), F = B, BB = B, FF = B;
   F.x[0] = -1;
   B.y[0] = -1;
-  InterpolationSamplingPlan plan(left.geometry, right.geometry, 2, 2, 128, 16);
+  TestPlan plan(left.geometry, right.geometry, 2, 2, 128, 16);
   const auto basic = plan.sample(left.view(), right.view(), B, F);
   CHECK(basic.size() == 4);
   CHECK(basic[0].A == left.at(1, 1, 2));
@@ -75,7 +85,7 @@ void direction_and_extra() {
   auto chroma = left.geometry;
   chroma.ratio_x = chroma.ratio_y = 2;
   const auto mapped =
-      InterpolationSamplingPlan(chroma, right.geometry, 2, 2, 128, 16).sample(left.view(), right.view(), B, F);
+      TestPlan(chroma, right.geometry, 2, 2, 128, 16).sample(left.view(), right.view(), B, F);
   CHECK(mapped[0].A == basic[0].A && mapped[0].C == basic[0].C);
 }
 void displacement_boundaries() {
@@ -96,7 +106,7 @@ void displacement_boundaries() {
           while ((integer + 1) * pel <= displacement)
             ++integer;
           const int fraction = displacement - integer * pel;
-          const auto sampled = InterpolationSamplingPlan(image.geometry, image.geometry, 1, 1, time, 16)
+          const auto sampled = TestPlan(image.geometry, image.geometry, 1, 1, time, 16)
                                    .sample(image.view(), image.view(), B, F);
           CHECK(sampled[0].A == image.at(vertical ? fraction * pel : fraction, 5 + (vertical ? 0 : integer),
                                          5 + (vertical ? integer : 0)));
@@ -105,15 +115,15 @@ void displacement_boundaries() {
   Image<std::uint16_t> small(1, 1, 1, 2), enough(1, 1, 2, 2);
   auto B = field(1, 1), F = B;
   F.x[0] = -3;
-  rejects([&] { InterpolationSamplingPlan(small.geometry, small.geometry, 1, 1, 256, 16).preflight(B, F); });
-  const auto valid = InterpolationSamplingPlan(enough.geometry, enough.geometry, 1, 1, 256, 16)
+  rejects([&] { TestPlan(small.geometry, small.geometry, 1, 1, 256, 16).preflight(B, F); });
+  const auto valid = TestPlan(enough.geometry, enough.geometry, 1, 1, 256, 16)
                          .sample(enough.view(), enough.view(), B, F);
   CHECK(valid[0].A == enough.at(1, 0, 2));
 }
 void required_positions() {
   Image<std::uint16_t> image(2, 1, 1, 2);
   auto B = field(2, 1), F = B, BB = B, FF = B;
-  InterpolationSamplingPlan plan(image.geometry, image.geometry, 2, 1, 0, 16);
+  TestPlan plan(image.geometry, image.geometry, 2, 1, 0, 16);
   F.x[0] = FF.x[0] = INT16_MIN; // Zero-time left coordinates are still valid.
   B.x[1] = INT16_MAX;
   rejects([&] { plan.preflight(B, F); });
@@ -129,22 +139,22 @@ void required_positions() {
   auto bad = image.view();
   bad.planes[3] = {};
   rejects([&] { plan.sample(bad, image.view(), B, F); });
-  rejects([&] { InterpolationSamplingPlan(image.geometry, image.geometry, 2, 1, -1, 16); });
-  rejects([&] { InterpolationSamplingPlan(image.geometry, image.geometry, 2, 1, 257, 16); });
+  rejects([&] { TestPlan(image.geometry, image.geometry, 2, 1, -1, 16); });
+  rejects([&] { TestPlan(image.geometry, image.geometry, 2, 1, 257, 16); });
 
   Image<std::uint16_t> quarter(1, 1, 1, 4, 10, true), external(1, 1, 1, 4);
   B = field(1, 1);
   F = B;
   F.x[0] = 7;
-  rejects([&] { InterpolationSamplingPlan(quarter.geometry, quarter.geometry, 1, 1, 256, 16).preflight(B, F); });
-  const auto valid = InterpolationSamplingPlan(external.geometry, external.geometry, 1, 1, 256, 16)
+  rejects([&] { TestPlan(quarter.geometry, quarter.geometry, 1, 1, 256, 16).preflight(B, F); });
+  const auto valid = TestPlan(external.geometry, external.geometry, 1, 1, 256, 16)
                          .sample(external.view(), external.view(), B, F);
   CHECK(valid[0].A == external.at(3, 2, 1));
 }
 void numeric_inputs_and_preflight() {
   Image<float> left(2, 1, 1, 1), right(2, 1, 1, 1, 1000);
   auto B = field(2, 1), F = B;
-  InterpolationSamplingPlan plan(left.geometry, right.geometry, 2, 1, 0, 32);
+  TestPlan plan(left.geometry, right.geometry, 2, 1, 0, 32);
   left.storage[0].view().row(1)[1] = std::numeric_limits<float>::quiet_NaN();
   B.x[1] = INT16_MAX;
   // The later coordinate must fail before reading the earlier NaN sample.
@@ -158,17 +168,62 @@ void numeric_inputs_and_preflight() {
   auto zero = field(1, 1);
   integer.storage[0].view().row(1)[1] = 1024;
   rejects([&] {
-    InterpolationSamplingPlan(integer.geometry, integer.geometry, 1, 1, 0, 10)
+    TestPlan(integer.geometry, integer.geometry, 1, 1, 0, 10)
         .sample(integer.view(), integer.view(), zero, zero);
   });
 }
+#if NEO_MV_TEST_HIGHWAY
+template <class T>
+void vector_boundaries(int bits) {
+  for (int width : {1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65})
+    for (int pel : {1, 2, 4}) {
+      Image<T> left(width, 2, 16, pel, 10, pel == 4), right(width, 2, 17, pel, 30, pel == 4);
+      auto B = field(width, 2), F = B, BB = B, FF = B;
+      int offset = 0;
+      for (auto* f : {&B, &F, &BB, &FF}) {
+        for (std::size_t i = 0; i < f->x.size(); ++i) {
+          f->x[i] = static_cast<std::int16_t>(int((i + offset) % 31) - 15);
+          f->y[i] = static_cast<std::int16_t>(15 - int((i + offset * 3) % 31));
+        }
+        ++offset;
+      }
+      for (int time = 0; time <= 256; ++time)
+        for (bool extra : {false, true}) {
+          const auto a = neo_mv::InterpolationSamplingPlan(left.geometry, right.geometry, width, 2, time, bits)
+                             .sample(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
+          const auto b = TestPlan(left.geometry, right.geometry, width, 2, time, bits)
+                             .sample(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
+          CHECK(a.size() == b.size());
+          for (std::size_t i = 0; i < a.size(); ++i)
+            for (auto member : {&InterpolationSamples<T>::A, &InterpolationSamples<T>::C,
+                                &InterpolationSamples<T>::A0, &InterpolationSamples<T>::C0,
+                                &InterpolationSamples<T>::E, &InterpolationSamples<T>::K})
+              CHECK(std::memcmp(&(a[i].*member), &(b[i].*member), sizeof(T)) == 0);
+        }
+      BB.x.back() = INT16_MIN;
+      rejects([&] { TestPlan(left.geometry, right.geometry, width, 2, 0, bits).preflight(B, F, &BB, &FF); });
+    }
+}
+#endif
 } // namespace
 int main() {
   try {
+#if NEO_MV_TEST_HIGHWAY
+    for (const auto target : hwy::SupportedAndGeneratedTargets()) {
+      hwy::SetSupportedTargetsForTest(target);
+      std::cout << "Testing " << hwy::TargetName(target) << '\n';
+      vector_boundaries<std::uint8_t>(8);
+      vector_boundaries<std::uint16_t>(16);
+      vector_boundaries<float>(32);
+#endif
     direction_and_extra();
     displacement_boundaries();
     required_positions();
     numeric_inputs_and_preflight();
+#if NEO_MV_TEST_HIGHWAY
+    }
+    hwy::SetSupportedTargetsForTest(0);
+#endif
     std::cout << "Interpolation sampling specifications passed\n";
     return 0;
   } catch (const std::exception& error) {

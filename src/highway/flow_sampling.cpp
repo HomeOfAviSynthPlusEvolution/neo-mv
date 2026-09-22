@@ -9,7 +9,7 @@ namespace neo_mv::simd {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 template <std::size_t Bytes>
-void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage) {
+void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage, PhaseRounding rounding) {
   const auto& g = plan.geometry();
   const hn::ScalableTag<std::int64_t> d;
   const int lanes = static_cast<int>(hn::Lanes(d));
@@ -21,7 +21,7 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
     heights[a] = g.phases[a].height;
   }
   const int shift = g.pel == 4 ? 2 : g.pel == 2 ? 1 : 0;
-  const auto time = hn::Set(d, plan.time_coefficient()), half = hn::Set(d, 128);
+  const auto time = hn::Set(d, plan.time_coefficient()), half = hn::Set(d, rounding == PhaseRounding::nearest ? 128 : 0);
   const auto fraction = hn::Set(d, g.pel - 1), zero = hn::Zero(d);
   for (int y = 0; y < plan.height(); ++y) {
     for (int x = 0; x < plan.width();) {
@@ -50,7 +50,7 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
           const auto a = static_cast<std::size_t>(phases[i]);
           const auto* source = storage->planes[a] + rows[i] * storage->strides[a] + columns[i] * Bytes;
           auto* output = storage->output + std::ptrdiff_t(y) * storage->output_stride +
-                         std::size_t(x + i) * Bytes;
+                         std::size_t(x + i) * storage->output_pixel_stride;
           std::memcpy(output, source, Bytes);
         }
       }
@@ -58,14 +58,14 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
     }
   }
 }
-void FlowSample8(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage) {
-  FlowSample<1>(plan, field, storage);
+void FlowSample8(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage, PhaseRounding rounding) {
+  FlowSample<1>(plan, field, storage, rounding);
 }
-void FlowSample16(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage) {
-  FlowSample<2>(plan, field, storage);
+void FlowSample16(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage, PhaseRounding rounding) {
+  FlowSample<2>(plan, field, storage, rounding);
 }
-void FlowSample32(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage) {
-  FlowSample<4>(plan, field, storage);
+void FlowSample32(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage, PhaseRounding rounding) {
+  FlowSample<4>(plan, field, storage, rounding);
 }
 } // namespace HWY_NAMESPACE
 } // namespace neo_mv::simd
@@ -75,13 +75,13 @@ namespace neo_mv::simd {
 HWY_EXPORT(FlowSample8);
 HWY_EXPORT(FlowSample16);
 HWY_EXPORT(FlowSample32);
-void flow_sample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage) {
+void flow_sample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage, PhaseRounding rounding) {
   if (!storage || storage->sample_bytes == 1)
-    HWY_DYNAMIC_DISPATCH(FlowSample8)(plan, field, storage);
+    HWY_DYNAMIC_DISPATCH(FlowSample8)(plan, field, storage, rounding);
   else if (storage->sample_bytes == 2)
-    HWY_DYNAMIC_DISPATCH(FlowSample16)(plan, field, storage);
+    HWY_DYNAMIC_DISPATCH(FlowSample16)(plan, field, storage, rounding);
   else
-    HWY_DYNAMIC_DISPATCH(FlowSample32)(plan, field, storage);
+    HWY_DYNAMIC_DISPATCH(FlowSample32)(plan, field, storage, rounding);
 }
 } // namespace neo_mv::simd
 #endif

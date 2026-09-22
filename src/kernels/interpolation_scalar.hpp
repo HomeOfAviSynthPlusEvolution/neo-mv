@@ -9,6 +9,7 @@ namespace neo_mv {
 template <class T>
 struct ScalarInterpolationKernels {
   static constexpr auto scene_count = &scalar_scene_count;
+  using Sampling = InterpolationSamplingPlan;
   using Dense = DenseInterpolationPlan<>;
   using DenseFlow = DenseFlowPlan<>;
   using BlurAverage = ScalarBlurAverage;
