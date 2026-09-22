@@ -173,6 +173,25 @@ void bounds_and_window() {
   rejects([&] { window(u, 48, 48, p, c); });
 }
 void limits() {
+  // Match the finite-limit black-box fixture: first post-scene frame,
+  // 24000/1001 fps, a 20-pixel step and no nonlinear recurrence iteration.
+  for (float limit : {-10.0f, 10.0f}) {
+    Parameters fixture;
+    fixture.dxmax = limit;
+    const auto coefficients = normalize(fixture, 48, 48, 24000, 1001);
+    const auto maps = cumulative({0, 1}, coefficients, [](int) { return Motion{20, 0, 0, 1, true}; });
+    const auto smoothed = inertial(maps, coefficients);
+    const auto raw = compose(inverse(maps.back()), smoothed.back());
+    validate(raw);
+    CHECK(raw.tx == -20 && raw.ty == 0 && raw.u == 1);
+    const auto result = correction(maps, {0, 1}, 1, 2, 48, 48, fixture, coefficients);
+    if (limit < 0) {
+      CHECK(result.begin == 1 && result.map.tx == 0 && result.map.u == 1);
+    } else {
+      CHECK(result.begin == 0 && result.map.tx == -sqrt32(mul(sqrt32(200), 10)));
+      CHECK(result.map.tx < -10 && result.map.tx > -20);
+    }
+  }
   Parameters p;
   p.dxmax = 10;
   auto c = normalize(p, 48, 48, 24, 1);

@@ -25,8 +25,14 @@ CASES = [
     case('scene_layers', invalid_frames=[3, 6], params=dict(prev=3, next=3)),
     case('fields', params=dict(fields=True, pixaspect=1.5)),
     case('fitlast', params=dict(fitlast=4)),
-    case('hard_limit', motion=[20.0, 0.0, 0.0, 1.0, 1], params=dict(dxmax=-10.0)),
-    case('soft_limit', motion=[20.0, 0.0, 0.0, 1.0, 1], params=dict(dxmax=10.0)),
+    # Frame 7 exercises numerical recovery, independently of the limit sign.
+    case('recovery_negative_limit', motion=[20.0, 0.0, 0.0, 1.0, 1], params=dict(dxmax=-10.0)),
+    case('recovery_positive_limit', motion=[20.0, 0.0, 0.0, 1.0, 1], params=dict(dxmax=10.0)),
+    # The first frame after the synthetic scene start has finite raw dx=-20.
+    # No recurrence step is needed: these cases isolate ordinary limiting.
+    *[case(f'finite_{kind}_limit', length=2, requests=[[0, 1], [0, 0], [0, 1]],
+           motion=[20.0, 0.0, 0.0, 1.0, 1], params=dict(dxmax=limit))
+      for kind, limit in [('hard', -10.0), ('soft', 10.0)]],
     case('rotation_zoom', motion=[0.25, -0.125, 0.1, 1.002, 1], params=dict(addzoom=True)),
     case('info', width=320, params=dict(info=True)),
     case('identity_layers', motion=[0.0, 0.0, 0.0, 1.0, 1], params=dict(prev=1, subpixel=1)),
