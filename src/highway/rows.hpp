@@ -25,7 +25,8 @@ using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t
   std::int64_t metric(const T *, std::ptrdiff_t, const T *, std::ptrdiff_t, int, int, bool);                            \
   void metric_batch(const MetricRequest<T> *, int, std::int64_t *);                                                     \
   MetricBatchFunction<T> metric_batch_function(T *);                                                                    \
-  MetricBatchFunction<T> metric_batch_420_function(T *);
+  MetricBatchFunction<T> metric_batch_420_function(T *);                                                                \
+  MetricBatchFunction<T> metric_batch_420_small_function(T *);
 NEO_DECLARE(std::uint8_t)
 NEO_DECLARE(std::uint16_t)
 NEO_DECLARE(float)

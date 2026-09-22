@@ -36,6 +36,7 @@ CASES = [
            params=dict(delta=1, search=mode, pelsearch=2, pnew=0,
                        mvlambda=0, chroma=False)) for mode in range(6)],
     case("analyse.yuv420p16.pel2", "analyse", format="YUV420P16", pel=2),
+    case("analyse.yuv420p8.pel2", "analyse", format="YUV420P8", pel=2),
     case("analyse.float.pel4", "analyse", format="YUV444PS", pel=4),
     case("many.radius2", "many", params=dict(radius=2, delta=1), members=4),
     case("recalculate.chain", "recalculate_chain", members=2),

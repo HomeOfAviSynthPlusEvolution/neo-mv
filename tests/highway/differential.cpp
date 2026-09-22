@@ -126,8 +126,12 @@ template <class T> void sampled_motion() {
         const auto b = simd::block_error(f.geometry, {0, 0, 8, 8}, f.frames, v, metric);
         auto prepared = simd::PreparedBlockError<T>(f.geometry, {0, 0, 8, 8}, f.frames, metric);
         const auto c = prepared(v);
+        decltype(auto) prepared_frames = HighwayKernels<T>::prepare_frames(f.geometry, f.frames);
+        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, 8, 8}, prepared_frames, metric);
+        const auto d = shared(v);
         check(a.luma == b.luma && a.chroma == b.chroma && a.raw == b.raw && a.luma == c.luma &&
-                  a.chroma == c.chroma && a.raw == c.raw,
+                  a.chroma == c.chroma && a.raw == c.raw && a.luma == d.luma && a.chroma == d.chroma &&
+                  a.raw == d.raw,
               "sampled error mismatch");
       }
     };
@@ -156,6 +160,17 @@ template <class T> void sampled_motion() {
         same_grid(recalculate_vectors(f.old_field(), f.metadata, f.geometry, f.frames, r),
                   recalculate_vectors<T, HighwayKernels<T>>(f.old_field(), f.metadata, f.geometry, f.frames, r));
       }
+    if constexpr (std::is_integral_v<T>) {
+      for (int k = 0; k < 3; ++k) {
+        for (std::size_t i = 0; i < f.source[k].size(); ++i)
+          f.source[k][i] = i % 2 ? std::numeric_limits<T>::max() : T(0);
+        for (int a = 0; a < pel * pel; ++a)
+          for (std::size_t i = 0; i < f.reference[k][a].size(); ++i)
+            f.reference[k][a][i] = i % 2 ? T(0) : std::numeric_limits<T>::max();
+      }
+      same_error({0, 0});
+      same_error({-3, 3});
+    }
     if (pel == 4) {
       for (int k = 0; k < 3; ++k)
         for (int a = 0; a < 16; ++a) {
