@@ -54,19 +54,75 @@ void recurrences() {
   p.addzoom = false;
   CHECK(correction(two, {0, 1}, 1, 8, 48, 48, p, c).map.u == .5f);
   rejects([] { smooth_component(0, 0, 0, 0, 0, 1, 1, 1, 0); });
-  rejects([] { smooth_component(std::numeric_limits<float>::max(), 0, 0, 0, 0, 1, 1, 1, 1); });
-  // A finite large motion sequence can diverge before correction limiting.
-  // A negative limit must not convert that arithmetic error into a reset.
+  CHECK(!std::isfinite(smooth_component(std::numeric_limits<float>::max(), 0, 0, 0, 0, 1, 1, 1, 1)));
+  // The recurrence may diverge, but ordered correction limiting recovers
+  // either limit sign without changing the preceding finite recurrence.
   for (float limit : {10.0f, -10.0f}) {
     p = {};
     p.dxmax = limit;
     c = normalize(p, 48, 48, 24000, 1001);
     auto maps = cumulative({0, 7}, c, [](int) { return Motion{20, 0, 0, 1, true}; });
-    rejects([&] { inertial(maps, c); });
-    rejects([&] { correction(maps, {0, 7}, 7, 8, 48, 48, p, c); });
+    CHECK(!std::isfinite(inertial(maps, c).back().tx));
+    for (bool adaptive : {false, true}) {
+      for (float initial : {1.0f, 1.2f}) {
+        p.addzoom = adaptive;
+        p.initzoom = initial;
+        p.fitlast = 4;
+        const auto options = normalize(p, 48, 48, 24000, 1001);
+        const auto result = correction(maps, {0, 7}, 7, 8, 48, 48, p, options);
+        const auto expected = zoom(options.z0, options);
+        CHECK(result.begin == 7);
+        CHECK(result.map.tx == expected.tx && result.map.ty == expected.ty);
+        CHECK(result.map.u == expected.u && result.map.h == expected.h);
+        CHECK(result.map.v == expected.v && result.map.w == expected.w);
+      }
+    }
     maps.pop_back();
     CHECK(std::isfinite(inertial(maps, c).back().tx));
   }
+}
+void recovery_boundary() {
+  const float infinity = std::numeric_limits<float>::infinity();
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float largest = std::numeric_limits<float>::max();
+  CHECK(recovery::rounded(std::nextafter(0x1.ffffffp127, 0.0)) == largest);
+  CHECK(recovery::rounded(0x1.ffffffp127) == infinity);
+  CHECK(recovery::rounded(-0x1.ffffffp127) == -infinity);
+  CHECK(std::signbit(recovery::rounded(-0.0)));
+  CHECK(std::isnan(recovery::mul(0, infinity)));
+  CHECK(std::isnan(recovery::div(nan, 0)));
+  rejects([] { recovery::div(1, 0); });
+  rejects([&] { mul(largest, 2); }); // Shared arithmetic remains strict.
+  rejects([&] { compose({infinity, 0, 1, 0, 0, 1}, {}); });
+  Parameters p;
+  p.initzoom = 1.25f;
+  auto c = normalize(p, 48, 48, 24, 1);
+  for (float limit : {-10.0f, 0.0f, 10.0f}) {
+    p.dxmax = limit;
+    for (float invalid : {infinity, -infinity, nan}) {
+      auto result = limit_correction({invalid, 0, 1, 0, 0, 1}, 4, 10, 0, p, c);
+      CHECK(result.begin == 4 && result.map.u == c.z0);
+      result = limit_correction({0, invalid, 1, 0, 0, 1}, 4, 10, 0, p, c);
+      CHECK(result.begin == 4 && result.map.u == c.z0);
+    }
+  }
+  // An earlier hard reset consumes the later invalid component. An earlier
+  // finite soft-limit overflow must still report an error, not recover.
+  p.dxmax = -10;
+  CHECK(limit_correction({20, nan, 1, 0, 0, 1}, 4, 10, 0, p, c).begin == 4);
+  p.dxmax = largest / 2;
+  rejects([&] { limit_correction({largest, nan, 1, 0, 0, 1}, 4, 10, 0, p, c); });
+  rejects([&] { limit_correction({0, 0, 0, 0, 0, 0}, 4, 10, 0, p, c); });
+  p = {};
+  p.dxmax = 10;
+  c = normalize(p, 48, 48, 24000, 1001);
+  auto maps = cumulative({0, 7}, c, [](int) { return Motion{20, 0, 0, 1, true}; });
+  p.addzoom = true;
+  p.tzoom = 0;
+  rejects([&] { correction(maps, {0, 7}, 7, 8, 48, 48, p, c); });
+  p.tzoom = 3;
+  maps.back().u = 0; // Required inverse stays checked despite divergence.
+  rejects([&] { correction(maps, {0, 7}, 7, 8, 48, 48, p, c); });
 }
 void bounds_and_window() {
   Parameters p;
@@ -151,6 +207,7 @@ void limits() {
 int main() {
   try {
     recurrences();
+    recovery_boundary();
     bounds_and_window();
     limits();
   } catch (const std::exception& e) {

@@ -1,9 +1,13 @@
 #pragma once
-#include "core/depan/stabilise_motion.hpp"
+#include "core/depan/stabilise_recovery.hpp"
 
 namespace neo_mv::depan::stabilise {
 inline float smooth_component(float b, float previous, float u, float u1, float u2, float alpha, float beta,
                               float kappa, float f) {
+  using recovery::add;
+  using recovery::sub;
+  using recovery::mul;
+  using recovery::div;
   const float a = sub(mul(2, b), previous);
   const float e = add(sub(sub(b, previous), u1), u2), d = sub(b, u1);
   const float nonlinear = div(mul(.5f, kappa), f);
@@ -13,6 +17,8 @@ inline float smooth_component(float b, float previous, float u, float u1, float 
   return sub(sub(a, mul(mul(mul(mul(alpha, f), .5f), ec), add(1, mul(mul(nonlinear, .5f), std::abs(ec))))), restoring);
 }
 inline std::vector<Transform> inertial(const std::vector<Transform>& cumulative, const Coefficients& c) {
+  using recovery::add;
+  using recovery::mul;
   if (cumulative.size() < 2)
     throw std::invalid_argument("DepanStabilise inertial interval is too short");
   std::vector<Transform> result(cumulative.size());
@@ -31,8 +37,14 @@ inline std::vector<Transform> inertial(const std::vector<Transform>& cumulative,
   }
   return result;
 }
+template <bool Recover = false>
 inline float zoom_bound(Transform t, int width, int height, const Coefficients& c) {
-  validate(t);
+  if constexpr (!Recover)
+    validate(t);
+  constexpr auto add = Recover ? recovery::add : depan::add;
+  constexpr auto sub = Recover ? recovery::sub : depan::sub;
+  constexpr auto mul = Recover ? recovery::mul : depan::mul;
+  constexpr auto div = Recover ? recovery::div : depan::div;
   float bound = finite(c.z0);
   auto include = [&](float v) {
     if (v < bound)
@@ -45,6 +57,9 @@ inline float zoom_bound(Transform t, int width, int height, const Coefficients& 
   return bound;
 }
 inline float smooth_zoom(float b, float previous, float a, float a1, float a2, float zf, const Coefficients& c) {
+  using recovery::add;
+  using recovery::sub;
+  using recovery::mul;
   const float h = sub(mul(2, b), previous), e = add(sub(sub(b, previous), a1), a2), d = sub(b, a1);
   auto trial = [&](float factor) {
     const float restoring = mul(mul(mul(mul(mul(factor, factor), c.cq), c.f), c.f), d);
@@ -64,9 +79,9 @@ inline Transform inertial_zoom(const std::vector<Transform>& cumulative, const s
   float a2 = c.z0, a1 = c.z0, s2 = c.z0, s1 = c.z0;
   Transform result;
   for (std::size_t j = 2; j < cumulative.size(); ++j) {
-    const float a = zoom_bound(compose(inverse(cumulative[j]), smoothed[j]), width, height, c);
+    const float a = zoom_bound<true>(recovery::compose(inverse(cumulative[j]), smoothed[j]), width, height, c);
     const float s = smooth_zoom(s1, s2, a, a1, a2, div(1, mul(p.cutoff, p.tzoom)), c);
-    result = compose(smoothed[j], zoom(s, c));
+    result = recovery::compose(smoothed[j], recovery::zoom(s, c));
     a2 = a1;
     a1 = a;
     s2 = s1;
@@ -123,19 +138,23 @@ struct Correction {
 inline Correction limit_correction(Transform raw, int n, int frames, int begin, const Parameters& p,
                                    const Coefficients& c) {
   frame_valid(n, frames);
-  Motion m = motion(raw, c.aspect, c.cx, c.cy, true);
+  Motion m = recovery::motion(raw, c);
   if (std::int64_t(frames) < std::int64_t(p.fitlast) + n + 1) {
     const float e = div(f32(frames - n - 1), f32(p.fitlast));
-    m.dx = mul(m.dx, e);
-    m.dy = mul(m.dy, e);
-    m.rotation = mul(m.rotation, e);
-    m.zoom = add(c.z0, mul(sub(m.zoom, c.z0), e));
+    m.dx = recovery::mul(m.dx, e);
+    m.dy = recovery::mul(m.dy, e);
+    m.rotation = recovery::mul(m.rotation, e);
+    m.zoom = recovery::add(c.z0, recovery::mul(recovery::sub(m.zoom, c.z0), e));
   }
   auto reset = [&] {
     m = {0, 0, 0, c.z0, true};
     begin = n;
   };
   auto translation = [&](float& v, float limit) {
+    if (!std::isfinite(v)) {
+      reset();
+      return;
+    }
     if (std::abs(v) > std::abs(limit)) {
       if (limit < 0) {
         reset();
@@ -153,7 +172,9 @@ inline Correction limit_correction(Transform raw, int n, int frames, int begin, 
   };
   translation(m.dx, p.dxmax);
   translation(m.dy, p.dymax);
-  if (std::abs(sub(m.zoom, 1)) > sub(std::abs(c.zoom_limit), 1)) {
+  if (!std::isfinite(m.zoom))
+    reset();
+  else if (std::abs(sub(m.zoom, 1)) > sub(std::abs(c.zoom_limit), 1)) {
     if (c.zoom_limit < 0)
       reset();
     else {
@@ -161,7 +182,9 @@ inline Correction limit_correction(Transform raw, int n, int frames, int begin, 
       m.zoom = m.zoom >= 1 ? add(1, delta) : sub(1, delta);
     }
   }
-  if (std::abs(m.rotation) > std::abs(p.rotmax)) {
+  if (!std::isfinite(m.rotation))
+    reset();
+  else if (std::abs(m.rotation) > std::abs(p.rotmax)) {
     if (p.rotmax < 0)
       reset();
     else
@@ -177,15 +200,16 @@ inline Correction correction(const std::vector<Transform>& cumulative, Interval 
     throw std::invalid_argument("invalid DepanStabilise correction interval");
   if (p.method == 0 && interval.begin == n)
     return {zoom(c.z0, c), n};
-  Transform s;
+  // The current inverse remains checked before recoverable arithmetic.
+  const auto current_inverse = inverse(cumulative[std::size_t(n - interval.begin)]);
   if (p.method == 0) {
     auto r = inertial(cumulative, c);
-    s = p.addzoom ? inertial_zoom(cumulative, r, width, height, p, c) : compose(r.back(), zoom(c.z0, c));
-  } else
-    s = window(cumulative, width, height, p, c);
-  const auto q = compose(inverse(cumulative[std::size_t(n - interval.begin)]), s);
-  if (p.method == 0)
-    return limit_correction(q, n, frames, interval.begin, p, c);
+    const auto s =
+        p.addzoom ? inertial_zoom(cumulative, r, width, height, p, c) : recovery::compose(r.back(), zoom(c.z0, c));
+    return limit_correction(recovery::compose(current_inverse, s), n, frames, interval.begin, p, c);
+  }
+  const auto s = window(cumulative, width, height, p, c);
+  const auto q = compose(current_inverse, s);
   return {coordinates(motion(q, c.aspect, c.cx, c.cy, true), c.aspect, c.cx, c.cy, 1, true), interval.begin};
 }
 } // namespace neo_mv::depan::stabilise

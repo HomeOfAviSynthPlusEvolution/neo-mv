@@ -139,10 +139,59 @@ def diagnostics_and_requests():
         list(executor.map(request, [(i, n) for n in [7, 0, 4, 1, 6, 2, 3, 7] for i in range(4)]))
 
 
+def numerical_recovery():
+    def pattern(n, f):
+        for plane in range(f.format.num_planes):
+            view = f[plane]
+            for y in range(view.shape[0]):
+                for x in range(view.shape[1]):
+                    view[y, x] = (17 * x + 29 * y + 13 * n + 23 * plane) % 211 + 16
+        f.props.update(TestMarker=n, DepanStabilise_info=b'inherited', Depan_goodmotion=1)
+
+    clip = edit(core.std.AssumeFPS(blank(length=12), fpsnum=24000, fpsden=1001), pattern)
+    moving = data(length=12, step=20)
+    control = data(length=12, step=20, bad=[7])  # Later motion stays valid.
+    variants = [{}, dict(initzoom=1.2), dict(addzoom=True), dict(fitlast=4),
+                dict(prev=2), dict(next=2), dict(prev=2, next=2, mirror=15, blur=3)]
+    for limit in [-10, 10]:
+        for mode in [0, 1, 2]:
+            for extra in variants:
+                args = dict(dxmax=limit, subpixel=mode, **extra)
+                recovered = mv.DepanStabilise(clip, moving, **args)
+                expected = mv.DepanStabilise(clip, control, **args)
+                with recovered.get_frame(7) as f, expected.get_frame(7) as ref:
+                    assert pixels(f) == pixels(ref), args
+                    assert dict(f.props) == dict(ref.props)
+                    assert f.props.TestMarker == 7 and f.props.Depan_goodmotion == 1
+
+    args = dict(dxmax=10, prev=2, next=2, initzoom=1.2, addzoom=True, mirror=15, blur=3)
+    reference = mv.DepanStabilise(clip, moving, **args)
+    expected = [pixels(reference.get_frame(n)) for n in range(12)]
+    nodes = [mv.DepanStabilise(clip, moving, **args) for _ in range(2)]
+    def request(pair):
+        i, n = pair
+        with nodes[i].get_frame(n) as f:
+            assert pixels(f) == expected[n]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(request, [(i, n) for n in [11, 7, 0, 8, 6, 1, 9, 7, 10, 2, 5, 4, 3]
+                                   for i in range(2)]))
+
+    # Recovery must not hide required dependency errors or an independent zero divisor.
+    fails(lambda: mv.DepanStabilise(clip, data(length=12, step=20, malformed=[8]),
+                                   dxmax=10, next=2).get_frame(7))
+    fails(lambda: mv.DepanStabilise(clip, moving, dxmax=10, addzoom=True, tzoom=0).get_frame(7))
+    # Exercise the external diagnostics renderer with sufficient text width.
+    wide = core.std.AssumeFPS(blank(width=320, length=12), fpsnum=24000, fpsden=1001)
+    diagnostic = mv.DepanStabilise(wide, moving, dxmax=10, info=True, initzoom=1.2)
+    with diagnostic.get_frame(7) as f:
+        assert f.props.DepanStabilise_info.startswith('frame=7 BASE!=7 ')
+
+
 identity_and_properties()
 dependency_boundaries()
 formats_and_creation()
 diagnostics_and_requests()
+numerical_recovery()
 print('neo-mv phase-7 DepanStabilise independent VS acceptance passed')
 gc.collect()
 blank(length=1).set_output()
