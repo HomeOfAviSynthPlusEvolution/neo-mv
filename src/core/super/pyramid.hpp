@@ -156,11 +156,11 @@ public:
         if (l == 0)
           Kernels::extend_border_validated(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         else {
-          super_detail::PlaneBuffer<T> working(size.width, size.height);
+          super_detail::PlaneBuffer<T> working(size.width, size.height, overwrite);
           if (plan_.filter() == 0) {
             Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0, {});
           } else {
-            super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height);
+            super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height, overwrite);
             Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
                                               scratch.view());
           }
