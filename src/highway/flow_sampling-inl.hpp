@@ -8,6 +8,7 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
   const hn::Rebind<std::int16_t, decltype(d)> d16;
   const hn::Rebind<std::int32_t, decltype(d)> d32;
   HWY_ALIGN Lane columns[hn::MaxLanes(d)], rows[hn::MaxLanes(d)], phases[hn::MaxLanes(d)];
+  HWY_ALIGN std::int32_t offsets[hn::MaxLanes(d)], narrow_strides[16]{};
   HWY_ALIGN Lane widths[16]{}, heights[16]{};
   Lane common_width = 0, common_height = 0;
   Lane edge_width = 0, edge_height = 0;
@@ -45,6 +46,20 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
     output_base = storage->output;
     output_stride = storage->output_stride;
     pixel_stride = storage->output_pixel_stride;
+  }
+  bool narrow_offsets = false;
+  if constexpr (HasStorage && !CheckCoordinates && sizeof(Lane) == 4) {
+    narrow_offsets = true;
+    for (int a = 0; a < g.pel * g.pel; ++a) {
+      const auto stride = source_strides[a];
+      const auto last_column = std::int64_t(g.phases[a].width - 1) * Bytes;
+      if (stride <= 0 || stride > INT32_MAX || last_column > INT32_MAX ||
+          std::int64_t(g.phases[a].height - 1) > (INT32_MAX - last_column) / stride) {
+        narrow_offsets = false;
+        break;
+      }
+      narrow_strides[a] = static_cast<std::int32_t>(stride);
+    }
   }
   for (int y = first_row; y < (row_count < 0 ? plan.height() : first_row + row_count); ++y) {
     auto* output_row = HasStorage ? output_base + std::ptrdiff_t(y - first_row) * output_stride : nullptr;
@@ -97,12 +112,21 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
           throw std::invalid_argument("Flow sample exceeds its logical phase domain");
       }
       if constexpr (HasStorage) {
+        hn::Store(phase, d, phases);
         hn::Store(sx, d, columns);
         hn::Store(sy, d, rows);
-        hn::Store(phase, d, phases);
+        const bool use_offsets = narrow_offsets && used == lanes;
+        if constexpr (sizeof(Lane) == 4) {
+          if (use_offsets) {
+            const auto stride = hn::GatherIndex(d, narrow_strides, phase);
+            const auto offset = hn::Add(hn::Mul(sy, stride), hn::Mul(sx, hn::Set(d, std::int32_t(Bytes))));
+            hn::Store(offset, d, offsets);
+          }
+        }
         for (int i = 0; i < used; ++i) {
           const auto a = static_cast<std::size_t>(phases[i]);
-          const auto* source = source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
+          const auto* source = use_offsets ? source_planes[a] + offsets[i]
+                                           : source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
           auto* output = output_row + std::size_t(x + i) * pixel_stride;
           std::memcpy(output, source, Bytes);
         }
