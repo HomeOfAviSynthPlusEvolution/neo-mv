@@ -22,6 +22,14 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
     widths[a] = g.phases[a].width;
     heights[a] = g.phases[a].height;
   }
+  // Built-in quarter phases trim only the last fractional column/row.
+  // External phases may have arbitrary extents, so retain the general lookup.
+  const auto edge_width = widths[g.pel == 4 ? 3 : 0];
+  const auto edge_height = heights[g.pel == 4 ? 12 : 0];
+  bool separable = true;
+  for (int a = 0; a < g.pel * g.pel; ++a)
+    separable &= widths[a] == (a % g.pel == 3 ? edge_width : widths[0]) &&
+                 heights[a] == (a / g.pel == 3 ? edge_height : heights[0]);
   const int shift = g.pel == 4 ? 2 : g.pel == 2 ? 1 : 0;
   const auto time = hn::Set(d32, plan.time_coefficient());
   const auto half = hn::Set(d32, rounding == PhaseRounding::nearest ? 128 : 0);
@@ -38,11 +46,18 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
       // floor displacement; image coordinates and domain checks stay int64.
       const auto dx = hn::PromoteTo(d, hn::ShiftRight<8>(hn::Add(hn::Mul(hn::PromoteTo(d32, vx), time), half)));
       const auto dy = hn::PromoteTo(d, hn::ShiftRight<8>(hn::Add(hn::Mul(hn::PromoteTo(d32, vy), time), half)));
-      const auto phase = hn::Add(hn::And(dx, fraction), hn::ShiftLeftSame(hn::And(dy, fraction), shift));
+      const auto ax = hn::And(dx, fraction), ay = hn::And(dy, fraction);
+      const auto phase = hn::Add(ax, hn::ShiftLeftSame(ay, shift));
       const auto sx = hn::Add(hn::Set(d, g.pad_x), hn::Add(hn::Iota(d, x), hn::ShiftRightSame(dx, shift)));
       const auto sy = hn::Add(hn::Set(d, std::int64_t(g.pad_y) + y), hn::ShiftRightSame(dy, shift));
-      const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, hn::GatherIndex(d, widths, phase)));
-      const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, hn::GatherIndex(d, heights, phase)));
+      const auto width = separable
+                             ? hn::IfThenElse(hn::Eq(ax, hn::Set(d, 3)), hn::Set(d, edge_width), hn::Set(d, widths[0]))
+                             : hn::GatherIndex(d, widths, phase);
+      const auto height =
+          separable ? hn::IfThenElse(hn::Eq(ay, hn::Set(d, 3)), hn::Set(d, edge_height), hn::Set(d, heights[0]))
+                    : hn::GatherIndex(d, heights, phase);
+      const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, width));
+      const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, height));
       if (!hn::AllTrue(d, hn::Or(hn::Not(hn::FirstN(d, used)), hn::And(valid_x, valid_y))))
         throw std::invalid_argument("Flow sample exceeds its logical phase domain");
       if (storage) {

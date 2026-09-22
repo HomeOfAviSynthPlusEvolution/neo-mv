@@ -141,6 +141,41 @@ void admission_and_errors() {
   TestPlan(external.geometry, 1, 1, 256).sample(edge, external.view(), one);
   CHECK(pixels[0] == external.at(3, 2, 1));
 }
+void phase_extent_boundaries() {
+  // Exercise every lane and phase at both sides of its exact logical limits,
+  // including external phase layouts that cannot use the separable shortcut.
+  for (const int pel : {1, 2, 4})
+    for (const bool irregular : {false, true}) {
+      Image<std::uint8_t> image(17, 1, 2, pel, pel == 4);
+      auto geometry = image.geometry;
+      if (irregular)
+        for (int a = 1; a < pel * pel; ++a)
+          geometry.phases[a] = {20 - a % 3, 4 + a % 2};
+      for (int phase = 0; phase < pel * pel; ++phase)
+        for (int lane = 0; lane < 17; ++lane)
+          for (const bool vertical : {false, true})
+            for (const bool outside : {false, true}) {
+              auto field = dense(17, 1);
+              const int column = vertical ? 2 : geometry.phases[phase].width - !outside;
+              const int row = vertical ? geometry.phases[phase].height - !outside : 2;
+              field.x[lane] = static_cast<std::int16_t>((column - 2 - lane) * pel + phase % pel);
+              field.y[lane] = static_cast<std::int16_t>((row - 2) * pel + phase / pel);
+              auto scalar = [&] {
+                neo_mv::FlowSamplingPlan(geometry, 17, 1, 256).preflight(field);
+              };
+              auto tested = [&] {
+                TestPlan(geometry, 17, 1, 256).preflight(field);
+              };
+              if (outside) {
+                rejects(scalar);
+                rejects(tested);
+              } else {
+                scalar();
+                tested();
+              }
+            }
+    }
+}
 void float_representation() {
   Image<float> image(8, 2, 1, 1);
   auto field = dense(8, 2);
@@ -207,12 +242,13 @@ int main() {
       vector_boundaries<std::uint16_t>();
       vector_boundaries<float>();
 #endif
-    rounding<std::uint8_t>();
-    rounding<std::uint16_t>();
-    rounding<float>();
-    negative_rounding_boundaries();
-    admission_and_errors();
-    float_representation();
+      rounding<std::uint8_t>();
+      rounding<std::uint16_t>();
+      rounding<float>();
+      negative_rounding_boundaries();
+      admission_and_errors();
+      float_representation();
+      phase_extent_boundaries();
 #if NEO_MV_TEST_HIGHWAY
     }
     hwy::SetSupportedTargetsForTest(0);
