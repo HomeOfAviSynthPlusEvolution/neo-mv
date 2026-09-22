@@ -372,6 +372,66 @@ void ComposeDirectPackedChromaByte(const BlockCompositionGeometry& g,
   }
 }
 
+template <int Tiles>
+void ComposeDirectPackedChromaWord(const BlockCompositionGeometry& g,
+                                   const SampledRenderBlock<std::uint16_t>* blocks,
+                                   span2d::Plane<std::uint16_t> output, int tx, int ty, int ox, int oy,
+                                   std::int64_t maximum) {
+  static_assert(Tiles == 2 || Tiles == 4);
+  DirectInput<std::uint16_t> input[4][Tiles];
+  std::ptrdiff_t strides[4][Tiles];
+  int n = 0;
+  for (int by = ty - 1; by <= ty; ++by)
+    for (int hx = 0; hx < 2; ++hx) {
+      const int local_y = by == ty ? 0 : 4;
+      const int local_x = hx ? 0 : 4;
+      for (int tile = 0; tile < Tiles; ++tile) {
+        const int bx = tx - 1 + hx + tile;
+        const auto& block = blocks[std::size_t(by) * g.blocks_x + bx];
+        input[n][tile] = {block.data + local_y * block.stride + local_x,
+                          block.coefficients + std::size_t(local_y) * 8 + local_x};
+        strides[n][tile] = block.stride;
+      }
+      ++n;
+    }
+  const hn::CappedTag<std::int32_t, 4> four;
+  const hn::CappedTag<std::int32_t, 8> eight;
+  const hn::CappedTag<std::int32_t, 4 * Tiles> full;
+  const hn::Rebind<std::uint16_t, decltype(four)> four_words;
+  auto* dst = output.row(oy).data() + ox;
+  for (int row = 0; row < 4; ++row) {
+    auto sum = hn::Zero(full);
+    for (int i = 0; i < 4; ++i) {
+      const auto load_sample = [&](int tile) HWY_ATTR {
+        return hn::PromoteTo(four, hn::LoadU(four_words, input[i][tile].samples));
+      };
+      const auto load_weight = [&](int tile) HWY_ATTR {
+        return hn::PromoteTo(four, hn::LoadU(four_words, input[i][tile].coefficients));
+      };
+      const auto pack = [&](auto load) HWY_ATTR {
+        const auto lo = hn::Combine(eight, load(1), load(0));
+        if constexpr (Tiles == 4)
+          return hn::Combine(full, hn::Combine(eight, load(3), load(2)), lo);
+        else
+          return lo;
+      };
+      const auto samples = pack(load_sample);
+      const auto weights = pack(load_weight);
+      sum = hn::Add(sum, hn::ShiftRight<6>(hn::Mul(samples, weights)));
+    }
+    const auto rounded = hn::ShiftRight<5>(hn::Add(sum, hn::Set(full, 16)));
+    StoreSample(full, hn::Min(rounded, hn::Set(full, std::int32_t(maximum))), dst);
+    if (row + 1 < 4) {
+      dst += output.stride();
+      for (int i = 0; i < 4; ++i)
+        for (int tile = 0; tile < Tiles; ++tile) {
+          input[i][tile].samples += strides[i][tile];
+          input[i][tile].coefficients += 8;
+        }
+    }
+  }
+}
+
 template <class T, int Half>
 void ComposeDirectTiledHalf(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
                             span2d::Plane<T> output, std::int64_t maximum) {
@@ -381,6 +441,15 @@ void ComposeDirectTiledHalf(const BlockCompositionGeometry& g, const SampledRend
     const int last_y = std::min(ty, g.blocks_y - 1);
     for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += Half) {
 #if HWY_TARGET == HWY_AVX3_SPR
+      if constexpr (std::is_same_v<T, std::uint16_t> && Half == 4) {
+        if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 3 < g.blocks_x && tile_height == 4 &&
+            ox + 16 <= g.visible_width) {
+          ComposeDirectPackedChromaWord<4>(g, blocks, output, tx, ty, ox, oy, maximum);
+          tx += 3;
+          ox += 12;
+          continue;
+        }
+      }
       if constexpr (std::is_same_v<T, std::uint8_t> && Half == 4) {
         if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 7 < g.blocks_x && tile_height == 4 &&
             ox + 32 <= g.visible_width) {
@@ -401,6 +470,15 @@ void ComposeDirectTiledHalf(const BlockCompositionGeometry& g, const SampledRend
       }
 #endif
 #if HWY_TARGET == HWY_AVX2
+      if constexpr (std::is_same_v<T, std::uint16_t> && Half == 4) {
+        if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 1 < g.blocks_x && tile_height == 4 &&
+            ox + 8 <= g.visible_width) {
+          ComposeDirectPackedChromaWord<2>(g, blocks, output, tx, ty, ox, oy, maximum);
+          ++tx;
+          ox += 4;
+          continue;
+        }
+      }
       if constexpr (std::is_same_v<T, std::uint8_t> && Half == 4) {
         if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 3 < g.blocks_x && tile_height == 4 &&
             ox + 16 <= g.visible_width) {
