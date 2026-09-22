@@ -296,29 +296,29 @@ void fused_degrain(int bits) {
         }
       }
 }
-void tiled_compensate() {
+template <class T>
+void tiled_compensate(int bits) {
   using namespace neo_mv;
   std::mt19937 rng(18032);
-  for (int bits : {10, 16})
-    for (int visible : {32, 29}) {
-      OverlapCompositionPlan plan({16, 16, 8, 8, 3, 3, visible, visible, 32, 32});
-      std::vector<Buffer<std::uint16_t>> inputs;
-      inputs.reserve(9);
-      std::vector<span2d::Plane<const std::uint16_t>> views;
-      std::vector<SampledRenderBlock<std::uint16_t>> blocks;
-      for (int by = 0; by < 3; ++by)
-        for (int bx = 0; bx < 3; ++bx) {
-          inputs.emplace_back(16, 16);
-          inputs.back().random(rng, bits);
-          const auto view = inputs.back().read();
-          views.push_back(view);
-          blocks.push_back({view.row(0).data(), view.stride(), plan.coefficient_row(bx, by, 0)});
-        }
-      Buffer<std::uint16_t> expected(visible, visible), actual(visible, visible);
-      compose_render_blocks(plan, views, expected.view(), bits);
-      HighwayRenderKernels<std::uint16_t>::compose_compensated(plan, blocks, actual.view(), bits);
-      equal(expected, actual);
-    }
+  for (int visible : {32, 29}) {
+    OverlapCompositionPlan plan({16, 16, 8, 8, 3, 3, visible, visible, 32, 32});
+    std::vector<Buffer<T>> inputs;
+    inputs.reserve(9);
+    std::vector<span2d::Plane<const T>> views;
+    std::vector<SampledRenderBlock<T>> blocks;
+    for (int by = 0; by < 3; ++by)
+      for (int bx = 0; bx < 3; ++bx) {
+        inputs.emplace_back(16, 16);
+        inputs.back().random(rng, bits);
+        const auto view = inputs.back().read();
+        views.push_back(view);
+        blocks.push_back({view.row(0).data(), view.stride(), plan.coefficient_row(bx, by, 0)});
+      }
+    Buffer<T> expected(visible, visible), actual(visible, visible);
+    compose_render_blocks(plan, views, expected.view(), bits);
+    HighwayRenderKernels<T>::compose_compensated(plan, blocks, actual.view(), bits);
+    equal(expected, actual);
+  }
 }
 } // namespace
 int main() {
@@ -329,7 +329,9 @@ int main() {
       fused_degrain<std::uint16_t>(10);
       fused_degrain<std::uint16_t>(16);
       fused_degrain<float>(32);
-      tiled_compensate();
+      tiled_compensate<std::uint8_t>(8);
+      tiled_compensate<std::uint16_t>(10);
+      tiled_compensate<std::uint16_t>(16);
     }
     hwy::SetSupportedTargetsForTest(0);
     run<std::uint8_t>(8);

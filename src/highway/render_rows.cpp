@@ -204,6 +204,54 @@ HWY_INLINE void ComposeDirectSegment(const DirectInput<T>* inputs, int count, T*
   for (; x < count; ++x)
     ComposeDirectChunk<N>(one, inputs, x, output, maximum);
 }
+#if HWY_TARGET == HWY_AVX2
+void ComposeDirectPairByte(const BlockCompositionGeometry& g, const SampledRenderBlock<std::uint8_t>* blocks,
+                           span2d::Plane<std::uint8_t> output, int tx, int ty, int ox, int oy,
+                           std::int64_t maximum) {
+  DirectInput<std::uint8_t> input[4][2];
+  std::ptrdiff_t strides[4][2];
+  int n = 0;
+  for (int by = ty - 1; by <= ty; ++by)
+    for (int hx = 0; hx < 2; ++hx) {
+      const int local_y = by == ty ? 0 : 8;
+      const int local_x = hx ? 0 : 8;
+      for (int half = 0; half < 2; ++half) {
+        const int bx = tx - 1 + hx + half;
+        const auto& block = blocks[std::size_t(by) * g.blocks_x + bx];
+        input[n][half] = {block.data + local_y * block.stride + local_x,
+                          block.coefficients + std::size_t(local_y) * 16 + local_x};
+        strides[n][half] = block.stride;
+      }
+      ++n;
+    }
+  const hn::CappedTag<std::uint16_t, 16> full;
+  const hn::CappedTag<std::uint16_t, 8> half;
+  const hn::Rebind<std::uint8_t, decltype(half)> half_bytes;
+  const hn::Rebind<std::uint8_t, decltype(full)> full_bytes;
+  auto* dst = output.row(oy).data() + ox;
+  for (int row = 0; row < 8; ++row) {
+    auto sum = hn::Zero(full);
+    for (int i = 0; i < 4; ++i) {
+      const auto lo = hn::PromoteTo(half, hn::LoadU(half_bytes, input[i][0].samples));
+      const auto hi = hn::PromoteTo(half, hn::LoadU(half_bytes, input[i][1].samples));
+      const auto sample = hn::Combine(full, hi, lo);
+      const auto weight = hn::Combine(full, hn::LoadU(half, input[i][1].coefficients),
+                                     hn::LoadU(half, input[i][0].coefficients));
+      sum = hn::Add(sum, hn::MulHigh(hn::ShiftLeft<8>(sample), hn::ShiftLeft<2>(weight)));
+    }
+    const auto rounded = hn::ShiftRight<5>(hn::Add(sum, hn::Set(full, std::uint16_t(16))));
+    hn::StoreU(hn::DemoteTo(full_bytes, hn::Min(rounded, hn::Set(full, std::uint16_t(maximum)))), full_bytes, dst);
+    if (row + 1 < 8) {
+      dst += output.stride();
+      for (int i = 0; i < 4; ++i)
+        for (int side = 0; side < 2; ++side) {
+          input[i][side].samples += strides[i][side];
+          input[i][side].coefficients += 16;
+        }
+    }
+  }
+}
+#endif
 
 template <class T>
 void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
@@ -213,6 +261,17 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
     const int first_y = ty ? ty - 1 : 0;
     const int last_y = std::min(ty, g.blocks_y - 1);
     for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += 8) {
+#if HWY_TARGET == HWY_AVX2
+      if constexpr (std::is_same_v<T, std::uint8_t>) {
+        if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 1 < g.blocks_x && tile_height == 8 &&
+            ox + 16 <= g.visible_width) {
+          ComposeDirectPairByte(g, blocks, output, tx, ty, ox, oy, maximum);
+          ++tx;
+          ox += 8;
+          continue;
+        }
+      }
+#endif
       const int tile_width = std::min(8, g.visible_width - ox);
       const int first_x = tx ? tx - 1 : 0;
       const int last_x = std::min(tx, g.blocks_x - 1);
@@ -255,6 +314,12 @@ void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRender
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
       return ComposeDirectTiled16(g, blocks, output, maximum);
   }
+#if HWY_TARGET == HWY_AVX2
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
+      return ComposeDirectTiled16(g, blocks, output, maximum);
+  }
+#endif
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   for (int y = 0; y < g.visible_height; ++y) {
     const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
