@@ -57,7 +57,7 @@ if(NEO_MV_ENABLE_HIGHWAY)
     URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(highway)
-  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/scene.cpp src/highway/flow_sampling.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp src/highway/depan_rows.cpp src/highway/depan_estimate.cpp src/highway/estimate_image.cpp)
+  add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/scene.cpp src/highway/flow_sampling.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp src/highway/depan_rows.cpp src/highway/depan_sampling.cpp src/highway/depan_estimate.cpp src/highway/estimate_image.cpp)
   target_link_libraries(neo_mv_highway PUBLIC neo_mv_core hwy)
   target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ALL_ATTAINABLE)
   set_target_properties(neo_mv_highway hwy PROPERTIES POSITION_INDEPENDENT_CODE ON

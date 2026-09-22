@@ -263,7 +263,7 @@ public:
       destination = T(border_);
   }
   template <class T>
-  void validate(span2d::Plane<const T> source, span2d::Plane<T> output) const {
+  void validate_storage(span2d::Plane<const T> source, span2d::Plane<T> output) const {
     static_assert(std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t>);
     if ((std::is_same_v<T, std::uint8_t> && bits_ != 8) || (std::is_same_v<T, std::uint16_t> && bits_ == 8))
       throw std::invalid_argument("Depan sampling precision does not match storage");
@@ -272,6 +272,10 @@ public:
     if (source.width() != width_ || source.height() != height_ || output.width() != width_ ||
         output.height() != height_ || active_rows_overlap(source, output))
       throw std::invalid_argument("Depan sampling storage mismatch or alias");
+  }
+  template <class T>
+  void validate(span2d::Plane<const T> source, span2d::Plane<T> output) const {
+    validate_storage(source, output);
     const auto maximum = (1u << bits_) - 1;
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x)

@@ -134,6 +134,33 @@ void sampling(int bits) {
   }
 }
 
+void coordinates() {
+  const Transform maps[] = {{}, {-0.5f, 0.5f}, {0.99999994f, -0.0000001f, 0.875f, 0, 0, 1.125f},
+                            {1.001f, -0.001f, 1.03125f, -0.125f, 0.0625f, 0.96875f},
+                            {0, 0, -0.0f, 0, 0, -0.0f}, {0, 0, -1e30f, 0, 0, 1e30f},
+                            {0, 0, 1, 1e30f, -1e30f, 1},
+                            {0, 0, std::numeric_limits<float>::max(), 0, 0, 1}};
+  for (int width : widths)
+    for (int mode : {0, 1, 2})
+      for (auto map : maps) {
+        SamplingPlan plan(width, INT32_MAX, 16, mode, 0, 0, 0, map);
+        for (int y : {0, 1, 6, 16777217, INT32_MAX - 1}) {
+          std::vector<SamplingCoordinates> a(width), b(width);
+          const bool ea = rejected([&] { plan.row_coordinates(y, [&](int x, SamplingCoordinates q) { a[x] = q; }); });
+          const bool eb = rejected([&] { simd::depan_rows::coordinates(plan, y, b.data()); });
+          CHECK(ea == eb);
+          if (ea)
+            continue;
+          for (int x = 0; x < width; ++x) {
+            CHECK(std::memcmp(&a[x].i, &b[x].i, sizeof(double)) == 0);
+            CHECK(std::memcmp(&a[x].j, &b[x].j, sizeof(double)) == 0);
+            same_float(a[x].fx, b[x].fx);
+            same_float(a[x].fy, b[x].fy);
+          }
+        }
+      }
+}
+
 Observations observations(int nx, int ny) {
   Observations result{nx, ny, true, true, 400, {}};
   for (int y = 0; y < ny; ++y)
@@ -540,6 +567,7 @@ int main() {
       hwy::SetSupportedTargetsForTest(target);
       std::cout << "Testing " << hwy::TargetName(target) << '\n';
       CHECK(std::strcmp(simd::detail::target_name(), hwy::TargetName(target)) == 0);
+      coordinates();
       sampling<std::uint8_t>(8);
       sampling<std::uint16_t>(10);
       sampling<std::uint16_t>(16);

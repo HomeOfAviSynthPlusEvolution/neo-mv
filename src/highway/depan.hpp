@@ -2,6 +2,8 @@
 #include "core/depan/analysis.hpp"
 #include "core/depan/sampling.hpp"
 #include "highway/depan_rows.hpp"
+#include "highway/depan_sampling.hpp"
+#include "highway/rows.hpp"
 #include <cstring>
 
 namespace neo_mv::depan {
@@ -42,12 +44,23 @@ class HighwaySamplingPlan : public SamplingPlan {
 public:
   using SamplingPlan::SamplingPlan;
   template <class T>
+  void validate(span2d::Plane<const T> source, span2d::Plane<T> output) const {
+    validate_storage(source, output);
+    for (int y = 0; y < height(); ++y)
+      simd::detail::scan(source.row(y).data(), width(), (1u << bits()) - 1);
+  }
+  template <class T>
   void render(span2d::Plane<const T> source, span2d::Plane<T> output, bool preserve = false) const {
+    validate(source, output);
+    std::vector<SamplingCoordinates> coordinates(width());
     if (mode() == 0) {
-      SamplingPlan::render(source, output, preserve);
+      for (int y = 0; y < height(); ++y) {
+        simd::depan_rows::coordinates(*this, y, coordinates.data());
+        for (int x = 0; x < width(); ++x)
+          write_sample(source, output.row(y)[x], coordinates[x], preserve);
+      }
       return;
     }
-    validate(source, output);
     const auto count = static_cast<std::size_t>(width());
     const int taps = mode() == 2 ? 16 : 4;
     const bool translation = sampling_class() == SamplingClass::translation;
@@ -60,7 +73,7 @@ public:
     std::vector<int> columns;
     for (int y = 0; y < height(); ++y) {
       columns.clear();
-      row_coordinates(y, [&](int x, SamplingCoordinates q) {
+      auto visit = [&](int x, SamplingCoordinates q) {
         const bool complete = mode() == 1 ? (q.i >= 0 && q.i < width() - 1 && q.j >= 0 && q.j < height() - 1)
                                           : (q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2);
         if (mode() == 0 || !complete) {
@@ -88,7 +101,10 @@ public:
               weights[pos] = translation ? cx[e] * cy[f] / 2048 : cx[e] * cy[f];
             }
         }
-      });
+      };
+      simd::depan_rows::coordinates(*this, y, coordinates.data());
+      for (int x = 0; x < width(); ++x)
+        visit(x, coordinates[x]);
       // Compact the per-tap arrays to the number of admitted footprints.
       const auto used = columns.size();
       if (!used)
