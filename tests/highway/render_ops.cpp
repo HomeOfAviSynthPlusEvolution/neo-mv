@@ -300,27 +300,31 @@ template <class T>
 void tiled_compensate(int bits) {
   using namespace neo_mv;
   std::mt19937 rng(18032);
-  for (int columns : {3, 6}) {
-    for (int crop : {0, 3}) {
-      const int width = (columns + 1) * 8;
-      const int visible_width = width - crop, visible_height = 32 - crop;
-      OverlapCompositionPlan plan({16, 16, 8, 8, columns, 3, visible_width, visible_height, width, 32});
-      std::vector<Buffer<T>> inputs;
-      inputs.reserve(std::size_t(columns) * 3);
-      std::vector<span2d::Plane<const T>> views;
-      std::vector<SampledRenderBlock<T>> blocks;
-      for (int by = 0; by < 3; ++by)
-        for (int bx = 0; bx < columns; ++bx) {
-          inputs.emplace_back(16, 16);
-          inputs.back().random(rng, bits);
-          const auto view = inputs.back().read();
-          views.push_back(view);
-          blocks.push_back({view.row(0).data(), view.stride(), plan.coefficient_row(bx, by, 0)});
-        }
-      Buffer<T> expected(visible_width, visible_height), actual(visible_width, visible_height);
-      compose_render_blocks(plan, views, expected.view(), bits);
-      HighwayRenderKernels<T>::compose_compensated(plan, blocks, actual.view(), bits);
-      equal(expected, actual);
+  for (int half : {4, 8}) {
+    for (int columns : {3, 6}) {
+      for (int crop : {0, 3}) {
+        const int block = 2 * half;
+        const int width = (columns + 1) * half;
+        const int height = 4 * half;
+        const int visible_width = width - crop, visible_height = height - crop;
+        OverlapCompositionPlan plan({block, block, half, half, columns, 3, visible_width, visible_height, width, height});
+        std::vector<Buffer<T>> inputs;
+        inputs.reserve(std::size_t(columns) * 3);
+        std::vector<span2d::Plane<const T>> views;
+        std::vector<SampledRenderBlock<T>> blocks;
+        for (int by = 0; by < 3; ++by)
+          for (int bx = 0; bx < columns; ++bx) {
+            inputs.emplace_back(block, block);
+            inputs.back().random(rng, bits);
+            const auto view = inputs.back().read();
+            views.push_back(view);
+            blocks.push_back({view.row(0).data(), view.stride(), plan.coefficient_row(bx, by, 0)});
+          }
+        Buffer<T> expected(visible_width, visible_height), actual(visible_width, visible_height);
+        compose_render_blocks(plan, views, expected.view(), bits);
+        HighwayRenderKernels<T>::compose_compensated(plan, blocks, actual.view(), bits);
+        equal(expected, actual);
+      }
     }
   }
 }

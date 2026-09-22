@@ -308,16 +308,16 @@ void ComposeDirectQuadByte(const BlockCompositionGeometry& g, const SampledRende
 }
 #endif
 
-template <class T>
-void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
-                          span2d::Plane<T> output, std::int64_t maximum) {
-  for (int ty = 0, oy = 0; oy < g.visible_height; ++ty, oy += 8) {
-    const int tile_height = std::min(8, g.visible_height - oy);
+template <class T, int Half>
+void ComposeDirectTiledHalf(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
+                            span2d::Plane<T> output, std::int64_t maximum) {
+  for (int ty = 0, oy = 0; oy < g.visible_height; ++ty, oy += Half) {
+    const int tile_height = std::min(Half, g.visible_height - oy);
     const int first_y = ty ? ty - 1 : 0;
     const int last_y = std::min(ty, g.blocks_y - 1);
-    for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += 8) {
+    for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += Half) {
 #if HWY_TARGET == HWY_AVX3_SPR
-      if constexpr (std::is_same_v<T, std::uint8_t>) {
+      if constexpr (std::is_same_v<T, std::uint8_t> && Half == 8) {
         if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 3 < g.blocks_x && tile_height == 8 &&
             ox + 32 <= g.visible_width) {
           ComposeDirectQuadByte(g, blocks, output, tx, ty, ox, oy, maximum);
@@ -328,7 +328,7 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
       }
 #endif
 #if HWY_TARGET == HWY_AVX2
-      if constexpr (std::is_same_v<T, std::uint8_t>) {
+      if constexpr (std::is_same_v<T, std::uint8_t> && Half == 8) {
         if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 1 < g.blocks_x && tile_height == 8 &&
             ox + 16 <= g.visible_width) {
           ComposeDirectPairByte(g, blocks, output, tx, ty, ox, oy, maximum);
@@ -338,7 +338,7 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
         }
       }
 #endif
-      const int tile_width = std::min(8, g.visible_width - ox);
+      const int tile_width = std::min(Half, g.visible_width - ox);
       const int first_x = tx ? tx - 1 : 0;
       const int last_x = std::min(tx, g.blocks_x - 1);
       DirectInput<T> inputs[4];
@@ -347,10 +347,10 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
       for (int by = first_y; by <= last_y; ++by)
         for (int bx = first_x; bx <= last_x; ++bx) {
           const auto& block = blocks[std::size_t(by) * g.blocks_x + bx];
-          const int local_y = by == ty ? 0 : 8;
-          const int local_x = bx == tx ? 0 : 8;
+          const int local_y = by == ty ? 0 : Half;
+          const int local_x = bx == tx ? 0 : Half;
           inputs[n] = {block.data + local_y * block.stride + local_x,
-                       block.coefficients + std::size_t(local_y) * 16 + local_x};
+                       block.coefficients + std::size_t(local_y) * g.block_width + local_x};
           strides[n++] = block.stride;
         }
       auto* dst = output.row(oy).data() + ox;
@@ -365,7 +365,7 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
           dst += output.stride();
           for (int i = 0; i < n; ++i) {
             inputs[i].samples += strides[i];
-            inputs[i].coefficients += 16;
+            inputs[i].coefficients += g.block_width;
           }
         }
       }
@@ -378,18 +378,22 @@ void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRender
                           span2d::Plane<T> output, std::int64_t maximum) {
   if constexpr (std::is_same_v<T, std::uint16_t>) {
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
-      return ComposeDirectTiled16(g, blocks, output, maximum);
+      return ComposeDirectTiledHalf<T, 8>(g, blocks, output, maximum);
   }
 #if HWY_TARGET == HWY_AVX2
   if constexpr (std::is_same_v<T, std::uint8_t>) {
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
-      return ComposeDirectTiled16(g, blocks, output, maximum);
+      return ComposeDirectTiledHalf<T, 8>(g, blocks, output, maximum);
+    if (g.block_width == 8 && g.block_height == 8 && g.overlap_x == 4 && g.overlap_y == 4)
+      return ComposeDirectTiledHalf<T, 4>(g, blocks, output, maximum);
   }
 #endif
 #if HWY_TARGET == HWY_AVX3_SPR
   if constexpr (std::is_same_v<T, std::uint8_t>) {
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
-      return ComposeDirectTiled16(g, blocks, output, maximum);
+      return ComposeDirectTiledHalf<T, 8>(g, blocks, output, maximum);
+    if (g.block_width == 8 && g.block_height == 8 && g.overlap_x == 4 && g.overlap_y == 4)
+      return ComposeDirectTiledHalf<T, 4>(g, blocks, output, maximum);
   }
 #endif
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
