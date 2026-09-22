@@ -166,6 +166,23 @@ template <class T> void sampled_motion() {
     }
   }
 }
+template <class T> void narrow_reference_motion() {
+  using namespace neo_mv;
+  Buffer<T> current(100, 1), reference(4, 1);
+  SamplingGeometry geometry;
+  geometry.planes[0].current = {100, 1};
+  geometry.planes[0].reference[0] = {4, 1};
+  SamplingFrames<T> frames;
+  frames.current[0] = current.read();
+  frames.reference[0][0] = reference.read();
+  const BlockRegion block{96, 0, 4, 1};
+  const MotionVector vector{-96, 0};
+  validate_sampling_domain(geometry, block, sampling_detail::singleton(vector));
+  validate_sampling_frames(geometry, frames);
+  const auto scalar = block_error<T, true>(geometry, block, frames, vector, BlockMetric::sad);
+  const auto highway = simd::block_error<T, true>(geometry, block, frames, vector, BlockMetric::sad);
+  check(scalar.luma == highway.luma && scalar.raw == highway.raw, "narrow reference mismatch");
+}
 
 template <class T> void integer_metric_extremes() {
   // Exercise bounded SAD accumulation, both fallback dimensions, and SATD
@@ -208,6 +225,9 @@ int main() {
       sampled_motion<std::uint8_t>();
       sampled_motion<std::uint16_t>();
       sampled_motion<float>();
+      narrow_reference_motion<std::uint8_t>();
+      narrow_reference_motion<std::uint16_t>();
+      narrow_reference_motion<float>();
       extra_cases();
       external_base_validation();
       external_float_contract();

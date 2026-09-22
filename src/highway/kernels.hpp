@@ -246,19 +246,37 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
       throw std::invalid_argument("invalid block error metric or SATD dimensions");
     validate_sampling_frames(g, frames);
   }
-  const int count = g.chroma ? 3 : 1;
   std::array<std::int64_t, 3> errors{};
-  for (int k = 0; k < count; ++k) {
-    const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;
-    const auto tx = std::int64_t(vector.x) / rx, ty = std::int64_t(vector.y) / ry;
+  const auto evaluate_plane = [&](int k, int bx, int by, int bw, int bh, std::int64_t qx, std::int64_t qy,
+                                  std::size_t phase) {
+    const int x = g.planes[k].pad_x + bx;
+    const int y = g.planes[k].pad_y + by;
+    const auto& current = frames.current[k];
+    const auto& reference = frames.reference[k][phase];
+    if constexpr (Validated) {
+      // The plan admits every candidate footprint and the frame views before search.
+      const auto* source = current.row(y).data() + x;
+      const auto* target = reference.row(static_cast<int>(y + qy)).data() + static_cast<int>(x + qx);
+      errors[k] = detail::metric(source, current.stride(), target, reference.stride(), bw, bh,
+                                 k == 0 && metric == BlockMetric::satd);
+    } else {
+      const auto source = current.subplane(x, y, bw, bh);
+      const auto target = reference.subplane(static_cast<int>(x + qx), static_cast<int>(y + qy), bw, bh);
+      errors[k] = neo_mv::simd::block_metric<T, true>(source, target, k == 0 ? metric : BlockMetric::sad);
+    }
+  };
+  const auto luma_x = sampling_detail::floor_div(vector.x, g.pel);
+  const auto luma_y = sampling_detail::floor_div(vector.y, g.pel);
+  const auto luma_phase = std::size_t((vector.y - g.pel * luma_y) * g.pel + vector.x - g.pel * luma_x);
+  evaluate_plane(0, b.x, b.y, b.width, b.height, luma_x, luma_y, luma_phase);
+  if (g.chroma) {
+    const int bx = b.x / g.ratio_x, by = b.y / g.ratio_y;
+    const int bw = b.width / g.ratio_x, bh = b.height / g.ratio_y;
+    const auto tx = std::int64_t(vector.x) / g.ratio_x, ty = std::int64_t(vector.y) / g.ratio_y;
     const auto qx = sampling_detail::floor_div(tx, g.pel), qy = sampling_detail::floor_div(ty, g.pel);
-    const auto ax = tx - g.pel * qx, ay = ty - g.pel * qy;
-    const int x = static_cast<int>(std::int64_t(g.planes[k].pad_x) + b.x / rx);
-    const int y = static_cast<int>(std::int64_t(g.planes[k].pad_y) + b.y / ry);
-    const auto source = frames.current[k].subplane(x, y, b.width / rx, b.height / ry);
-    const auto reference = frames.reference[k][static_cast<std::size_t>(ay * g.pel + ax)].subplane(
-        static_cast<int>(x + qx), static_cast<int>(y + qy), b.width / rx, b.height / ry);
-    errors[k] = neo_mv::simd::block_metric<T, true>(source, reference, k == 0 ? metric : BlockMetric::sad);
+    const auto phase = std::size_t((ty - g.pel * qy) * g.pel + tx - g.pel * qx);
+    evaluate_plane(1, bx, by, bw, bh, qx, qy, phase);
+    evaluate_plane(2, bx, by, bw, bh, qx, qy, phase);
   }
   const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
