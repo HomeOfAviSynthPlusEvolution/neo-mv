@@ -113,16 +113,26 @@ void WeightedChunk(D d, const std::int64_t* samples, const std::int64_t* weights
     total = hn::ShiftRight<22>(total);
   hn::StoreU(hn::Min(hn::Max(total, hn::Zero(d)), hn::Set(d, maximum)), d, out);
 }
-void Weighted(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
-              bool round, std::int64_t maximum, std::int64_t* out) {
+template <int FixedTaps>
+void WeightedRows(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
+              bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
   const hn::ScalableTag<std::int64_t> d;
   const auto lanes = hn::Lanes(d);
   std::size_t i = 0;
   for (; i + lanes <= count; i += lanes)
-    WeightedChunk(d, samples + i, weights + i, count, taps, shift, round, maximum, out + i);
+    WeightedChunk(d, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum, out + i);
   const hn::CappedTag<std::int64_t, 1> one;
   for (; i < count; ++i)
-    WeightedChunk(one, samples + i, weights + i, count, taps, shift, round, maximum, out + i);
+    WeightedChunk(one, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum, out + i);
+}
+void Weighted(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
+              bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
+  if (taps == 4)
+    WeightedRows<4>(samples, weights, count, taps, shift, round, maximum, out, tap_stride);
+  else if (taps == 16)
+    WeightedRows<16>(samples, weights, count, taps, shift, round, maximum, out, tap_stride);
+  else
+    WeightedRows<0>(samples, weights, count, taps, shift, round, maximum, out, tap_stride);
 }
 } // namespace HWY_NAMESPACE
 } // namespace neo_mv::simd::depan_rows
@@ -147,8 +157,9 @@ void residuals(const float* x, const float* y, const float* dx, const float* dy,
   HWY_DYNAMIC_DISPATCH(Residuals)(x, y, dx, dy, count, map, ex, ey);
 }
 void weighted(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
-              bool round, std::int64_t maximum, std::int64_t* out) {
-  HWY_DYNAMIC_DISPATCH(Weighted)(samples, weights, count, taps, shift, round, maximum, out);
+              bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
+  HWY_DYNAMIC_DISPATCH(Weighted)(samples, weights, count, taps, shift, round, maximum, out,
+                                 tap_stride ? tap_stride : count);
 }
 } // namespace neo_mv::simd::depan_rows
 #endif

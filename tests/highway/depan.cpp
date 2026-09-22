@@ -401,31 +401,35 @@ struct EndRow {
 void guarded_weighted() {
   std::mt19937 random(94711);
   for (const int width : widths)
-    for (const int taps : {4, 16}) {
-      EndRow<std::int64_t> samples(std::size_t(width) * taps), weights(std::size_t(width) * taps), out(width);
-      for (int k = 0; k < taps; ++k)
-        for (int i = 0; i < width; ++i) {
-          const auto pos = std::size_t(k) * width + i;
-          samples.data[pos] = i % 3 == 0 ? 65535 : random() % 65536;
-          weights.data[pos] = i % 3 == 0 ? (i % 2 ? -4194304 : 4194304) : int(random() % 8388609) - 4194304;
-        }
-      for (const int shift : {10, 11, 22})
-        for (const bool round : {false, true}) {
-          if (round && shift != 11)
-            continue;
-          for (const std::int64_t maximum : {255, 1023, 65535}) {
-            simd::depan_rows::weighted(samples.data, weights.data, width, taps, shift, round, maximum, out.data);
-            for (int i = 0; i < width; ++i) {
-              std::int64_t total = round ? 1024 : 0;
-              for (int k = 0; k < taps; ++k)
-                total += samples.data[std::size_t(k) * width + i] * weights.data[std::size_t(k) * width + i];
-              const auto denominator = std::int64_t{1} << shift;
-              const auto divided = total >= 0 ? total / denominator : -1 - ((-1 - total) / denominator);
-              CHECK(out.data[i] == std::clamp(divided, std::int64_t{0}, maximum));
+    for (const int taps : {4, 16})
+      for (const int padding : {0, 3, 17}) {
+        const auto stride = std::size_t(width + padding);
+        EndRow<std::int64_t> samples(stride * (taps - 1) + width), weights(stride * (taps - 1) + width), out(width);
+        std::fill_n(samples.data, stride * (taps - 1) + width, 65535);
+        std::fill_n(weights.data, stride * (taps - 1) + width, 4194304);
+        for (int k = 0; k < taps; ++k)
+          for (int i = 0; i < width; ++i) {
+            const auto pos = std::size_t(k) * stride + i;
+            samples.data[pos] = i % 3 == 0 ? 65535 : random() % 65536;
+            weights.data[pos] = i % 3 == 0 ? (i % 2 ? -4194304 : 4194304) : int(random() % 8388609) - 4194304;
+          }
+        for (const int shift : {10, 11, 22})
+          for (const bool round : {false, true}) {
+            if (round && shift != 11)
+              continue;
+            for (const std::int64_t maximum : {255, 1023, 65535}) {
+              simd::depan_rows::weighted(samples.data, weights.data, width, taps, shift, round, maximum, out.data, padding ? stride : 0);
+              for (int i = 0; i < width; ++i) {
+                std::int64_t total = round ? 1024 : 0;
+                for (int k = 0; k < taps; ++k)
+                  total += samples.data[std::size_t(k) * stride + i] * weights.data[std::size_t(k) * stride + i];
+                const auto denominator = std::int64_t{1} << shift;
+                const auto divided = total >= 0 ? total / denominator : -1 - ((-1 - total) / denominator);
+                CHECK(out.data[i] == std::clamp(divided, std::int64_t{0}, maximum));
+              }
             }
           }
-        }
-    }
+      }
   for (const int shift : {10, 11, 22}) {
     constexpr int count = 17;
     EndRow<std::int64_t> samples(count * 4), weights(count * 4), out(count);

@@ -105,21 +105,16 @@ public:
       simd::depan_rows::coordinates(*this, y, coordinates.data());
       for (int x = 0; x < width(); ++x)
         visit(x, coordinates[x]);
-      // Compact the per-tap arrays to the number of admitted footprints.
       const auto used = columns.size();
       if (!used)
         continue;
-      for (int k = 1; k < taps; ++k) {
-        std::memmove(samples.data() + std::size_t(k) * used, samples.data() + std::size_t(k) * count,
-                     used * sizeof(std::int64_t));
-        std::memmove(weights.data() + std::size_t(k) * used, weights.data() + std::size_t(k) * count,
-                     used * sizeof(std::int64_t));
-      }
+      // The admitted footprints already occupy the start of each tap row.
+      // Read with the original row spacing instead of compacting every row.
       simd::depan_rows::weighted(samples.data(), weights.data(), used, taps,
                                  mode() == 1   ? 10
                                  : translation ? 11
                                                : 22,
-                                 mode() == 2 && translation, (1 << bits()) - 1, results.data());
+                                 mode() == 2 && translation, (1 << bits()) - 1, results.data(), count);
       for (std::size_t i = 0; i < used; ++i)
         output.row(y)[columns[i]] = static_cast<T>(results[i]);
     }
