@@ -378,7 +378,7 @@ HWY_INLINE void AdmitSample(D d, V value, std::int64_t maximum) {
     throw std::invalid_argument("Degrain sample exceeds bit depth");
 }
 
-template <class D, class T>
+template <int FixedReferences = 0, class D, class T>
 HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const int* weights, int nr, int row, int x,
                              std::int64_t maximum) {
   const auto c = LoadSample(d, sources[0].data + row * sources[0].stride + x);
@@ -391,7 +391,7 @@ HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const in
   CheckFinite(d, sum);
   if constexpr (!std::is_same_v<T, float>)
     sum = hn::Add(sum, hn::Set(d, 128));
-  for (int r = 1; r <= nr; ++r) {
+  for (int r = 1; r <= (FixedReferences ? FixedReferences : nr); ++r) {
     const auto sample = sources[r].data ? LoadSample(d, sources[r].data + row * sources[r].stride + x) : c;
     if constexpr (std::is_same_v<T, float>)
       AdmitSample(d, sample, maximum);
@@ -408,9 +408,10 @@ HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const in
     return hn::ShiftRight<8>(sum);
 }
 
-template <class T, int Width>
+template <class T, int Width, int FixedReferences = 0>
 void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
                      span2d::Plane<T> out, const ChangeLimit<T>& limit) {
+  const int references = FixedReferences ? FixedReferences : p.references;
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   const bool overlap = g.overlap_x || g.overlap_y;
   std::vector<Acc<T>> sums(overlap ? g.visible_width : 0);
@@ -425,13 +426,13 @@ void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p
     for (int by = first; by <= last; ++by) {
       const int ly = y - by * sy;
       for (int bx = 0; bx < g.blocks_x; ++bx) {
-        const auto index = (std::size_t(by) * g.blocks_x + bx) * (p.references + 1);
+        const auto index = (std::size_t(by) * g.blocks_x + bx) * (references + 1);
         const auto* sources = p.sources.data() + index;
         const auto* weights = p.weights.data() + index;
         const int ox = bx * sx;
         const int visible = y < g.visible_height ? std::clamp(g.visible_width - ox, 0, g.block_width) : 0;
         const auto consume = [&](auto tag, int x, bool write) HWY_ATTR {
-          const auto value = DegrainValue(tag, sources, weights, p.references, ly, x, limit.maximum());
+          const auto value = DegrainValue<FixedReferences>(tag, sources, weights, references, ly, x, limit.maximum());
           if (write) {
             if (overlap)
               AddValue(tag, value, sources[0].coefficients + std::size_t(ly) * g.block_width + x, sums.data() + ox + x);
@@ -461,6 +462,17 @@ void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p
     }
   }
 }
+template <class T, int Width>
+void DegrainPlaneCommon(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
+                        span2d::Plane<T> out, const ChangeLimit<T>& limit) {
+  if constexpr (!std::is_same_v<T, float>) {
+    if (p.references == 2)
+      return DegrainPlaneRun<T, Width, 2>(g, p, centre, out, limit);
+    if (p.references == 4)
+      return DegrainPlaneRun<T, Width, 4>(g, p, centre, out, limit);
+  }
+  DegrainPlaneRun<T, Width>(g, p, centre, out, limit);
+}
 template <class T>
 void DegrainDispatch(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
                      span2d::Plane<T> out, const ChangeLimit<T>& limit) {
@@ -468,9 +480,9 @@ void DegrainDispatch(const BlockCompositionGeometry& g, const DegrainPlane<T>& p
     case 4:
       return DegrainPlaneRun<T, 4>(g, p, centre, out, limit);
     case 8:
-      return DegrainPlaneRun<T, 8>(g, p, centre, out, limit);
+      return DegrainPlaneCommon<T, 8>(g, p, centre, out, limit);
     case 16:
-      return DegrainPlaneRun<T, 16>(g, p, centre, out, limit);
+      return DegrainPlaneCommon<T, 16>(g, p, centre, out, limit);
     default:
       return DegrainPlaneRun<T, 32>(g, p, centre, out, limit);
   }
