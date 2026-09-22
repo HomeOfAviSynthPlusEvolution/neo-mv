@@ -75,13 +75,13 @@ public:
         std::fill_n(output.row(y).data(), output.width(), input_.fallback());
       return;
     }
-    const auto grid = std::visit([&](const auto& plan) { return plan.generate(field.grid); }, scores_);
+    const auto grid = std::visit([&](const auto& plan) { return plan.template generate<true>(field.grid); }, scores_);
     if (static_cast<std::uintmax_t>(m.blocks_x) >
         static_cast<std::uintmax_t>(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(T))
       throw std::overflow_error("mask grid row stride is unrepresentable");
     const auto view = checked_plane(grid.data(), m.blocks_x, m.blocks_y,
                                     static_cast<std::ptrdiff_t>(m.blocks_x) * sizeof(T), grid.size() * sizeof(T));
-    resampling_.resize(view, output, m.bits);
+    resampling_.template resize<T, true>(view, output, m.bits);
   }
 };
 } // namespace neo_mv

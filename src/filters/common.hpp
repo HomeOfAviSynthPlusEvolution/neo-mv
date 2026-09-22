@@ -11,6 +11,14 @@
 #include <variant>
 
 namespace neo_mv::ds2 {
+// These host runtimes own fields produced by the fully validating decoder.
+// Request state is not modified between eligibility and pixel processing.
+// Standalone core/kernel APIs continue to use validating counters.
+template <class Kernels>
+struct DecodedFieldKernels : Kernels {
+  static constexpr auto scene_count = Kernels::scene_count_validated;
+};
+
 inline void require(bool ok, const char* message) {
   if (!ok)
     throw std::invalid_argument(message);

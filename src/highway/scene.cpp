@@ -43,6 +43,22 @@ std::int64_t SceneCount(const AnalysisMetadata& m, const MotionGrid& grid, std::
   }
   return bad;
 }
+std::int64_t SceneCountValidated(const AnalysisMetadata&, const MotionGrid& grid, std::int64_t threshold) {
+  const hn::ScalableTag<std::int64_t> d;
+  const auto lanes = hn::Lanes(d);
+  HWY_ALIGN std::int64_t sad[hn::MaxLanes(d)];
+  const auto limit = hn::Set(d, threshold);
+  std::int64_t bad = 0;
+  std::size_t i = 0;
+  for (; i + lanes <= grid.values.size(); i += lanes) {
+    for (std::size_t j = 0; j < lanes; ++j)
+      sad[j] = grid.values[i + j].error;
+    bad += static_cast<std::int64_t>(hn::CountTrue(d, hn::Gt(hn::Load(d, sad), limit)));
+  }
+  for (; i < grid.values.size(); ++i)
+    bad += grid.values[i].error > threshold;
+  return bad;
+}
 } // namespace HWY_NAMESPACE
 } // namespace neo_mv::simd
 HWY_AFTER_NAMESPACE();
@@ -50,6 +66,10 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd {
 HWY_EXPORT(SceneCount);
+HWY_EXPORT(SceneCountValidated);
+std::int64_t scene_count_validated(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
+  return HWY_DYNAMIC_DISPATCH(SceneCountValidated)(m, grid, threshold);
+}
 std::int64_t scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
   return HWY_DYNAMIC_DISPATCH(SceneCount)(m, grid, threshold);
 }

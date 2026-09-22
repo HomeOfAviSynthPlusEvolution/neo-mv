@@ -77,7 +77,8 @@ struct RenderRuntime {
 
 template <class T, bool Degrain, class Kernels>
 class TypedRenderRuntime final : public RenderRuntime {
-  using Plan = std::conditional_t<Degrain, DegrainFramePlan<T, Kernels>, CompensateFramePlan<T, Kernels>>;
+  using Plan = std::conditional_t<Degrain, DegrainFramePlan<T, DecodedFieldKernels<Kernels>>,
+                                  CompensateFramePlan<T, DecodedFieldKernels<Kernels>>>;
   ds::VideoInputInfo clip_, super_;
   std::string prefix_;
   CompensateParameters compensation_;

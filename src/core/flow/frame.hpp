@@ -117,7 +117,7 @@ public:
     const int shift = field_shift(n, current_top, reference_top);
     std::vector<DenseFlowField> fields;
     for (int k = 0; k < plane_count(); ++k)
-      fields.push_back(dense_[k].generate(field.grid, shift));
+      fields.push_back(dense_[k].template generate<true>(field.grid, shift));
     // No reference sample is read until every plane's actual coordinates pass.
     for (int k = 0; k < plane_count(); ++k)
       sampling_plans_[k].preflight(fields[k]);

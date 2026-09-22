@@ -43,12 +43,12 @@ class DenseInterpolationPlan {
       field_detail::vector(m, grid.values[i], static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
   }
   std::vector<std::uint8_t> mask(const MotionGrid& grid, std::size_t direction, int time256) const {
-    const auto small =
-        OcclusionMaskPlan<std::uint8_t>(mask_metadata(metadata_[direction]), f_, 1, time256).generate(grid);
+    const auto small = OcclusionMaskPlan<std::uint8_t>(mask_metadata(metadata_[direction]), f_, 1, time256)
+                           .template generate<true>(grid);
     const auto& g = backward_.geometry();
     std::vector<std::uint8_t> output(dense_detail::count(g.width, g.height));
-    masks_.resize(dense_detail::plane(small.data(), g.blocks_x, g.blocks_y, small.size()),
-                  dense_detail::plane(output.data(), g.width, g.height, output.size()), 8);
+    masks_.template resize<std::uint8_t, true>(dense_detail::plane(small.data(), g.blocks_x, g.blocks_y, small.size()),
+                                               dense_detail::plane(output.data(), g.width, g.height, output.size()), 8);
     return output;
   }
 
@@ -64,23 +64,32 @@ public:
   }
   const GridResamplingGeometry& geometry() const { return backward_.geometry(); }
   float normalization() const { return f_; }
+  template <bool Validated = false>
   DenseInterpolationFields generate(const MotionGrid& backward, const MotionGrid& forward, int time256,
                                     const MotionGrid* extra_backward = nullptr,
                                     const MotionGrid* extra_forward = nullptr) const {
     if (time256 < 0 || time256 > 256 || bool(extra_backward) != bool(extra_forward))
       throw std::invalid_argument("invalid interpolation time or unpaired extra fields");
-    validate(backward, 0);
-    validate(forward, 1);
-    if (extra_backward) {
-      validate(*extra_backward, 0);
-      validate(*extra_forward, 1);
+    if constexpr (!Validated) {
+      validate(backward, 0);
+      validate(forward, 1);
+      if (extra_backward) {
+        validate(*extra_backward, 0);
+        validate(*extra_forward, 1);
+      }
     }
     const auto& g = geometry();
-    DenseInterpolationFields result{g.width, g.height, backward_.generate(backward, 0),  forward_.generate(forward, 0),
-                                    {},      {},       mask(backward, 0, 256 - time256), mask(forward, 1, time256)};
+    DenseInterpolationFields result{g.width,
+                                    g.height,
+                                    backward_.template generate<true>(backward, 0),
+                                    forward_.template generate<true>(forward, 0),
+                                    {},
+                                    {},
+                                    mask(backward, 0, 256 - time256),
+                                    mask(forward, 1, time256)};
     if (extra_backward) {
-      result.BB = backward_.generate(*extra_backward, 0);
-      result.FF = forward_.generate(*extra_forward, 0);
+      result.BB = backward_.template generate<true>(*extra_backward, 0);
+      result.FF = forward_.template generate<true>(*extra_forward, 0);
     }
     return result;
   }

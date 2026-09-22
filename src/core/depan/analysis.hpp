@@ -146,6 +146,7 @@ public:
       throw std::invalid_argument("Depan analysis frame outside clip");
     return metadata_.delta > 0 ? (std::max)(std::int64_t{0}, n - 1) : n;
   }
+  template <bool Validated = false>
   bool eligible(const AnalysisField& field) const {
     if (field.state == FieldState::invalid_metadata)
       return false;
@@ -160,15 +161,21 @@ public:
     std::uint64_t bad = 0;
     for (std::size_t i = 0; i < field.grid.values.size(); ++i) {
       const auto& value = field.grid.values[i];
-      field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
+      if constexpr (!Validated)
+        field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
       if (value.error > thresholds_.error)
         ++bad;
     }
     return analysis_detail::integer32(bad) <= thresholds_.count;
   }
   Observations observe(const AnalysisField& field, std::optional<span2d::Plane<const std::uint8_t>> mask = {}) const {
+    return observe_selected(field, eligible(field), mask);
+  }
+  // Internal staged entry: selection belongs to this unchanged decoded field.
+  Observations observe_selected(const AnalysisField& field, bool selected,
+                                std::optional<span2d::Plane<const std::uint8_t>> mask = {}) const {
     const auto& m = field.metadata;
-    Observations result{m.blocks_x, m.blocks_y, eligible(field), masked_, thresholds_.error, {}};
+    Observations result{m.blocks_x, m.blocks_y, selected, masked_, thresholds_.error, {}};
     if (!result.eligible)
       return result;
     if (masked_) {
@@ -193,7 +200,8 @@ public:
   }
   template <class ReadProperty>
   Observations read(ReadProperty&& properties, std::optional<span2d::Plane<const std::uint8_t>> mask = {}) const {
-    return observe(read_analysis_field(std::forward<ReadProperty>(properties), true), mask);
+    const auto field = read_analysis_field(std::forward<ReadProperty>(properties), true);
+    return observe_selected(field, eligible<true>(field), mask);
   }
 };
 

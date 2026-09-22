@@ -57,11 +57,12 @@ inline MotionVector map(const AnalysisField& old, const AnalysisMetadata& target
 // geometry-only validate_motion_layer at plugin creation as well; this frame
 // entry point rechecks it before any mapping or metric evaluation unless the
 // caller retains the unchanged creation-time target and geometry.
-template <class T, class Kernels = ScalarKernels<T>, bool GeometryValidated = false>
+template <class T, class Kernels = ScalarKernels<T>, bool GeometryValidated = false, bool InputValidated = false>
 MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata& target,
                                const SamplingGeometry& geometry, const SamplingFrames<T>& frames,
                                RecalculateControls controls = {}) {
-  validate_owned_field(old);
+  if constexpr (!InputValidated)
+    validate_owned_field(old);
   validate_analysis_precision<T>(target.bits);
   if (old.metadata.bits != target.bits || controls.mvlambda < 0 || controls.search < 0 || controls.search > 5 ||
       controls.pnew < 0 || controls.pnew > 256 ||

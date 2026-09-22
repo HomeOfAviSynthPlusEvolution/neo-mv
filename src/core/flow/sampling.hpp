@@ -97,11 +97,12 @@ protected:
   }
 
 public:
-  template <class T, bool Preflighted = false>
+  template <class T, bool Preflighted = false, bool StorageValidated = false>
   void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
     if constexpr (!Preflighted)
       preflight(field);
-    validate_storage(field, source, output);
+    if constexpr (!StorageValidated)
+      validate_storage(field, source, output);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto i = std::size_t(y) * width_ + x;

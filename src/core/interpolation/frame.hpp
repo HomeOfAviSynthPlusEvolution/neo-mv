@@ -73,18 +73,22 @@ public:
       Kernels::blend(a[k], b[k], result[k].view(), time, this->video_.bits);
     return result;
   }
+  // Eligible is internal: the same immutable fields passed main/extra eligibility.
+  template <bool Eligible = false>
   RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const AnalysisField* BB,
                          const AnalysisField* FF, const RenderImage<T>& left, const RenderImage<T>& right,
                          int time) const {
-    if (!this->main_eligible(B, F) || bool(BB) != bool(FF) || (BB && !this->extra_eligible(*BB, *FF)))
-      throw std::invalid_argument("motion interpolation requires eligible fields");
+    if constexpr (!Eligible)
+      if (!this->main_eligible(B, F) || bool(BB) != bool(FF) || (BB && !this->extra_eligible(*BB, *FF)))
+        throw std::invalid_argument("motion interpolation requires eligible fields");
     this->input_.validate_image(left);
     this->input_.validate_image(right);
     using DenseResult = decltype(dense_[0].generate(B.grid, F.grid, time));
     std::vector<DenseResult> fields;
     std::vector<typename Kernels::Sampling> plans;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      fields.push_back(dense_[k].generate(B.grid, F.grid, time, BB ? &BB->grid : nullptr, FF ? &FF->grid : nullptr));
+      fields.push_back(
+          dense_[k].template generate<true>(B.grid, F.grid, time, BB ? &BB->grid : nullptr, FF ? &FF->grid : nullptr));
       const auto g = this->input_.phase_geometry(k);
       plans.emplace_back(g, g, this->video_.width / g.ratio_x, this->video_.height / g.ratio_y, time,
                          this->video_.bits);
@@ -119,20 +123,23 @@ public:
       plans_.emplace_back(g, video.width / g.ratio_x, video.height / g.ratio_y, prec, time);
     }
   }
+  // Eligible is internal: the same immutable fields passed main/extra eligibility.
+  template <bool Eligible = false>
   RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const RenderImage<T>& image) const {
-    if (!this->main_eligible(B, F))
-      throw std::invalid_argument("motion blur requires eligible fields");
+    if constexpr (!Eligible)
+      if (!this->main_eligible(B, F))
+        throw std::invalid_argument("motion blur requires eligible fields");
     this->input_.validate_image(image);
     std::vector<DenseFlowField> backward, forward;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      backward.push_back(dense_[k].generate(B.grid, 0));
-      forward.push_back(dense_[k].generate(F.grid, 0));
+      backward.push_back(dense_[k].template generate<true>(B.grid, 0));
+      forward.push_back(dense_[k].template generate<true>(F.grid, 0));
       plans_[k].preflight(forward.back(), backward.back());
     }
     auto result = this->allocate();
     for (int k = 0; k < this->input_.plane_count(); ++k)
-      plans_[k].template sample<T, typename Kernels::BlurAverage, true>(forward[k], backward[k], image.planes[k],
-                                                                        result[k].view(), this->video_.bits);
+      plans_[k].template sample<T, typename Kernels::BlurAverage, true, true>(forward[k], backward[k], image.planes[k],
+                                                                              result[k].view(), this->video_.bits);
     return result;
   }
 };

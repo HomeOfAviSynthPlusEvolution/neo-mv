@@ -116,7 +116,7 @@ struct DepanAnalysisFilter {
     }
     if (r.stage == 1) {
       r.field = read_field(frame(ctx.frames, 1, r.k), "MVUtensils");
-      r.eligible = s.input->eligible(r.field);
+      r.eligible = s.input->eligible<true>(r.field);
       r.stage = 2;
     }
     return ds::Result<ds::VideoStageResult>::success(ds::VideoStageResult::Ready);
@@ -130,7 +130,7 @@ struct DepanAnalysisFilter {
       if (r.eligible)
         mask = plane<std::uint8_t>(owner->frame.plane(0));
     }
-    const auto observations = s.input->observe(r.field, mask);
+    const auto observations = s.input->observe_selected(r.field, r.eligible, mask);
 #if NEO_MV_ENABLE_HIGHWAY
     const auto result = selected_backend() == KernelBackend::highway
                             ? depan::fit<depan::HighwayResiduals>(observations, s.fit)

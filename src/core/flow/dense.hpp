@@ -73,16 +73,20 @@ public:
   const AnalysisMetadata& metadata() const { return metadata_; }
   const GridResamplingGeometry& geometry() const { return geometry_; }
 
+  // The frame path has already admitted every vector and SAD before fallback.
+  template <bool Validated = false>
   DenseFlowField generate(const MotionGrid& grid, int field_shift) const {
     const auto& m = metadata_;
     if (field_shift != 0 && (m.pel == 1 || m.delta % 2 == 0 || (field_shift != m.pel / 2 && field_shift != -m.pel / 2)))
       throw std::invalid_argument("invalid dense flow field correction");
-    if (grid.width != m.blocks_x || grid.height != m.blocks_y || grid.values.size() != field_detail::count(m))
-      throw std::invalid_argument("inconsistent dense flow motion grid");
-    // Validate every public entry before allocating or clipping. Saturating a
-    // malformed vector must never turn it into an accepted displacement.
-    for (std::size_t i = 0; i < grid.values.size(); ++i)
-      field_detail::vector(m, grid.values[i], static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
+    if constexpr (!Validated) {
+      if (grid.width != m.blocks_x || grid.height != m.blocks_y || grid.values.size() != field_detail::count(m))
+        throw std::invalid_argument("inconsistent dense flow motion grid");
+      // Validate every public entry before allocating or clipping. Saturating a
+      // malformed vector must never turn it into an accepted displacement.
+      for (std::size_t i = 0; i < grid.values.size(); ++i)
+        field_detail::vector(m, grid.values[i], static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
+    }
     const auto small_count = dense_detail::count(m.blocks_x, m.blocks_y);
     const auto output_count = dense_detail::count(geometry_.width, geometry_.height);
     std::vector<std::int16_t> small_x(small_count), small_y(small_count);
@@ -97,8 +101,10 @@ public:
         dense_detail::plane(static_cast<const std::int16_t*>(small_x.data()), m.blocks_x, m.blocks_y, small_x.size());
     const auto y_input =
         dense_detail::plane(static_cast<const std::int16_t*>(small_y.data()), m.blocks_x, m.blocks_y, small_y.size());
-    resampling_.resize(x_input, dense_detail::plane(output.x.data(), output.width, output.height, output.x.size()), 16);
-    resampling_.resize(y_input, dense_detail::plane(output.y.data(), output.width, output.height, output.y.size()), 16);
+    resampling_.template resize<std::int16_t, true>(
+        x_input, dense_detail::plane(output.x.data(), output.width, output.height, output.x.size()), 16);
+    resampling_.template resize<std::int16_t, true>(
+        y_input, dense_detail::plane(output.y.data(), output.width, output.height, output.y.size()), 16);
     return output;
   }
 };

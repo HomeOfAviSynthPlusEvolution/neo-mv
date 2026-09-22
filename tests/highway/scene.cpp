@@ -55,9 +55,15 @@ void run() {
       for (double percent : {0.0, 33.3, 50.0, 100.0}) {
         const SceneClassifier classifier(scene_descriptor(f.metadata), 400, percent);
         CHECK(classifier(f) == classifier(f, simd::scene_count));
+        CHECK(classifier(f) == classifier(f, scalar_scene_count_validated));
+        CHECK(classifier(f) == classifier(f, simd::scene_count_validated));
         CHECK(scalar_scene_count(f.metadata, f.grid, 400) == simd::scene_count(f.metadata, f.grid, 400));
       }
-      CHECK(simd::scene_count(f.metadata, f.grid, INT64_MAX) == 0);
+      for (const auto threshold : {std::int64_t(0), std::int64_t(400), INT64_MAX}) {
+        const auto expected = scalar_scene_count(f.metadata, f.grid, threshold);
+        CHECK(scalar_scene_count_validated(f.metadata, f.grid, threshold) == expected);
+        CHECK(simd::scene_count_validated(f.metadata, f.grid, threshold) == expected);
+      }
       const SceneClassifier classifier(scene_descriptor(f.metadata), 0, 0);
       // Every lane and tail must still be checked after an earlier bad SAD.
       for (std::size_t i = 0; i < f.grid.values.size(); ++i) {

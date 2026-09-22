@@ -23,11 +23,12 @@ public:
     validate_dense(field);
     flow_sample(*this, field, nullptr);
   }
-  template <class T, bool Preflighted = false>
+  template <class T, bool Preflighted = false, bool StorageValidated = false>
   void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
     if constexpr (!Preflighted)
       preflight(field);
-    validate_storage(field, source, output);
+    if constexpr (!StorageValidated)
+      validate_storage(field, source, output);
     FlowSampleStorage storage{};
     storage.coordinates_validated = true;
     for (int a = 0; a < geometry().pel * geometry().pel; ++a) {

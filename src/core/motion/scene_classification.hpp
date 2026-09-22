@@ -28,6 +28,16 @@ inline std::int64_t scalar_scene_count(const AnalysisMetadata& m, const MotionGr
   return bad;
 }
 
+// Internal counter for unchanged fields returned by read_analysis_field(..., true).
+// SceneClassifier still checks the saved descriptor, state, and storage shape.
+inline std::int64_t scalar_scene_count_validated(const AnalysisMetadata&, const MotionGrid& grid,
+                                                 std::int64_t threshold) {
+  std::int64_t bad = 0;
+  for (const auto& value : grid.values)
+    bad += value.error > threshold;
+  return bad;
+}
+
 inline SceneThresholds scene_thresholds(SceneDescriptor d, std::int64_t thscd1, double thscd2) {
   if (d.block_width < 2 || d.block_height < 2 || d.blocks_x <= 0 || d.blocks_y <= 0 ||
       (d.ratio_x != 1 && d.ratio_x != 2) || (d.ratio_y != 1 && d.ratio_y != 2) ||

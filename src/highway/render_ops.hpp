@@ -170,6 +170,7 @@ struct HighwayRenderKernels : RenderPreparation<T> {
   // Sample producers continue to check values read from borrowed images.
 
   static constexpr auto scene_count = &simd::scene_count;
+  static constexpr auto scene_count_validated = &simd::scene_count_validated;
   static constexpr auto sample_render_block = &simd::sample_render_block<T>;
   static constexpr auto sample_render_block_validated = &simd::sample_render_block<T, true>;
   static constexpr auto sample_compensated_block = &simd::sample_compensated_block<T>;

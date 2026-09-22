@@ -58,6 +58,7 @@ struct ScalarRenderKernels : RenderPreparation<T> {
   // Sample producers continue to check values read from borrowed images.
 
   static constexpr auto scene_count = &scalar_scene_count;
+  static constexpr auto scene_count_validated = &scalar_scene_count_validated;
   static constexpr auto sample_render_block = &neo_mv::sample_render_block<T>;
   static constexpr auto sample_render_block_validated = &neo_mv::sample_render_block<T, true>;
   static constexpr auto sample_compensated_block = &neo_mv::sample_compensated_block<T>;

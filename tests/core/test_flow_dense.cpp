@@ -107,7 +107,9 @@ struct AuditedResampler {
   GridResamplingPlan inner;
   static inline int calls = 0;
   explicit AuditedResampler(GridResamplingGeometry geometry) : inner(geometry) {}
-  void resize(span2d::Plane<const std::int16_t> input, span2d::Plane<std::int16_t> output, int bits) const {
+  template <class T, bool Validated = false>
+  void resize(span2d::Plane<const T> input, span2d::Plane<T> output, int bits) const {
+    static_assert(std::is_same_v<T, std::int16_t>);
     ++calls;
     CHECK(bits == 16);
     CHECK(input.stride_bytes() == input.width() * std::ptrdiff_t(sizeof(std::int16_t)));

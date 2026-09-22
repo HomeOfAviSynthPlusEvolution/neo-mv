@@ -24,8 +24,8 @@ struct TemporalRuntime {
 
 template <class T, TemporalKind Kind, class Kernels = ScalarInterpolationKernels<T>>
 class TypedTemporalRuntime final : public TemporalRuntime {
-  using Plan =
-      std::conditional_t<Kind == TemporalKind::Blur, BlurFramePlan<T, Kernels>, InterpolationFramePlan<T, Kernels>>;
+  using Plan = std::conditional_t<Kind == TemporalKind::Blur, BlurFramePlan<T, DecodedFieldKernels<Kernels>>,
+                                  InterpolationFramePlan<T, DecodedFieldKernels<Kernels>>>;
   ds::VideoInputInfo clip_, super_;
   std::string prefix_;
   bool blend_, extras_;
@@ -172,13 +172,13 @@ public:
     } else if constexpr (Kind == TemporalKind::Blur) {
       const auto source = frame(ctx.frames, 1, ctx.output_frame);
       const FrameSuper<T> image(source.frame, super_, prefix_);
-      output = plan_.motion(r.B, r.F, render_image(image));
+      output = plan_.template motion<true>(r.B, r.F, render_image(image));
     } else {
       const auto l = frame(ctx.frames, 1, static_cast<int>(r.left));
       const auto rr = frame(ctx.frames, 1, static_cast<int>(r.right));
       const FrameSuper<T> left(l.frame, super_, prefix_), right(rr.frame, super_, prefix_);
-      output = plan_.motion(r.B, r.F, r.extra ? &r.BB : nullptr, r.extra ? &r.FF : nullptr, render_image(left),
-                            render_image(right), r.time);
+      output = plan_.template motion<true>(r.B, r.F, r.extra ? &r.BB : nullptr, r.extra ? &r.FF : nullptr,
+                                           render_image(left), render_image(right), r.time);
     }
     for (int k = 0; k < clip_.format.plane_count; ++k) {
       const auto src = output[k].view();

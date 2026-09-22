@@ -34,6 +34,7 @@ struct HighwayBlurAverage {
 template <class T>
 struct HighwayInterpolationKernels {
   static constexpr auto scene_count = &simd::scene_count;
+  static constexpr auto scene_count_validated = &simd::scene_count_validated;
   using BlurSampling = simd::BlurSamplingPlan;
   using Sampling = simd::InterpolationSamplingPlan;
   using Dense = DenseInterpolationPlan<simd::GridResamplingPlan>;

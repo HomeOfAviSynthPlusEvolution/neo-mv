@@ -18,7 +18,7 @@ inline MaskParameters mask_parameters(const ds::ParamValues& values) {
 template <class T, class Kernels>
 class MaskRuntime final : public Runtime {
   std::string prefix_;
-  MaskFramePlan<T, Kernels> plan_;
+  MaskFramePlan<T, DecodedFieldKernels<Kernels>> plan_;
 
 public:
   MaskRuntime(ds::VideoInitContext& ctx, MaskKind kind, AnalysisMetadata metadata)

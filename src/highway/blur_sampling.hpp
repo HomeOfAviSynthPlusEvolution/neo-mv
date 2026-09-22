@@ -28,13 +28,14 @@ public:
     validate_field(backward);
     blur_preflight(*this, forward, backward);
   }
-  template <class T, class Average = ScalarBlurAverage, bool Preflighted = false>
+  template <class T, class Average = ScalarBlurAverage, bool Preflighted = false, bool StorageValidated = false>
   void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
               span2d::Plane<T> output, int bits, Average average = {}) const {
     mask_detail::validate_storage<T>(bits);
     if constexpr (!Preflighted)
       preflight(forward, backward);
-    validate_storage(forward, backward, source, output);
+    if constexpr (!StorageValidated)
+      validate_storage(forward, backward, source, output);
     if constexpr (std::is_same_v<Average, ScalarBlurAverage> || std::is_same_v<Average, HighwayBlurAverage>) {
       blur_plane(*this, forward, backward, source, output, bits);
       return;

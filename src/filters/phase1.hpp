@@ -227,8 +227,9 @@ struct RecalculateRuntime final : Runtime {
         parity(b.frame, k, tff);
     }
     auto borrowed = sample_frames(current, ref, target.chroma);
-    AnalysisField output{target, FieldState::complete,
-                         recalculate_vectors<T, Kernels, true>(input, target, geometry, borrowed.front(), controls)};
+    AnalysisField output{
+        target, FieldState::complete,
+        recalculate_vectors<T, Kernels, true, true>(input, target, geometry, borrowed.front(), controls)};
     write_field(properties(ctx.dst), output, prefix);
   }
 };
@@ -248,10 +249,10 @@ struct SceneRuntime final : Runtime {
   void process(ds::VideoProcessContext& ctx) const override {
     auto input = frame(ctx.frames, 1, ctx.output_frame);
     auto field = read_field(input, prefix);
-    auto count = scalar_scene_count;
+    auto count = scalar_scene_count_validated;
 #if NEO_MV_ENABLE_HIGHWAY
     if (selected_backend() == KernelBackend::highway)
-      count = simd::scene_count;
+      count = simd::scene_count_validated;
 #endif
     set_scalar(properties(ctx.dst), field.metadata.delta > 0 ? "_SceneChangeNext" : "_SceneChangePrev",
                classifier(field, count));

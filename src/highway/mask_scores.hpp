@@ -12,8 +12,11 @@ public:
       : grid_(m, f, gamma, time256), maximum_(score_detail::maximum<T>(m.bits)), f2_(score_detail::finite(f * f)),
         g2_(score_detail::finite(gamma / 2.0f)) {}
 
+  // Validated is reserved for an unchanged grid admitted by the input plan.
+  template <bool Validated = false>
   std::vector<T> generate(const MotionGrid& grid) const {
-    grid_.validate(grid);
+    if constexpr (!Validated)
+      grid_.validate(grid);
     const auto& m = grid_.metadata();
     std::vector<T> output;
     output.reserve(grid.values.size());
@@ -43,8 +46,11 @@ public:
         scale_(score_detail::finite(score_detail::finite(4.0f * f) /
                                     static_cast<float>(std::int64_t(m.block_width) * m.block_height))) {}
 
+  // Validated is reserved for an unchanged grid admitted by the input plan.
+  template <bool Validated = false>
   std::vector<T> generate(const MotionGrid& grid) const {
-    grid_.validate(grid);
+    if constexpr (!Validated)
+      grid_.validate(grid);
     const auto& m = grid_.metadata();
     std::vector<T> output;
     output.reserve(grid.values.size());
@@ -87,8 +93,11 @@ public:
         ax_(score_detail::finite(score_detail::finite(80.0f * f) / static_cast<float>(grid_.step_x() * m.pel))),
         ay_(score_detail::finite(score_detail::finite(80.0f * f) / static_cast<float>(grid_.step_y() * m.pel))) {}
 
+  // Validated is reserved for an unchanged grid admitted by the input plan.
+  template <bool Validated = false>
   std::vector<T> generate(const MotionGrid& grid) const {
-    grid_.validate(grid);
+    if constexpr (!Validated)
+      grid_.validate(grid);
     const auto& m = grid_.metadata();
     std::vector<T> output(grid.values.size(), T{0});
     for (int by = 0; by < m.blocks_y; ++by) {

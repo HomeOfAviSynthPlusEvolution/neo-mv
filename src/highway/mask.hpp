@@ -8,6 +8,7 @@ namespace neo_mv {
 template <class T>
 struct HighwayMaskKernels {
   static constexpr auto scene_count = &simd::scene_count;
+  static constexpr auto scene_count_validated = &simd::scene_count_validated;
   using GridResampling = simd::GridResamplingPlan;
   using VectorLength = simd::VectorLengthMaskPlan<T>;
   using SAD = simd::SADMaskPlan<T>;

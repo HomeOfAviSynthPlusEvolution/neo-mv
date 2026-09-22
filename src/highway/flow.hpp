@@ -11,6 +11,7 @@ namespace neo_mv {
 template <class T>
 struct HighwayFlowKernels : ScalarFlowKernels<T> {
   static constexpr auto scene_count = &simd::scene_count;
+  static constexpr auto scene_count_validated = &simd::scene_count_validated;
   using Sampling = simd::FlowSamplingPlan;
   static void sample(const Sampling& plan, const DenseFlowField& field, const SubpixelPhases<T>& source,
                      span2d::Plane<T> output) {
@@ -18,7 +19,7 @@ struct HighwayFlowKernels : ScalarFlowKernels<T> {
   }
   static void sample_preflighted(const Sampling& plan, const DenseFlowField& field, const SubpixelPhases<T>& source,
                                  span2d::Plane<T> output) {
-    plan.template sample<T, true>(field, source, output);
+    plan.template sample<T, true, true>(field, source, output);
   }
   using DenseFlow = DenseFlowPlan<simd::GridResamplingPlan>;
 };

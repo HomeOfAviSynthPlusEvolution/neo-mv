@@ -125,6 +125,13 @@ void availability_and_malformed_arrays() {
   p.integers["MVUtensilsAnalysisVectors"][0] = 0;
   p.integers["MVUtensilsAnalysisSAD"][1] = -1;
   rejects<std::invalid_argument>([&] { read_analysis_field(p); });
+  // Decode must reject a malformed tail even when earlier SADs already imply a scene cut.
+  p.integers["MVUtensilsAnalysisSAD"].assign(4, INT64_MAX);
+  p.integers["MVUtensilsAnalysisSAD"].back() = -1;
+  rejects<std::invalid_argument>([&] { read_analysis_field(p); });
+  p.integers["MVUtensilsAnalysisSAD"].back() = 0;
+  p.integers["MVUtensilsAnalysisVectors"].back() = pack_vector({INT32_MAX, 0});
+  rejects<std::invalid_argument>([&] { read_analysis_field(p); });
   p.integers.erase("MVUtensilsAnalysisVectors");
   CHECK(read_analysis_field(p).state == FieldState::metadata_only);
 

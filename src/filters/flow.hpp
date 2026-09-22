@@ -29,7 +29,7 @@ class TypedFlowRuntime final : public FlowRuntime {
   ds::VideoInputInfo clip_, super_;
   std::string prefix_;
   FlowParameters parameters_;
-  FlowFramePlan<T, Kernels> plan_;
+  FlowFramePlan<T, DecodedFieldKernels<Kernels>> plan_;
 
   static AnalysisMetadata metadata(ds::VideoInitContext& ctx, const std::string& prefix) {
     const auto field = read_field(frame(*ctx.frames, 2, 0), prefix, false);
