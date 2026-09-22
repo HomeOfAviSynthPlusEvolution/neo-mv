@@ -55,6 +55,15 @@ void domain_proof() {
                   for (int x = left; x < right; ++x)
                     expected = safe(g, b, x, y, t) && expected;
                 CHECK(!rejects([&] { validate_render_domain(g, b, {left, top, right, bottom}, t); }) == expected);
+                if (expected)
+                  for (int y = top; y < bottom; ++y)
+                    for (int x = left; x < right; ++x) {
+                      const RenderDisplacement d{std::int64_t(x) * t / 256, std::int64_t(y) * t / 256};
+                      const auto checked = render_footprint_admitted(g, b, d);
+                      const auto proven = render_footprint_domain_proven(g, b, d);
+                      CHECK(checked.phase == proven.phase && checked.x == proven.x && checked.y == proven.y &&
+                            checked.width == proven.width && checked.height == proven.height);
+                    }
               }
   for (int edge : {-257, -256, -255, 255, 256, 257}) {
     const auto g = geometry(2, 2, 2, 0);

@@ -51,7 +51,7 @@ inline sampling_detail::OffsetRange phase_range(std::int64_t first, std::int64_t
 
 // Unlike analysis-error sampling, floor the total coordinate, including the
 // negative chroma displacement. The returned rectangle includes cropped edges.
-template <bool GeometryAdmitted = false>
+template <bool GeometryAdmitted = false, bool DomainProven = false>
 inline RenderFootprint render_footprint_impl(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
   using namespace render_sampling_detail;
   if constexpr (!GeometryAdmitted)
@@ -68,8 +68,9 @@ inline RenderFootprint render_footprint_impl(const RenderPhaseGeometry& g, Block
   const auto y = GeometryAdmitted ? std::int64_t(g.pad_y) + sampling_detail::floor_div(ay, g.pel)
                                   : prediction_detail::add(g.pad_y, sampling_detail::floor_div(ay, g.pel));
   const int width = b.width / g.ratio_x, height = b.height / g.ratio_y;
-  if (!fits(x, width, g.phases[phase].width) || !fits(y, height, g.phases[phase].height))
-    throw std::invalid_argument("render block exceeds its logical phase domain");
+  if constexpr (!DomainProven)
+    if (!fits(x, width, g.phases[phase].width) || !fits(y, height, g.phases[phase].height))
+      throw std::invalid_argument("render block exceeds its logical phase domain");
   return {phase, static_cast<int>(x), static_cast<int>(y), width, height};
 }
 inline RenderFootprint render_footprint(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
@@ -77,6 +78,12 @@ inline RenderFootprint render_footprint(const RenderPhaseGeometry& g, BlockRegio
 }
 inline RenderFootprint render_footprint_admitted(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
   return render_footprint_impl<true>(g, b, d);
+}
+// Frame plans may use this only after admitting the complete vector domain
+// for this block and plane. A field shift invalidates that proof.
+inline RenderFootprint render_footprint_domain_proven(const RenderPhaseGeometry& g, BlockRegion b,
+                                                      RenderDisplacement d) {
+  return render_footprint_impl<true, true>(g, b, d);
 }
 
 // Geometry proof for every integer vector in the unchanged public rectangle.

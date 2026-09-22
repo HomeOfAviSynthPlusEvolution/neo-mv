@@ -31,6 +31,7 @@ struct CompensationDecision {
 template <class T>
 struct RenderPreparation {
   using CompensationBlocks = std::vector<SampledRenderBlock<T>>;
+  template <bool DomainProven = false>
   static CompensationBlocks prepare_compensated(const OverlapCompositionPlan& plan, const CompensationRule& rule,
                                                 const RenderPhaseGeometry& geometry, const MotionGrid& field, int shift,
                                                 const SubpixelPhases<T>& current, const SubpixelPhases<T>& reference,
@@ -49,11 +50,14 @@ struct RenderPreparation {
         const auto v = field.values[index];
         const auto selected = decisions ? (*decisions)[index].selected : rule.select(v.vector, v.error, shift);
         // Preflight the actual reference even when SAD selects current pixels.
-        const auto reference_footprint = render_footprint_admitted(
-            geometry, block,
-            decisions ? (*decisions)[index].reference_displacement : rule.reference_displacement(v.vector, shift));
-        const auto footprint = selected.reference ? reference_footprint
-                                                  : render_footprint_admitted(geometry, block, selected.displacement);
+        const auto displacement =
+            decisions ? (*decisions)[index].reference_displacement : rule.reference_displacement(v.vector, shift);
+        const auto reference_footprint = DomainProven ? render_footprint_domain_proven(geometry, block, displacement)
+                                                      : render_footprint_admitted(geometry, block, displacement);
+        const auto footprint =
+            selected.reference ? reference_footprint
+                               : (DomainProven ? render_footprint_domain_proven(geometry, block, selected.displacement)
+                                               : render_footprint_admitted(geometry, block, selected.displacement));
         const auto plane = (selected.reference ? reference : current).planes[footprint.phase];
         blocks.push_back({plane.row(footprint.y).data() + footprint.x, plane.stride(),
                           plan.has_overlap() ? plan.coefficient_row(bx, by, 0) : nullptr});
@@ -61,7 +65,7 @@ struct RenderPreparation {
     return blocks;
   }
   using DegrainPlane = neo_mv::DegrainPlane<T>;
-  template <class Images>
+  template <bool DomainProven = false, class Images>
   static DegrainPlane
   prepare_degrain(const OverlapCompositionPlan& plan, const RenderPhaseGeometry& geometry,
                   const std::vector<AnalysisField>& fields, const std::vector<std::optional<std::int64_t>>& selected,
@@ -93,7 +97,8 @@ struct RenderPreparation {
                                 g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
         const auto* window = plan.has_overlap() ? plan.coefficient_row(bx, by, 0) : nullptr;
         const auto append = [&](const SubpixelPhases<T>& image, RenderDisplacement displacement) {
-          const auto f = render_footprint_admitted(geometry, block, displacement);
+          const auto f = DomainProven ? render_footprint_domain_proven(geometry, block, displacement)
+                                      : render_footprint_admitted(geometry, block, displacement);
           const auto view = image.planes[f.phase];
           result.sources.push_back({view.row(f.y).data() + f.x, view.stride(), window});
         };

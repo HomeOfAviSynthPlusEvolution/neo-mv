@@ -183,8 +183,14 @@ public:
     // Descriptors borrow the source; no temporary pixel blocks are produced.
     std::array<typename Kernels::CompensationBlocks, 3> blocks;
     for (int k = 0; k < grid_.plane_count(); ++k)
-      blocks[k] = Kernels::prepare_compensated(grid_.composition(k), rule_, grid_.phase_geometry(k), field.grid, shift,
-                                               current.planes[k], reference_image->planes[k], &decisions);
+      if (shift == 0)
+        blocks[k] = Kernels::template prepare_compensated<true>(grid_.composition(k), rule_, grid_.phase_geometry(k),
+                                                                field.grid, shift, current.planes[k],
+                                                                reference_image->planes[k], &decisions);
+      else
+        blocks[k] = Kernels::template prepare_compensated<false>(grid_.composition(k), rule_, grid_.phase_geometry(k),
+                                                                 field.grid, shift, current.planes[k],
+                                                                 reference_image->planes[k], &decisions);
     for (int k = 0; k < grid_.plane_count(); ++k)
       Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
     return output;
@@ -257,9 +263,9 @@ public:
     std::array<typename Kernels::DegrainPlane, 3> prepared;
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k))
-        prepared[k] = Kernels::prepare_degrain(grid_.composition(k), grid_.phase_geometry(k), fields, selected,
-                                               current.planes[k], images, weights_, k,
-                                               k == 2 && grid_.processed(1) ? &prepared[1].weights : nullptr);
+        prepared[k] = Kernels::template prepare_degrain<true>(
+            grid_.composition(k), grid_.phase_geometry(k), fields, selected, current.planes[k], images, weights_, k,
+            k == 2 && grid_.processed(1) ? &prepared[1].weights : nullptr);
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k)) {
         const auto g = grid_.phase_geometry(k);
