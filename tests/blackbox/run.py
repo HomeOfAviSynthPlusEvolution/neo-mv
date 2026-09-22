@@ -108,7 +108,7 @@ def main():
     parser.add_argument("--case", action="append", choices=BY_ID, dest="cases", help="repeat to select cases")
     parser.add_argument("--list", action="store_true", help="list cases without importing VS")
     phase = parser.add_mutually_exclusive_group()
-    phase.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6], help="select one development phase")
+    phase.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6, 7], help="select one development phase")
     phase.add_argument("--phase4", action="store_const", const=4, dest="phase", help="select phase four")
     phase.add_argument("--phase5", action="store_const", const=5, dest="phase", help="select phase five")
     phase.add_argument("--phase6", action="store_const", const=6, dest="phase", help="select phase six")

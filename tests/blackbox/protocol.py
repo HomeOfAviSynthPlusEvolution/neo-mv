@@ -19,12 +19,14 @@ DEPAN_FLOAT_RELATIVE_TOLERANCE = 1e-5
 
 def observation_keys(spec):
     keys = list(ORDINARY_KEYS) + [spec["prefix"] + suffix for suffix in SUPER_KEYS + ANALYSIS_KEYS]
-    if spec.get("phase") in (3, 4, 5, 6):
+    if spec.get("phase") in (3, 4, 5, 6, 7):
         keys += ["_Range", "_ColorRange", "_Matrix"]
-    if spec.get("phase") in (5, 6):
+    if spec.get("phase") in (5, 6, 7):
         keys += list(DEPAN_KEYS)
     if spec.get("phase") == 6:
         keys += list(ESTIMATE_KEYS)
+    if spec.get("phase") == 7:
+        keys += ["DepanStabilise_info"]
     return keys
 
 
@@ -101,7 +103,7 @@ def validate_result(result, spec, backend):
     creation_error = result.get("creation_error")
     if creation_error is not None:
         validate_error(creation_error)
-        if spec.get("phase") not in (2, 3, 4, 5, 6) or result.get("outputs") != [] or result.get("records") != []:
+        if spec.get("phase") not in (2, 3, 4, 5, 6, 7) or result.get("outputs") != [] or result.get("records") != []:
             raise ValueError("invalid creation failure observation")
     elif len(result.get("outputs", [])) != spec["members"]:
         raise ValueError("wrong output member count")
@@ -117,7 +119,7 @@ def validate_result(result, spec, backend):
                 raise ValueError("error record also contains successful pixels")
         else:
             validate_snapshot(record)
-            if spec.get("phase") in (3, 4, 5, 6):
+            if spec.get("phase") in (3, 4, 5, 6, 7):
                 names = record.get("property_names")
                 if not isinstance(names, list) or any(not isinstance(name, str) for name in names) or \
                         names != sorted(set(names)) or \
@@ -128,15 +130,17 @@ def validate_result(result, spec, backend):
         raise ValueError("missing or duplicated source frames")
     for item in inputs:
         validate_snapshot(item)
-    if spec.get("phase") in (2, 3, 4, 5, 6):
+    if spec.get("phase") in (2, 3, 4, 5, 6, 7):
         if not result.get("input_video"):
             raise ValueError("missing source video metadata")
-    if spec.get("phase") in (2, 4, 5, 6) or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
+    if spec.get("phase") in (2, 4, 5, 6, 7) or (spec.get("phase") == 3 and spec.get("operation") == "Flow"):
         auxiliary = result.get("auxiliary_inputs", [])
         if spec.get("phase") == 6 and result.get("auxiliary_inputs") != []:
             raise ValueError("DepanEstimate requires an explicit empty auxiliary input inventory")
         if spec.get("phase") == 6:
             expected = []
+        elif spec.get("phase") == 7:
+            expected = ["data"]
         elif spec.get("phase") == 5:
             expected = (["vectors"] + (["mask"] if spec["mask"] is not None else [])) \
                 if spec["operation"] == "DepanAnalyse" else ["data"]
@@ -166,7 +170,7 @@ def validate_result(result, spec, backend):
                 requested.get("sha256") != env["plugin_sha256"] or \
                 requested.get("selection") != "explicit; autoload disabled":
             raise ValueError("explicit reference identity differs from loaded binary")
-    if spec.get("phase") in (5, 6) and spec["params"].get("info"):
+    if spec.get("phase") in (5, 6, 7) and spec["params"].get("info"):
         renderer = env.get("text_renderer", {})
         if renderer.get("entry") != "text.FrameProps" or \
                 renderer.get("arguments") != dict(props=[spec["operation"] + "_info"]) or \

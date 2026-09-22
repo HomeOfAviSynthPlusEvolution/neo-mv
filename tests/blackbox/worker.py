@@ -24,6 +24,7 @@ import flow_cases
 import interpolation_cases
 import depan_cases
 import estimate_cases
+import stabilise_cases
 from protocol import ORDINARY_KEYS, SCHEMA, digest_file, digest_json, observation_keys, output_observation_keys
 
 
@@ -194,7 +195,7 @@ def main():
         if explicit_reference:
             result["environment"]["reference_request"] = verify_explicit_plugin(
                 plugin, args.mvu_plugin, args.mvu_plugin_sha256)
-        if spec.get("phase") in (5, 6) and spec["params"].get("info"):
+        if spec.get("phase") in (5, 6, 7) and spec["params"].get("info"):
             renderer = core.text
             renderer_path = Path(renderer.plugin_path).resolve() if renderer.plugin_path else None
             result["environment"]["text_renderer"] = dict(plugin_path=str(renderer_path) if renderer_path else None,
@@ -205,7 +206,7 @@ def main():
         keys = observation_keys(spec)
         output_keys = output_observation_keys(spec)
         prepared = None
-        fixture = {2: render_cases, 3: mask_cases, 4: interpolation_cases, 5: depan_cases, 6: estimate_cases}.get(spec.get("phase"))
+        fixture = {2: render_cases, 3: mask_cases, 4: interpolation_cases, 5: depan_cases, 6: estimate_cases, 7: stabilise_cases}.get(spec.get("phase"))
         if spec.get("phase") == 3 and spec.get("operation") == "Flow":
             fixture = flow_cases
         if fixture is not None:
@@ -265,7 +266,7 @@ def main():
             else:
                 with acquired as frame:
                     observation = dict(**result["active_request"], **snapshot(frame, output_keys))
-                    if spec.get("phase") in (3, 4, 5, 6):
+                    if spec.get("phase") in (3, 4, 5, 6, 7):
                         # Observe unexpected property presence without decoding
                         # or exporting unknown/private property payloads.
                         observation["property_names"] = sorted(frame.props)

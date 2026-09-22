@@ -55,6 +55,18 @@ void recurrences() {
   CHECK(correction(two, {0, 1}, 1, 8, 48, 48, p, c).map.u == .5f);
   rejects([] { smooth_component(0, 0, 0, 0, 0, 1, 1, 1, 0); });
   rejects([] { smooth_component(std::numeric_limits<float>::max(), 0, 0, 0, 0, 1, 1, 1, 1); });
+  // A finite large motion sequence can diverge before correction limiting.
+  // A negative limit must not convert that arithmetic error into a reset.
+  for (float limit : {10.0f, -10.0f}) {
+    p = {};
+    p.dxmax = limit;
+    c = normalize(p, 48, 48, 24000, 1001);
+    auto maps = cumulative({0, 7}, c, [](int) { return Motion{20, 0, 0, 1, true}; });
+    rejects([&] { inertial(maps, c); });
+    rejects([&] { correction(maps, {0, 7}, 7, 8, 48, 48, p, c); });
+    maps.pop_back();
+    CHECK(std::isfinite(inertial(maps, c).back().tx));
+  }
 }
 void bounds_and_window() {
   Parameters p;

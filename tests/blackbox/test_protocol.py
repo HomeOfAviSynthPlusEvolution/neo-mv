@@ -18,10 +18,52 @@ from flow_cases import CASES as FLOW_CASES
 from interpolation_cases import CASES as INTERPOLATION_CASES
 from depan_cases import CASES as DEPAN_CASES
 from estimate_cases import CASES as ESTIMATE_CASES, OBSERVATION_KEYS as ESTIMATE_KEYS
+from stabilise_cases import CASES as STABILISE_CASES
 from run import validate_depan_tolerance_selection
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_stabilise_transport_requires_carrier_and_strict_outputs(self):
+        spec = copy.deepcopy(STABILISE_CASES[0])
+        spec.update(length=5, requests=[[0, 4], [0, 0], [0, 2]])
+        spec, reference = self.depan_result(spec)
+        for record in reference['records']:
+            record['properties']['DepanStabilise_info'] = property_value(b'inherited')
+            record['property_names'] = sorted(record['properties'])
+        validate_result(reference, spec, 'mvu')
+        self.assertEqual(output_observation_keys(spec).count('DepanStabilise_info'), 1)
+        missing = copy.deepcopy(reference)
+        missing['auxiliary_inputs'] = []
+        with self.assertRaises(ValueError):
+            validate_result(missing, spec, 'mvu')
+        changed = copy.deepcopy(reference)
+        changed['records'][0]['properties']['DepanStabilise_info'] = property_value(b'changed')
+        self.assertEqual(compare(reference, changed, spec)[0], 'difference')
+        changed = copy.deepcopy(reference)
+        changed['records'][0]['planes'][0].update(data='01', sha256=hashlib.sha256(b'\1').hexdigest())
+        self.assertEqual(compare(reference, changed, spec)[0], 'difference')
+        with self.assertRaises(ValueError):
+            validate_depan_tolerance_selection(True, 'highway', [spec])
+
+    def test_stabilise_catalog_and_renderer_provenance(self):
+        from catalog import BY_ID
+        for spec in STABILISE_CASES:
+            self.assertIs(BY_ID[spec['id']], spec)
+            self.assertEqual(spec['operation'], 'DepanStabilise')
+            self.assertEqual(spec['phase'], 7)
+            for member, n in spec['requests']:
+                self.assertEqual(member, 0)
+                self.assertTrue(0 <= n < spec['length'])
+        spec = copy.deepcopy(next(s for s in STABILISE_CASES if s['params'].get('info')))
+        spec.update(length=5, requests=[[0, 0]])
+        spec, result = self.depan_result(spec)
+        with self.assertRaises(ValueError):
+            validate_result(result, spec, 'mvu')
+        result['environment']['text_renderer'] = dict(plugin_path=None, plugin_sha256=None,
+            builtin_core='R79', plugin_version='1', entry='text.FrameProps',
+            arguments=dict(props=['DepanStabilise_info']))
+        validate_result(result, spec, 'mvu')
+
     def setUp(self):
         self.spec = CASES[0]
         frame = dict(planes=[dict(width=1, height=1, sample_bytes=1, data="00",
