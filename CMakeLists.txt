@@ -144,6 +144,8 @@ if(NEO_MV_BUILD_BENCHMARKS)
   endif()
   add_executable(neo_mv_benchmark benchmarks/kernels.cpp)
   target_link_libraries(neo_mv_benchmark PRIVATE neo_mv_highway)
+  add_executable(neo_mv_sampling_benchmark benchmarks/sampling.cpp)
+  target_link_libraries(neo_mv_sampling_benchmark PRIVATE neo_mv_highway)
 endif()
 
 include(CTest)
