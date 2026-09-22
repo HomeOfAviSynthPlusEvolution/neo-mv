@@ -5,6 +5,8 @@
 #include "core/super/subpixel.hpp"
 #include "highway/rows.hpp"
 
+#include <optional>
+
 namespace neo_mv::simd {
 template <class T>
 constexpr std::int64_t storage_max() {
@@ -322,6 +324,7 @@ class PreparedBlockError {
   FrameStorage frames_;
   std::array<detail::MetricRequest<T>, 3> requests_{};
   detail::MetricBatchFunction<T> metric_batch_;
+  bool bounded_sad_ = false;
 
   static FrameStorage store_frames(const SamplingGeometry& g, const FrameInput& frames) {
     if constexpr (OwnsFrames)
@@ -355,32 +358,7 @@ class PreparedBlockError {
     for (int k = first; k < last; ++k)
       reference(k, qx, qy, phase);
   }
-
-public:
-  PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const FrameInput& frame_input, BlockMetric metric)
-      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
-        frames_(store_frames(g, frame_input)) {
-    if constexpr (std::is_same_v<T, float>)
-      metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
-    else if (chroma_ && ratio_x_ == 2 && ratio_y_ == 2 && metric == BlockMetric::sad && block.width == block.height) {
-      metric_batch_ = block.width == 16 ? detail::metric_batch_420_function(static_cast<T *>(nullptr))
-                     : block.width == 8 ? detail::metric_batch_420_small_function(static_cast<T *>(nullptr))
-                                        : detail::metric_batch_function(static_cast<T *>(nullptr));
-    } else
-      metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
-    for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
-      const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
-      x_[k] = g.planes[k].pad_x + block.x / rx;
-      y_[k] = g.planes[k].pad_y + block.y / ry;
-      auto& request = requests_[k];
-      request.source = frames().current[k].row(y_[k]).data() + x_[k];
-      request.source_stride = frames().current[k].stride();
-      request.width = block.width / rx;
-      request.height = block.height / ry;
-      request.satd = k == 0 && metric == BlockMetric::satd;
-    }
-  }
-  BlockError operator()(MotionVector vector) {
+  void prepare_references(MotionVector vector) {
     if (pel_ == 2 && chroma_ && ratio_x_ == 2 && ratio_y_ == 2) {
       const auto qx = (std::int64_t(vector.x) - (vector.x < 0)) / 2;
       const auto qy = (std::int64_t(vector.y) - (vector.y < 0)) / 2;
@@ -398,10 +376,61 @@ public:
         reference_pair(1, 3, tx, ty);
       }
     }
+  }
+
+public:
+  PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const FrameInput& frame_input, BlockMetric metric)
+      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
+        frames_(store_frames(g, frame_input)) {
+    if constexpr (std::is_same_v<T, float>)
+      metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
+    else if (chroma_ && ratio_x_ == 2 && ratio_y_ == 2 && metric == BlockMetric::sad && block.width == block.height) {
+      metric_batch_ = block.width == 16 ? detail::metric_batch_420_function(static_cast<T *>(nullptr))
+                     : block.width == 8 ? detail::metric_batch_420_small_function(static_cast<T *>(nullptr))
+                                        : detail::metric_batch_function(static_cast<T *>(nullptr));
+      bounded_sad_ = block.width == 16 || block.width == 8;
+    } else
+      metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
+    for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
+      const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
+      x_[k] = g.planes[k].pad_x + block.x / rx;
+      y_[k] = g.planes[k].pad_y + block.y / ry;
+      auto& request = requests_[k];
+      request.source = frames().current[k].row(y_[k]).data() + x_[k];
+      request.source_stride = frames().current[k].stride();
+      request.width = block.width / rx;
+      request.height = block.height / ry;
+      request.satd = k == 0 && metric == BlockMetric::satd;
+    }
+  }
+  BlockError operator()(MotionVector vector) {
+    prepare_references(vector);
     std::array<std::int64_t, 3> errors{};
     metric_batch_(requests_.data(), chroma_ ? 3 : 1, errors.data());
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
+  }
+  std::optional<BlockError> bounded(MotionVector vector, std::int64_t limit, MotionVector predictor,
+                                    std::int64_t lambda, int penalty) {
+    const auto dx = std::int64_t(vector.x) - predictor.x, dy = std::int64_t(vector.y) - predictor.y;
+    // The selected 420 blocks have at most 384 samples. With these bounds,
+    // distance, full SAD and both penalties fit int64; otherwise retain the
+    // ordinary path and its overflow errors.
+    if (!bounded_sad_ || lambda < 0 || lambda > INT32_MAX || penalty < 0 || penalty > 256 ||
+        dx < -32767 || dx > 32767 || dy < -32767 || dy > 32767)
+      return operator()(vector);
+    prepare_references(vector);
+    std::array<std::int64_t, 3> errors{};
+    for (int k = 0; k < 3; ++k) {
+      const auto& r = requests_[k];
+      errors[k] = detail::metric(r.source, r.source_stride, r.reference, r.reference_stride,
+                                 r.width, r.height, false);
+      if (errors[k] >= limit)
+        return std::nullopt;
+      limit -= errors[k];
+    }
+    const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
+    return BlockError{errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
   }
 };
 

@@ -133,11 +133,30 @@ template <class T> void sampled_motion() {
                   a.chroma == c.chroma && a.raw == c.raw && a.luma == d.luma && a.chroma == d.chroma &&
                   a.raw == d.raw,
               "sampled error mismatch");
+        const auto admitted = shared.bounded(v, a.raw + 1, {0, 0}, 0, 0);
+        check(admitted && admitted->luma == a.luma && admitted->chroma == a.chroma && admitted->raw == a.raw,
+              "bounded metric changed an admitted candidate");
+        if constexpr (std::is_integral_v<T>)
+          if (metric == BlockMetric::sad && a.raw > 0)
+            check(!shared.bounded(v, a.raw, {0, 0}, 0, 0), "bounded metric admitted a non-improving candidate");
       }
     };
     for (int y : {-3, -1, 0, 1, 3})
       for (int x : {-3, -1, 0, 1, 3})
         same_error({x, y});
+    if constexpr (std::is_integral_v<T>)
+      if (pel == 2) {
+        decltype(auto) prepared_frames = HighwayKernels<T>::prepare_frames(f.geometry, f.frames);
+        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, 8, 8}, prepared_frames,
+                                                              BlockMetric::sad);
+        bool overflow = false;
+        try {
+          refine_motion({{0, 0}, 0, 0}, {{INT32_MIN, 0}, INT64_MAX, 0, {-1, -1, 2, 2}, 4, 1, {}}, shared);
+        } catch (const std::overflow_error&) {
+          overflow = true;
+        }
+        check(overflow, "bounded search hid a candidate cost overflow");
+      }
 
     const auto same_grid = [](const MotionGrid &a, const MotionGrid &b) {
       check(a.width == b.width && a.height == b.height && a.values.size() == b.values.size(), "grid geometry");

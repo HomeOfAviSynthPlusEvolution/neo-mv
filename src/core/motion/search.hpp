@@ -48,6 +48,17 @@ inline std::int64_t distance(MotionVector v, MotionVector predictor, std::int64_
 inline std::int64_t penalty(std::int64_t error, int q) {
   return (error / 256) * q + (error % 256) * q / 256;
 }
+template <class Evaluator>
+auto bounded(Evaluator& evaluate, MotionVector vector, std::int64_t limit, MotionVector predictor,
+             std::int64_t lambda, int penalty, int)
+    -> decltype(evaluate.bounded(vector, limit, predictor, lambda, penalty)) {
+  return evaluate.bounded(vector, limit, predictor, lambda, penalty);
+}
+template <class Evaluator>
+std::optional<BlockError> bounded(Evaluator& evaluate, MotionVector vector, std::int64_t, MotionVector,
+                                  std::int64_t, int, long) {
+  return evaluate(vector);
+}
 } // namespace search_detail
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -90,11 +101,13 @@ SearchResult refine_motion(SearchResult initial, const SearchParams& p, Evaluato
     if (x < omega.left || x >= omega.right || y < omega.top || y >= omega.bottom)
       return false;
     const MotionVector v{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)};
-    const BlockError error = evaluate(v);
-    const auto cost = candidate_cost(v, p.predictor, p.lambda, p.penalty, error);
+    const auto error = search_detail::bounded(evaluate, v, best.cost, p.predictor, p.lambda, p.penalty, 0);
+    if (!error)
+      return false;
+    const auto cost = candidate_cost(v, p.predictor, p.lambda, p.penalty, *error);
     if (cost >= best.cost)
       return false;
-    best = {v, cost, error.raw};
+    best = {v, cost, error->raw};
     return true;
   };
   const auto offset = [&](MotionVector center, std::int64_t x, std::int64_t y) {

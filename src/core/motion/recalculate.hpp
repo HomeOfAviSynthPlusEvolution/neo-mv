@@ -91,9 +91,11 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       SearchResult result{u, error.raw, error.raw};
       if (error.raw > threshold) {
         const auto lambda = by == 0 ? 0 : lambda0 / (target.pel * target.pel);
+        // Recalculate's short searches use the full metric path; bounded
+        // metric dispatch costs more than it saves here.
         result = refine_motion(
             result, {u, lambda, controls.pnew, omega, controls.search, std::max(1, controls.searchparam), {}},
-            evaluate);
+            [&](MotionVector vector) { return evaluate(vector); });
       }
       output.values[std::size_t(by) * target.blocks_x + bx] = {result.vector, result.raw};
     }
