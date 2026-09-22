@@ -381,11 +381,22 @@ public:
     }
   }
   BlockError operator()(MotionVector vector) {
-    reference_pair(0, 1, vector.x, vector.y);
-    if (chroma_) {
-      const auto tx = ratio_x_ == 2 ? std::int64_t(vector.x) / 2 : vector.x;
-      const auto ty = ratio_y_ == 2 ? std::int64_t(vector.y) / 2 : vector.y;
-      reference_pair(1, 3, tx, ty);
+    if (pel_ == 2 && chroma_ && ratio_x_ == 2 && ratio_y_ == 2) {
+      const auto qx = (std::int64_t(vector.x) - (vector.x < 0)) / 2;
+      const auto qy = (std::int64_t(vector.y) - (vector.y < 0)) / 2;
+      reference(0, qx, qy, std::size_t((vector.y - 2 * qy) * 2 + vector.x - 2 * qx));
+      const auto tx = std::int64_t(vector.x) / 2, ty = std::int64_t(vector.y) / 2;
+      const auto cx = (tx - (tx < 0)) / 2, cy = (ty - (ty < 0)) / 2;
+      const auto phase = std::size_t((ty - 2 * cy) * 2 + tx - 2 * cx);
+      reference(1, cx, cy, phase);
+      reference(2, cx, cy, phase);
+    } else {
+      reference_pair(0, 1, vector.x, vector.y);
+      if (chroma_) {
+        const auto tx = ratio_x_ == 2 ? std::int64_t(vector.x) / 2 : vector.x;
+        const auto ty = ratio_y_ == 2 ? std::int64_t(vector.y) / 2 : vector.y;
+        reference_pair(1, 3, tx, ty);
+      }
     }
     std::array<std::int64_t, 3> errors{};
     metric_batch_(requests_.data(), chroma_ ? 3 : 1, errors.data());
