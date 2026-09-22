@@ -124,7 +124,7 @@ public:
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
       output.emplace_back(sampling_plans_[k].width(), sampling_plans_[k].height());
-      Kernels::sample(sampling_plans_[k], fields[k], reference_image->planes[k], output.back().view());
+      Kernels::sample_preflighted(sampling_plans_[k], fields[k], reference_image->planes[k], output.back().view());
     }
     return output;
   }

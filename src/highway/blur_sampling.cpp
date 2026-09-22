@@ -34,10 +34,12 @@ void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int
     const auto phase = hn::Add(hn::And(dx, fraction), hn::ShiftLeftSame(hn::And(dy, fraction), shift));
     const auto sx = hn::Add(hn::Set(d, std::int64_t(g.pad_x) + x), hn::ShiftRightSame(dx, shift));
     const auto sy = hn::Add(hn::Set(d, std::int64_t(g.pad_y) + y), hn::ShiftRightSame(dy, shift));
-    const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, hn::GatherIndex(d, widths, phase)));
-    const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, hn::GatherIndex(d, heights, phase)));
-    if (!hn::AllTrue(d, hn::Or(hn::Not(hn::FirstN(d, used)), hn::And(valid_x, valid_y))))
-      throw std::invalid_argument("blur trajectory exceeds logical phase domain");
+    if (!storage || !storage->coordinates_validated) {
+      const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, hn::GatherIndex(d, widths, phase)));
+      const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, hn::GatherIndex(d, heights, phase)));
+      if (!hn::AllTrue(d, hn::Or(hn::Not(hn::FirstN(d, used)), hn::And(valid_x, valid_y))))
+        throw std::invalid_argument("blur trajectory exceeds logical phase domain");
+    }
     if (storage) {
       hn::Store(sx, d, columns);
       hn::Store(sy, d, rows);

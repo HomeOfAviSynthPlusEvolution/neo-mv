@@ -61,18 +61,19 @@ inline std::int64_t encode_float_error(float error) {
 // The views are already sampled, identically sized rectangles. Sampling,
 // whole-candidate-domain admission and luma/chroma assembly are separate steps.
 // No nominal-range clipping or bit-depth normalization is applied here.
-template <class T>
+template <class T, bool Validated = false>
 std::int64_t block_metric(span2d::Plane<const T> source, span2d::Plane<const T> reference, BlockMetric metric) {
   static_assert(supported_sample<T>, "unsupported sample storage");
-  validate_plane(source);
-  validate_plane(reference);
-  if (source.width() != reference.width() || source.height() != reference.height())
-    throw std::invalid_argument("block metric rectangle size mismatch");
-  if (metric != BlockMetric::sad && metric != BlockMetric::satd)
-    throw std::invalid_argument("unknown block metric");
-  if (metric == BlockMetric::satd && (source.width() % 4 != 0 || source.height() % 4 != 0))
-    throw std::invalid_argument("SATD requires complete 4x4 cells");
-
+  if constexpr (!Validated) {
+    validate_plane(source);
+    validate_plane(reference);
+    if (source.width() != reference.width() || source.height() != reference.height())
+      throw std::invalid_argument("block metric rectangle size mismatch");
+    if (metric != BlockMetric::sad && metric != BlockMetric::satd)
+      throw std::invalid_argument("unknown block metric");
+    if (metric == BlockMetric::satd && (source.width() % 4 != 0 || source.height() % 4 != 0))
+      throw std::invalid_argument("SATD requires complete 4x4 cells");
+  }
   using A = std::conditional_t<std::is_same_v<T, float>, float, std::int64_t>;
   using namespace metric_detail;
   const auto difference = [&](int x, int y) -> A {

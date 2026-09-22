@@ -6,69 +6,77 @@
 #include "highway/rows.hpp"
 
 namespace neo_mv::simd {
-template <class T> constexpr std::int64_t storage_max() {
+template <class T>
+constexpr std::int64_t storage_max() {
   if constexpr (std::is_same_v<T, float>)
     return 0;
   else
     return std::numeric_limits<T>::max();
 }
-template <class T>
+template <class T, bool Validated = false>
 void extend_border(span2d::Plane<const T> src, span2d::Plane<T> dst, int ww, int hh, int hp, int vp) {
-  validate_plane(src);
-  validate_plane(dst);
-  if (ww < src.width() || hh < src.height() || hp < 0 || vp < 0)
-    throw std::invalid_argument("invalid border geometry");
-  const auto w = std::int64_t(ww) + 2LL * hp, h = std::int64_t(hh) + 2LL * vp;
-  if (w > INT32_MAX || h > INT32_MAX)
-    throw std::overflow_error("padded dimensions exceed view range");
-  if (w != dst.width() || h != dst.height() || active_rows_overlap(src, dst))
-    throw std::invalid_argument("invalid border output");
-  if constexpr (std::is_same_v<T, float>)
-    for (int y = 0; y < src.height(); ++y)
-      detail::scan(src.row(y).data(), src.width(), 0);
+  if constexpr (!Validated) {
+    validate_plane(src);
+    validate_plane(dst);
+    if (ww < src.width() || hh < src.height() || hp < 0 || vp < 0)
+      throw std::invalid_argument("invalid border geometry");
+    const auto w = std::int64_t(ww) + 2LL * hp, h = std::int64_t(hh) + 2LL * vp;
+    if (w > INT32_MAX || h > INT32_MAX)
+      throw std::overflow_error("padded dimensions exceed view range");
+    if (w != dst.width() || h != dst.height() || active_rows_overlap(src, dst))
+      throw std::invalid_argument("invalid border output");
+    if constexpr (std::is_same_v<T, float>)
+      for (int y = 0; y < src.height(); ++y)
+        detail::scan(src.row(y).data(), src.width(), 0);
+  }
   for (int y = 0; y < dst.height(); ++y) {
-    const auto *row = src.row(std::clamp(y - vp, 0, src.height() - 1)).data();
-    auto *out = dst.row(y).data();
+    const auto* row = src.row(std::clamp(y - vp, 0, src.height() - 1)).data();
+    auto* out = dst.row(y).data();
     detail::fill(row[0], out, hp);
     detail::copy(row, out + hp, src.width());
     detail::fill(row[src.width() - 1], out + hp + src.width(), dst.width() - hp - src.width());
   }
 }
-template <class T> std::int64_t block_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric op) {
-  validate_plane(a);
-  validate_plane(b);
-  if (a.width() != b.width() || a.height() != b.height() || (op != BlockMetric::sad && op != BlockMetric::satd))
-    throw std::invalid_argument("invalid metric input");
-  if (op == BlockMetric::satd && (a.width() % 4 || a.height() % 4))
-    throw std::invalid_argument("invalid SATD rectangle");
+template <class T, bool Validated = false>
+std::int64_t block_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric op) {
+  if constexpr (!Validated) {
+    validate_plane(a);
+    validate_plane(b);
+    if (a.width() != b.width() || a.height() != b.height() || (op != BlockMetric::sad && op != BlockMetric::satd))
+      throw std::invalid_argument("invalid metric input");
+    if (op == BlockMetric::satd && (a.width() % 4 || a.height() % 4))
+      throw std::invalid_argument("invalid SATD rectangle");
+  }
   return detail::metric(a.data(), a.stride_bytes() / sizeof(T), b.data(), b.stride_bytes() / sizeof(T), a.width(),
                         a.height(), op == BlockMetric::satd);
 }
-template <class T>
+template <class T, bool Validated = false>
 void reduce_pyramid(span2d::Plane<const T> src, int ox, int oy, span2d::Plane<T> dst, int filter,
                     span2d::Plane<T> tmp = {}) {
-  validate_plane(src);
-  validate_plane(dst);
-  if (filter < 0 || filter > 2 || ox < 0 || oy < 0 || ox + 2LL * dst.width() > src.width() ||
-      oy + 2LL * dst.height() > src.height())
-    throw std::invalid_argument("invalid reduction geometry");
-  if (active_rows_overlap(src, dst))
-    throw std::invalid_argument("reduction overlaps input");
-  if (filter) {
-    validate_plane(tmp);
-    if (tmp.width() != 2LL * dst.width() || tmp.height() != dst.height() || active_rows_overlap(src, tmp) ||
-        active_rows_overlap(dst, tmp))
-      throw std::invalid_argument("invalid reduction scratch");
+  if constexpr (!Validated) {
+    validate_plane(src);
+    validate_plane(dst);
+    if (filter < 0 || filter > 2 || ox < 0 || oy < 0 || ox + 2LL * dst.width() > src.width() ||
+        oy + 2LL * dst.height() > src.height())
+      throw std::invalid_argument("invalid reduction geometry");
+    if (active_rows_overlap(src, dst))
+      throw std::invalid_argument("reduction overlaps input");
+    if (filter) {
+      validate_plane(tmp);
+      if (tmp.width() != 2LL * dst.width() || tmp.height() != dst.height() || active_rows_overlap(src, tmp) ||
+          active_rows_overlap(dst, tmp))
+        throw std::invalid_argument("invalid reduction scratch");
+    }
+    if constexpr (std::is_same_v<T, float>)
+      for (int y = 0; y < 2 * dst.height(); ++y)
+        detail::scan(src.row(oy + y).data() + ox, 2 * dst.width(), 0);
   }
-  if constexpr (std::is_same_v<T, float>)
-    for (int y = 0; y < 2 * dst.height(); ++y)
-      detail::scan(src.row(oy + y).data() + ox, 2 * dst.width(), 0);
   const auto maximum = storage_max<T>();
   if (filter == 0) {
     for (int y = 0; y < dst.height(); ++y) {
-      const auto *a = src.row(oy + 2 * y).data() + ox;
-      const auto *b = src.row(oy + 2 * y + 1).data() + ox;
-      const T *taps[]{a, a + 1, b + 1, b};
+      const auto* a = src.row(oy + 2 * y).data() + ox;
+      const auto* b = src.row(oy + 2 * y + 1).data() + ox;
+      const T* taps[]{a, a + 1, b + 1, b};
       // The last odd tap lacks the extra deinterleave partner: scalar final pixel.
       detail::formula(taps, 2, dst.row(y).data(), dst.width() - 1, detail::Formula::four_average, maximum);
       const int x = 2 * (dst.width() - 1);
@@ -78,7 +86,7 @@ void reduce_pyramid(span2d::Plane<const T> src, int ox, int oy, span2d::Plane<T>
     return;
   }
   for (int y = 0; y < dst.height(); ++y) {
-    const T *taps[6]{};
+    const T* taps[6]{};
     detail::Formula op;
     if (y == 0 || y == dst.height() - 1) {
       op = detail::Formula::average;
@@ -93,8 +101,8 @@ void reduce_pyramid(span2d::Plane<const T> src, int ox, int oy, span2d::Plane<T>
     detail::formula(taps, 1, tmp.row(y).data(), tmp.width(), op, maximum);
   }
   for (int y = 0; y < dst.height(); ++y) {
-    const auto *row = tmp.row(y).data();
-    auto *out = dst.row(y).data();
+    const auto* row = tmp.row(y).data();
+    auto* out = dst.row(y).data();
     const int w = dst.width();
     auto scalar = [&](int x) {
       out[x] = reduction_detail::filter_axis<T>([&](int i) { return row[i]; }, x, w, filter);
@@ -103,7 +111,7 @@ void reduce_pyramid(span2d::Plane<const T> src, int ox, int oy, span2d::Plane<T>
     const int end = std::max(1, w - 2);
     const int count = filter == 1 ? 4 : 6, first = filter == 1 ? -1 : -2;
     if (end > 1) {
-      const T *taps[6]{};
+      const T* taps[6]{};
       for (int i = 0; i < count; ++i)
         taps[i] = row + 2 + first + i;
       detail::formula(taps, 2, out + 1, end - 1, filter == 1 ? detail::Formula::reduce4 : detail::Formula::reduce6,
@@ -114,10 +122,11 @@ void reduce_pyramid(span2d::Plane<const T> src, int ox, int oy, span2d::Plane<T>
   }
 }
 namespace detail {
-template <class T> void half_horizontal(span2d::Plane<const T> src, span2d::Plane<T> dst, int sharp, std::int64_t max) {
+template <class T>
+void half_horizontal(span2d::Plane<const T> src, span2d::Plane<T> dst, int sharp, std::int64_t max) {
   for (int y = 0; y < src.height(); ++y) {
-    const auto *row = src.row(y).data();
-    auto *out = dst.row(y).data();
+    const auto* row = src.row(y).data();
+    auto* out = dst.row(y).data();
     const int w = src.width();
     int first = sharp == 0 ? 0 : sharp, end = sharp == 0 ? w - 1 : w - (sharp + 2);
     auto scalar = [&](int x) {
@@ -125,7 +134,7 @@ template <class T> void half_horizontal(span2d::Plane<const T> src, span2d::Plan
     };
     for (int x = 0; x < first; ++x)
       scalar(x);
-    const T *taps[6]{};
+    const T* taps[6]{};
     const int count = sharp == 0 ? 2 : sharp == 1 ? 4 : 6;
     const int offset = sharp == 0 ? 0 : -sharp;
     for (int i = 0; i < count; ++i)
@@ -140,7 +149,8 @@ template <class T> void half_horizontal(span2d::Plane<const T> src, span2d::Plan
       scalar(x);
   }
 }
-template <class T> void half_vertical(span2d::Plane<const T> src, span2d::Plane<T> dst, int sharp, std::int64_t max) {
+template <class T>
+void half_vertical(span2d::Plane<const T> src, span2d::Plane<T> dst, int sharp, std::int64_t max) {
   for (int y = 0; y < src.height(); ++y) {
     if (y == src.height() - 1) {
       copy(src.row(y).data(), dst.row(y).data(), src.width());
@@ -148,7 +158,7 @@ template <class T> void half_vertical(span2d::Plane<const T> src, span2d::Plane<
     }
     const bool interior = sharp > 0 && y >= sharp && y < src.height() - (sharp + 2);
     const int count = interior ? (sharp == 1 ? 4 : 6) : 2, offset = interior ? -sharp : 0;
-    const T *taps[6]{};
+    const T* taps[6]{};
     for (int i = 0; i < count; ++i)
       taps[i] = src.row(y + offset + i).data();
     formula(taps, 1, dst.row(y).data(), src.width(),
@@ -159,18 +169,20 @@ template <class T> void half_vertical(span2d::Plane<const T> src, span2d::Plane<
   }
 }
 } // namespace detail
-template <class T>
+template <class T, bool Validated = false>
 SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, int sharp, int bits,
-                                        const std::array<span2d::Plane<T>, 16> &storage) {
-  subpixel_detail::validate_storage(base, pel, storage);
+                                        const std::array<span2d::Plane<T>, 16>& storage) {
   const auto max = subpixel_detail::sample_max<T>(bits);
-  if (sharp < 0 || sharp > 2)
-    throw std::invalid_argument("invalid sharpness");
   const int w = base.width(), h = base.height();
-  if (pel > 1 && (w < 2 * (sharp + 1) || h < 2 * (sharp + 1)))
-    throw std::invalid_argument("small interpolation plane");
-  for (int y = 0; y < h; ++y)
-    detail::scan(base.row(y).data(), w, max);
+  if constexpr (!Validated) {
+    subpixel_detail::validate_storage(base, pel, storage);
+    if (sharp < 0 || sharp > 2)
+      throw std::invalid_argument("invalid sharpness");
+    if (pel > 1 && (w < 2 * (sharp + 1) || h < 2 * (sharp + 1)))
+      throw std::invalid_argument("small interpolation plane");
+    for (int y = 0; y < h; ++y)
+      detail::scan(base.row(y).data(), w, max);
+  }
   SubpixelPhases<T> result{pel, {}};
   result.planes[0] = base;
   if (pel == 1)
@@ -183,9 +195,9 @@ SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, in
     detail::half_horizontal(span2d::Plane<const T>(vertical), diag, sharp, max);
   else
     for (int y = 0; y < h; ++y) {
-      const auto *a = base.row(y).data();
-      const auto *b = base.row(std::min(y + 1, h - 1)).data();
-      const T *taps[]{a, a + 1, b, b + 1};
+      const auto* a = base.row(y).data();
+      const auto* b = base.row(std::min(y + 1, h - 1)).data();
+      const T* taps[]{a, a + 1, b, b + 1};
       if (y == h - 1)
         detail::formula(taps, 1, diag.row(y).data(), w - 1, detail::Formula::average, max);
       else
@@ -200,7 +212,7 @@ SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, in
       auto left = phase(lx, ly), right = phase(rx, ry);
       auto dst = storage[y * 4 + x];
       for (int row = 0; row < h - (y == 3); ++row) {
-        const T *taps[]{left.row(row + dy).data() + dx, right.row(row).data()};
+        const T* taps[]{left.row(row + dy).data() + dx, right.row(row).data()};
         detail::formula(taps, 1, dst.row(row).data(), w - (x == 3), detail::Formula::average, max);
       }
     };
@@ -224,25 +236,17 @@ SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, in
             storage[y * pel + x].subplane(0, 0, w - (pel == 4 && x == 3), h - (pel == 4 && y == 3));
   return result;
 }
-template <class T>
-BlockError block_error(const SamplingGeometry &g, BlockRegion b, const SamplingFrames<T> &frames, MotionVector vector,
+template <class T, bool Validated = false>
+BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
                        BlockMetric metric) {
-  validate_sampling_domain(g, b, sampling_detail::singleton(vector));
-  if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
-      (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
-    throw std::invalid_argument("invalid block error metric or SATD dimensions");
-  const int count = g.chroma ? 3 : 1;
-  // All enabled frame views must conform before any metric reads a pixel.
-  const auto conform = [](auto view, PhaseExtent extent) {
-    validate_plane(view);
-    if (view.width() != extent.width || view.height() != extent.height)
-      throw std::invalid_argument("frame does not conform to sampling geometry");
-  };
-  for (int k = 0; k < count; ++k) {
-    conform(frames.current[k], g.planes[k].current);
-    for (int a = 0; a < g.pel * g.pel; ++a)
-      conform(frames.reference[k][a], g.planes[k].reference[a]);
+  if constexpr (!Validated) {
+    validate_sampling_domain(g, b, sampling_detail::singleton(vector));
+    if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
+        (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
+      throw std::invalid_argument("invalid block error metric or SATD dimensions");
+    validate_sampling_frames(g, frames);
   }
+  const int count = g.chroma ? 3 : 1;
   std::array<std::int64_t, 3> errors{};
   for (int k = 0; k < count; ++k) {
     const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;
@@ -254,7 +258,7 @@ BlockError block_error(const SamplingGeometry &g, BlockRegion b, const SamplingF
     const auto source = frames.current[k].subplane(x, y, b.width / rx, b.height / ry);
     const auto reference = frames.reference[k][static_cast<std::size_t>(ay * g.pel + ax)].subplane(
         static_cast<int>(x + qx), static_cast<int>(y + qy), b.width / rx, b.height / ry);
-    errors[k] = neo_mv::simd::block_metric(source, reference, k == 0 ? metric : BlockMetric::sad);
+    errors[k] = neo_mv::simd::block_metric<T, true>(source, reference, k == 0 ? metric : BlockMetric::sad);
   }
   const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
@@ -263,7 +267,7 @@ BlockError block_error(const SamplingGeometry &g, BlockRegion b, const SamplingF
 template <class T>
 SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d::Plane<const T> external,
                                              int actual_width, int actual_height, int pad_x, int pad_y, int pel,
-                                             int bits, const std::array<span2d::Plane<T>, 16> &storage) {
+                                             int bits, const std::array<span2d::Plane<T>, 16>& storage) {
   using namespace subpixel_detail;
   validate_storage(base, pel, storage);
   const auto maximum = sample_max<T>(bits);
@@ -291,8 +295,8 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
       auto dst = storage[ay * pel + ax];
       for (int y = 0; y < dst.height(); ++y) {
         const int sy = pel * std::clamp(y - pad_y, 0, actual_height - 1) + ay;
-        const auto *input = external.row(sy).data();
-        auto *output = dst.row(y).data();
+        const auto* input = external.row(sy).data();
+        auto* output = dst.row(y).data();
         detail::extract(input, output + pad_x, actual_width, pel, ax);
         detail::scan(output + pad_x, actual_width, maximum);
         detail::fill(output[pad_x], output, pad_x);
@@ -307,14 +311,25 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 } // namespace neo_mv::simd
 
 namespace neo_mv {
-template <class T> struct HighwayKernels {
+template <class T>
+struct HighwayKernels {
   static constexpr auto extend_border = &simd::extend_border<T>;
   static constexpr auto reduce_pyramid = &simd::reduce_pyramid<T>;
   static constexpr auto interpolate_subpixels = &simd::interpolate_subpixels<T>;
+  // SuperPlan admits geometry; SuperPyramid owns disjoint output buffers and
+  // admits source samples once. Each producer still checks new arithmetic.
+  static constexpr auto extend_border_validated = &simd::extend_border<T, true>;
+  static constexpr auto reduce_pyramid_validated = &simd::reduce_pyramid<T, true>;
+  static constexpr auto interpolate_subpixels_validated = &simd::interpolate_subpixels<T, true>;
   static constexpr auto extract_external_subpixels = &simd::extract_external_subpixels<T>;
   static BlockError block_error(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames,
-                               MotionVector vector, BlockMetric metric) {
+                                MotionVector vector, BlockMetric metric) {
     return simd::block_error(geometry, block, frames, vector, metric);
+  }
+  // Geometry/domain and frame storage have already been admitted by the plan.
+  static BlockError block_error_validated(const SamplingGeometry& geometry, BlockRegion block,
+                                          const SamplingFrames<T>& frames, MotionVector vector, BlockMetric metric) {
+    return simd::block_error<T, true>(geometry, block, frames, vector, metric);
   }
 };
 } // namespace neo_mv

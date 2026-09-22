@@ -13,5 +13,9 @@ struct ScalarFlowKernels {
                      span2d::Plane<T> output) {
     plan.sample(field, source, output);
   }
+  static void sample_preflighted(const FlowSamplingPlan& plan, const DenseFlowField& field,
+                                 const SubpixelPhases<T>& source, span2d::Plane<T> output) {
+    plan.template sample<T, true>(field, source, output);
+  }
 };
 } // namespace neo_mv

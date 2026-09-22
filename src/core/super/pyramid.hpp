@@ -140,17 +140,17 @@ public:
         for (int a = 0; a < size.phase_count; ++a)
           phases.emplace_back(size.padded_width, size.padded_height);
         if (l == 0)
-          Kernels::extend_border(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
+          Kernels::extend_border_validated(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         else {
           super_detail::PlaneBuffer<T> working(size.width, size.height);
           if (plan_.filter() == 0) {
-            Kernels::reduce_pyramid(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0, {});
+            Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0, {});
           } else {
             super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height);
-            Kernels::reduce_pyramid(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
-                                    scratch.view());
+            Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
+                                              scratch.view());
           }
-          Kernels::extend_border(working.view(), phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
+          Kernels::extend_border_validated(working.view(), phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         }
       }
       auto& base = levels[0];
@@ -161,7 +161,7 @@ public:
         Kernels::extract_external_subpixels(base[0].view(), external[k], p.actual_width, p.actual_height, p.pad_x,
                                             p.pad_y, pel, plan_.bits(), storage);
       else
-        Kernels::interpolate_subpixels(base[0].view(), pel, plan_.sharp(), plan_.bits(), storage);
+        Kernels::interpolate_subpixels_validated(base[0].view(), pel, plan_.sharp(), plan_.bits(), storage);
     }
   }
   const SuperPlan<T>& plan() const { return plan_; }

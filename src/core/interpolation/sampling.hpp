@@ -26,14 +26,16 @@ protected:
     // at exact negative multiples and is defined even for INT64_MIN.
     return value >= 0 ? value / divisor : -1 - ((-1 - value) / divisor);
   }
+  template <bool Validated = false>
   static Location locate(const RenderPhaseGeometry& g, int x, int y, std::int16_t vx, std::int16_t vy, int t) {
     const auto ax = std::int64_t(g.pel) * x + floor_div(std::int64_t(vx) * t, 256);
     const auto ay = std::int64_t(g.pel) * y + floor_div(std::int64_t(vy) * t, 256);
     const auto qx = floor_div(ax, g.pel), qy = floor_div(ay, g.pel);
     const int phase = static_cast<int>((ay - qy * g.pel) * g.pel + ax - qx * g.pel);
     const auto sx = g.pad_x + qx, sy = g.pad_y + qy;
-    if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
-      throw std::invalid_argument("interpolation sample exceeds its logical phase domain");
+    if constexpr (!Validated)
+      if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
+        throw std::invalid_argument("interpolation sample exceeds its logical phase domain");
     return {phase, static_cast<int>(sx), static_cast<int>(sy)};
   }
   void validate_fields(const DenseFlowField& B, const DenseFlowField& F, const DenseFlowField* BB,
@@ -46,18 +48,19 @@ protected:
                     field->y.size() != count))
         throw std::invalid_argument("inconsistent interpolation dense field");
   }
+  template <bool Validated = false>
   Locations positions(int x, int y, const DenseFlowField& B, const DenseFlowField& F, const DenseFlowField* BB,
                       const DenseFlowField* FF) const {
     const auto i = std::size_t(y) * width() + x;
     Locations out;
-    out.A = locate(left_.geometry(), x, y, F.x[i], F.y[i], time_);
-    out.C = locate(right_.geometry(), x, y, B.x[i], B.y[i], 256 - time_);
+    out.A = locate<Validated>(left_.geometry(), x, y, F.x[i], F.y[i], time_);
+    out.C = locate<Validated>(right_.geometry(), x, y, B.x[i], B.y[i], 256 - time_);
     if (BB) {
-      out.E = locate(left_.geometry(), x, y, FF->x[i], FF->y[i], time_);
-      out.K = locate(right_.geometry(), x, y, BB->x[i], BB->y[i], 256 - time_);
+      out.E = locate<Validated>(left_.geometry(), x, y, FF->x[i], FF->y[i], time_);
+      out.K = locate<Validated>(right_.geometry(), x, y, BB->x[i], BB->y[i], 256 - time_);
     } else {
-      out.A0 = locate(left_.geometry(), x, y, 0, 0, 0);
-      out.C0 = locate(right_.geometry(), x, y, 0, 0, 0);
+      out.A0 = locate<Validated>(left_.geometry(), x, y, 0, 0, 0);
+      out.C0 = locate<Validated>(right_.geometry(), x, y, 0, 0, 0);
     }
     return out;
   }
@@ -97,21 +100,22 @@ public:
       for (int x = 0; x < width(); ++x)
         (void)positions(x, y, B, F, BB, FF);
   }
-  template <class T>
+  template <class T, bool Preflighted = false>
   std::vector<InterpolationSamples<T>>
   sample(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
          const DenseFlowField& F, const DenseFlowField* BB = nullptr, const DenseFlowField* FF = nullptr) const {
     mask_detail::validate_storage<T>(bits_);
     validate_image(left, left_.geometry());
     validate_image(right, right_.geometry());
-    preflight(B, F, BB, FF);
+    if constexpr (!Preflighted)
+      preflight(B, F, BB, FF);
     const auto count = std::uint64_t(width()) * height();
     if (count > std::vector<InterpolationSamples<T>>().max_size())
       throw std::overflow_error("interpolation sample storage size is unrepresentable");
     std::vector<InterpolationSamples<T>> out(static_cast<std::size_t>(count));
     for (int y = 0; y < height(); ++y)
       for (int x = 0; x < width(); ++x) {
-        const auto at = positions(x, y, B, F, BB, FF);
+        const auto at = positions<true>(x, y, B, F, BB, FF);
         auto& value = out[std::size_t(y) * width() + x];
         value.A = read(left, at.A);
         value.C = read(right, at.C);

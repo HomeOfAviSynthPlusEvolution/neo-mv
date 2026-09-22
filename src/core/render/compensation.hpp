@@ -83,27 +83,31 @@ inline void validate_compensation_footprint(const CompensationRule& rule, const 
   render_footprint(g, b, rule.reference_displacement(v, shift));
 }
 
-template <class T>
+template <class T, bool Validated = false>
 void sample_compensated_block(const CompensationRule& rule, const RenderPhaseGeometry& g, BlockRegion b,
                               MotionTriple vector, int shift, const SubpixelPhases<T>& current,
                               const SubpixelPhases<T>& reference, span2d::Plane<T> output, int bits) {
-  validate_compensation_footprint(rule, g, b, vector.vector, shift);
+  if constexpr (!Validated)
+    validate_compensation_footprint(rule, g, b, vector.vector, shift);
   const auto selected = rule.select(vector.vector, vector.error, shift);
-  validate_plane(output);
-  // Both images are required inputs even when this block selects only one.
-  // Reject aliasing against the unselected image as well as the selected one.
-  for (const auto* image : {&current, &reference}) {
-    if (image->pel != g.pel)
-      throw std::invalid_argument("compensation image phase count mismatch");
-    for (int a = 0; a < g.pel * g.pel; ++a) {
-      const auto plane = image->planes[a];
-      validate_plane(plane);
-      if (plane.width() != g.phases[a].width || plane.height() != g.phases[a].height ||
-          active_rows_overlap(plane, output))
-        throw std::invalid_argument("compensation image geometry mismatch or output alias");
+  if constexpr (!Validated) {
+    validate_plane(output);
+    // Both images are required inputs even when this block selects only one.
+    // Reject aliasing against the unselected image as well as the selected one.
+    for (const auto* image : {&current, &reference}) {
+      if (image->pel != g.pel)
+        throw std::invalid_argument("compensation image phase count mismatch");
+      for (int a = 0; a < g.pel * g.pel; ++a) {
+        const auto plane = image->planes[a];
+        validate_plane(plane);
+        if (plane.width() != g.phases[a].width || plane.height() != g.phases[a].height ||
+            active_rows_overlap(plane, output))
+          throw std::invalid_argument("compensation image geometry mismatch or output alias");
+      }
     }
   }
-  sample_render_block(g, b, selected.displacement, selected.reference ? reference : current, output, bits);
+  sample_render_block<T, Validated>(g, b, selected.displacement, selected.reference ? reference : current, output,
+                                    bits);
 }
 
 } // namespace neo_mv

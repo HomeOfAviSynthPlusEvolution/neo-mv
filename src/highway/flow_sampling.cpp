@@ -50,16 +50,18 @@ void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& fiel
       const auto phase = hn::Add(ax, hn::ShiftLeftSame(ay, shift));
       const auto sx = hn::Add(hn::Set(d, g.pad_x), hn::Add(hn::Iota(d, x), hn::ShiftRightSame(dx, shift)));
       const auto sy = hn::Add(hn::Set(d, std::int64_t(g.pad_y) + y), hn::ShiftRightSame(dy, shift));
-      const auto width = separable
-                             ? hn::IfThenElse(hn::Eq(ax, hn::Set(d, 3)), hn::Set(d, edge_width), hn::Set(d, widths[0]))
-                             : hn::GatherIndex(d, widths, phase);
-      const auto height =
-          separable ? hn::IfThenElse(hn::Eq(ay, hn::Set(d, 3)), hn::Set(d, edge_height), hn::Set(d, heights[0]))
-                    : hn::GatherIndex(d, heights, phase);
-      const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, width));
-      const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, height));
-      if (!hn::AllTrue(d, hn::Or(hn::Not(hn::FirstN(d, used)), hn::And(valid_x, valid_y))))
-        throw std::invalid_argument("Flow sample exceeds its logical phase domain");
+      if (!storage || !storage->coordinates_validated) {
+        const auto width =
+            separable ? hn::IfThenElse(hn::Eq(ax, hn::Set(d, 3)), hn::Set(d, edge_width), hn::Set(d, widths[0]))
+                      : hn::GatherIndex(d, widths, phase);
+        const auto height =
+            separable ? hn::IfThenElse(hn::Eq(ay, hn::Set(d, 3)), hn::Set(d, edge_height), hn::Set(d, heights[0]))
+                      : hn::GatherIndex(d, heights, phase);
+        const auto valid_x = hn::And(hn::Ge(sx, zero), hn::Lt(sx, width));
+        const auto valid_y = hn::And(hn::Ge(sy, zero), hn::Lt(sy, height));
+        if (!hn::AllTrue(d, hn::Or(hn::Not(hn::FirstN(d, used)), hn::And(valid_x, valid_y))))
+          throw std::invalid_argument("Flow sample exceeds its logical phase domain");
+      }
       if (storage) {
         hn::Store(sx, d, columns);
         hn::Store(sy, d, rows);

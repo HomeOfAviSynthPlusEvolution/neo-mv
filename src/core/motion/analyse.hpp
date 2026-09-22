@@ -242,8 +242,8 @@ MotionGrid analyse_vectors(AnalysisMetadata finest, const std::vector<SamplingGe
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
         const auto evaluate = [&](MotionVector v) {
-          return Kernels::block_error(layer.sampling, block, frames[index], v,
-                                      controls.satd ? BlockMetric::satd : BlockMetric::sad);
+          return Kernels::block_error_validated(layer.sampling, block, frames[index], v,
+                                                controls.satd ? BlockMetric::satd : BlockMetric::sad);
         };
         const auto result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
                                                   badsad, controls, evaluate);

@@ -15,6 +15,7 @@ struct ScalarInterpolationKernels {
   using DenseFlow = DenseFlowPlan<>;
   using BlurAverage = ScalarBlurAverage;
 
+  template <bool Validated = false>
   static void compose(const std::vector<InterpolationSamples<T>>& samples, const std::vector<std::uint8_t>& mF,
                       const std::vector<std::uint8_t>& mB, bool extra, int time, int bits, span2d::Plane<T> output) {
     validate_plane(output);
@@ -25,8 +26,8 @@ struct ScalarInterpolationKernels {
       for (int x = 0; x < output.width(); ++x) {
         const auto i = std::size_t(y) * output.width() + x;
         const auto& s = samples[i];
-        output.row(y)[x] = extra ? interpolation_extra(s.A, s.C, s.E, s.K, mF[i], mB[i], time, bits)
-                                 : interpolation_basic(s.A, s.C, s.A0, s.C0, mF[i], mB[i], time, bits);
+        output.row(y)[x] = extra ? interpolation_extra<T, Validated>(s.A, s.C, s.E, s.K, mF[i], mB[i], time, bits)
+                                 : interpolation_basic<T, Validated>(s.A, s.C, s.A0, s.C0, mF[i], mB[i], time, bits);
       }
   }
   static void blend(span2d::Plane<const T> a, span2d::Plane<const T> b, span2d::Plane<T> out, int time, int bits) {

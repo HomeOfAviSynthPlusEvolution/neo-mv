@@ -75,13 +75,15 @@ protected:
     const int count = static_cast<int>((magnitude / precision_) / 256);
     return {count, count ? zx / count : 0, count ? zy / count : 0};
   }
+  template <bool Validated = false>
   Location location(std::int64_t x, std::int64_t y) const {
     const auto& g = geometry_;
     const auto qx = floor_div(x, g.pel), qy = floor_div(y, g.pel);
     const int phase = static_cast<int>((y - qy * g.pel) * g.pel + x - qx * g.pel);
     const auto sx = qx + g.pad_x, sy = qy + g.pad_y;
-    if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
-      throw std::invalid_argument("blur trajectory exceeds logical phase domain");
+    if constexpr (!Validated)
+      if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
+        throw std::invalid_argument("blur trajectory exceeds logical phase domain");
     return {phase, static_cast<int>(sx), static_cast<int>(sy)};
   }
   void validate_field(const DenseFlowField& field) const {
@@ -128,8 +130,8 @@ public:
 
 protected:
   template <class T>
-  void validate_storage(const DenseFlowField& forward, const DenseFlowField& backward,
-                        const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
+  void validate_storage(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
+                        span2d::Plane<T> output) const {
     validate_plane(output);
     if (source.pel != geometry_.pel || output.width() != width_ || output.height() != height_)
       throw std::invalid_argument("blur storage geometry mismatch");
@@ -147,12 +149,14 @@ protected:
           throw std::invalid_argument("blur output aliases dense input");
       }
   }
+
 public:
-  template <class T, class Average = ScalarBlurAverage>
+  template <class T, class Average = ScalarBlurAverage, bool Preflighted = false>
   void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
               span2d::Plane<T> output, int bits, Average average = {}) const {
     mask_detail::validate_storage<T>(bits);
-    preflight(forward, backward);
+    if constexpr (!Preflighted)
+      preflight(forward, backward);
     validate_storage(forward, backward, source, output);
     std::vector<T> samples;
     for (int y = 0; y < height_; ++y)
@@ -163,7 +167,7 @@ public:
         std::size_t index = 0;
         trajectory(x, y, forward.x[i], forward.y[i], backward.x[i], backward.y[i],
                    [&](std::int64_t ax, std::int64_t ay) {
-                     const auto at = location(ax, ay);
+                     const auto at = location<true>(ax, ay);
                      std::memcpy(samples.data() + index++, source.planes[at.phase].row(at.y).data() + at.x, sizeof(T));
                    });
         average(samples.data(), samples.size(), bits, output.row(y).data() + x);

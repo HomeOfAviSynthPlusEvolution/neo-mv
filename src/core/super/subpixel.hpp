@@ -107,20 +107,22 @@ void validate_storage(span2d::Plane<const T> base, int pel, const std::array<spa
 
 // No allocations: phase zero borrows base; callers supply distinct full-size
 // output planes for nonzero phases. All returned views share those lifetimes.
-template <class T>
+template <class T, bool Validated = false>
 SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, int sharp, int bits,
                                         const std::array<span2d::Plane<T>, 16>& storage) {
   using namespace subpixel_detail;
-  validate_storage(base, pel, storage);
   const auto maximum = sample_max<T>(bits);
-  if (sharp < 0 || sharp > 2)
-    throw std::invalid_argument("invalid interpolation sharpness");
   const int width = base.width(), height = base.height();
-  if (pel > 1 && (width < 2 * (sharp + 1) || height < 2 * (sharp + 1)))
-    throw std::invalid_argument("padded plane too small for interpolation");
-  for (int y = 0; y < height; ++y)
-    for (int x = 0; x < width; ++x)
-      valid_sample(base.row(y)[x], maximum);
+  if constexpr (!Validated) {
+    validate_storage(base, pel, storage);
+    if (sharp < 0 || sharp > 2)
+      throw std::invalid_argument("invalid interpolation sharpness");
+    if (pel > 1 && (width < 2 * (sharp + 1) || height < 2 * (sharp + 1)))
+      throw std::invalid_argument("padded plane too small for interpolation");
+    for (int y = 0; y < height; ++y)
+      for (int x = 0; x < width; ++x)
+        valid_sample(base.row(y)[x], maximum);
+  }
   SubpixelPhases<T> result{pel, {}};
   result.planes[0] = base;
   if (pel == 1)

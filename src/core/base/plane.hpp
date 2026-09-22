@@ -58,6 +58,14 @@ bool active_rows_overlap(span2d::Plane<A> a, span2d::Plane<B> b) {
   std::int32_t y = 0, z = 0;
   const auto a_base = reinterpret_cast<std::uintptr_t>(a.data());
   const auto b_base = reinterpret_cast<std::uintptr_t>(b.data());
+  // Disjoint allocations are the common case. Avoid walking an entire frame
+  // for each small block; only interleaved bounding spans need the row merge.
+  const auto a_end = a_base + static_cast<std::uintptr_t>(a.height() - 1) * a.stride_bytes() +
+                     static_cast<std::uintptr_t>(a.width()) * sizeof(A);
+  const auto b_end = b_base + static_cast<std::uintptr_t>(b.height() - 1) * b.stride_bytes() +
+                     static_cast<std::uintptr_t>(b.width()) * sizeof(B);
+  if (a_end <= b_base || b_end <= a_base)
+    return false;
   while (y < a.height() && z < b.height()) {
     const auto ab = a_base + static_cast<std::uintptr_t>(y) * a.stride_bytes();
     const auto bb = b_base + static_cast<std::uintptr_t>(z) * b.stride_bytes();

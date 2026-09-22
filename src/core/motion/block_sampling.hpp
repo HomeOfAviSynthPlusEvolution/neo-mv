@@ -139,14 +139,16 @@ void validate_sampling_frames(const SamplingGeometry& g, const SamplingFrames<T>
 
 // Direct evaluation rejects an unsafe vector before any sample read. Callers
 // must additionally admit the entire Omega at creation.
-template <class T>
+template <class T, bool Validated = false>
 BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
                        BlockMetric metric) {
-  validate_sampling_domain(g, b, sampling_detail::singleton(vector));
-  if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
-      (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
-    throw std::invalid_argument("invalid block error metric or SATD dimensions");
-  validate_sampling_frames(g, frames);
+  if constexpr (!Validated) {
+    validate_sampling_domain(g, b, sampling_detail::singleton(vector));
+    if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
+        (metric == BlockMetric::satd && (b.width % 4 || b.height % 4)))
+      throw std::invalid_argument("invalid block error metric or SATD dimensions");
+    validate_sampling_frames(g, frames);
+  }
   const int count = g.chroma ? 3 : 1;
   std::array<std::int64_t, 3> errors{};
   for (int k = 0; k < count; ++k) {
@@ -159,7 +161,7 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
     const auto source = frames.current[k].subplane(x, y, b.width / rx, b.height / ry);
     const auto reference = frames.reference[k][static_cast<std::size_t>(ay * g.pel + ax)].subplane(
         static_cast<int>(x + qx), static_cast<int>(y + qy), b.width / rx, b.height / ry);
-    errors[k] = block_metric(source, reference, k == 0 ? metric : BlockMetric::sad);
+    errors[k] = block_metric<T, true>(source, reference, k == 0 ? metric : BlockMetric::sad);
   }
   const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};

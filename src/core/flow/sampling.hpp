@@ -28,6 +28,7 @@ protected:
     if (field.width != width_ || field.height != height_ || field.x.size() != count || field.y.size() != count)
       throw std::invalid_argument("inconsistent dense Flow field");
   }
+  template <bool Validated = false>
   Location location(int x, int y, std::int16_t vx, std::int16_t vy) const {
     const auto& g = geometry_;
     const auto ax = std::int64_t(g.pel) * x + displacement(vx);
@@ -35,8 +36,9 @@ protected:
     const auto qx = sampling_detail::floor_div(ax, g.pel), qy = sampling_detail::floor_div(ay, g.pel);
     const int phase = static_cast<int>((ay - qy * g.pel) * g.pel + ax - qx * g.pel);
     const auto sx = std::int64_t(g.pad_x) + qx, sy = std::int64_t(g.pad_y) + qy;
-    if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
-      throw std::invalid_argument("Flow sample exceeds its logical phase domain");
+    if constexpr (!Validated)
+      if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
+        throw std::invalid_argument("Flow sample exceeds its logical phase domain");
     return {phase, static_cast<int>(sx), static_cast<int>(sy)};
   }
 
@@ -71,8 +73,7 @@ public:
 protected:
   // Shared storage checks; callers admit every coordinate before reading pixels.
   template <class T>
-  void validate_storage(const DenseFlowField& field, const SubpixelPhases<T>& source,
-                        span2d::Plane<T> output) const {
+  void validate_storage(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
     static_assert(supported_sample<T>);
     validate_plane(output);
     const auto& g = geometry_;
@@ -94,15 +95,17 @@ protected:
         throw std::invalid_argument("Flow output aliases dense input");
     }
   }
+
 public:
-  template <class T>
+  template <class T, bool Preflighted = false>
   void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
-    preflight(field);
+    if constexpr (!Preflighted)
+      preflight(field);
     validate_storage(field, source, output);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto i = std::size_t(y) * width_ + x;
-        const auto at = location(x, y, field.x[i], field.y[i]);
+        const auto at = location<true>(x, y, field.x[i], field.y[i]);
         // Copy object representation: NaNs, infinities and signed zero are
         // image data, not numeric scores. No conversion or clamping applies.
         std::memcpy(output.row(y).data() + x, source.planes[at.phase].row(at.y).data() + at.x, sizeof(T));

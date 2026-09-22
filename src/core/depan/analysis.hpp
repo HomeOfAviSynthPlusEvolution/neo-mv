@@ -212,9 +212,11 @@ struct FitUpdate {
   float error;
 };
 
+template <bool Validated = false>
 inline std::vector<float> select_weights(const Observations& observations, const Transform& map, float wrong,
                                          float zerow, float global) {
-  analysis_detail::validate(observations);
+  if constexpr (!Validated)
+    analysis_detail::validate(observations);
   f32(wrong);
   f32(zerow);
   f32(global);
@@ -269,16 +271,16 @@ inline FitSums accumulate_fit(const Observations& observations, const std::vecto
     gx = Arithmetic::multiply_add(mul(2.0f, ex), weight, gx);
     gy = Arithmetic::multiply_add(mul(2.0f, ey), weight, gy);
     if (zoom) {
-      gxx = Arithmetic::multiply_add(
-          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex), weight, gxx);
-      gyy = Arithmetic::multiply_add(
-          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey), weight, gyy);
+      gxx = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex),
+                                     weight, gxx);
+      gyy = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey),
+                                     weight, gyy);
     }
     if (rotation) {
-      gxy = Arithmetic::multiply_add(
-          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex), weight, gxy);
-      gyx = Arithmetic::multiply_add(
-          mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey), weight, gyx);
+      gxy = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex),
+                                     weight, gxy);
+      gyx = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey),
+                                     weight, gyx);
     }
   }
   return sums;
@@ -286,7 +288,7 @@ inline FitSums accumulate_fit(const Observations& observations, const std::vecto
 
 struct ScalarResiduals {
   static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
-                                    const std::array<float, 4>& gradients, std::size_t count) {
+                                     const std::array<float, 4>& gradients, std::size_t count) {
     for (std::size_t i = 0; i < count; ++i)
       values[i] = sub(values[i], mul(scales[i], gradients[i]));
     return values;
@@ -302,10 +304,11 @@ struct ScalarResiduals {
     return accumulate_fit(observations, weights, prepare(observations, map), zoom, rotation);
   }
 };
-template <class Residuals = ScalarResiduals>
+template <class Residuals = ScalarResiduals, bool Validated = false>
 inline FitUpdate fit_update(const Observations& observations, const std::vector<float>& weights, const Transform& map,
                             float aspect, float step, bool zoom, bool rotation) {
-  analysis_detail::validate(observations);
+  if constexpr (!Validated)
+    analysis_detail::validate(observations);
   if (weights.size() != observations.values.size() || !std::isfinite(aspect) || aspect <= 0)
     throw std::invalid_argument("invalid Depan fit update inputs");
   const float aspect2 = mul(aspect, aspect);
@@ -323,9 +326,9 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
   const float error = sqrt32(div(residual, n));
   Transform next = map;
   const float half_step = mul(step, 0.5f);
-  const auto adjusted = Residuals::adjust({map.tx, map.ty, map.v, map.u}, {step, step, half_step, half_step},
-                                         {gx, gy, sub(gxy, div(gyx, aspect2)), zoom ? add(gxx, gyy) : 0.0f},
-                                         zoom ? 4 : 3);
+  const auto adjusted =
+      Residuals::adjust({map.tx, map.ty, map.v, map.u}, {step, step, half_step, half_step},
+                        {gx, gy, sub(gxy, div(gyx, aspect2)), zoom ? add(gxx, gyy) : 0.0f}, zoom ? 4 : 3);
   next.tx = adjusted[0];
   next.ty = adjusted[1];
   if (zoom)
@@ -352,26 +355,26 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
     for (const auto& value : observations.values)
       weights.push_back(value.base);
     for (int k = 0; k < 5; ++k) {
-      const auto next = fit_update<Residuals>(observations, weights, result.map, p.aspect, 0.3f, false, false);
+      const auto next = fit_update<Residuals, true>(observations, weights, result.map, p.aspect, 0.3f, false, false);
       result.map = next.map;
       result.error = next.error;
-      weights = select_weights(observations, result.map, p.wrong, p.zerow, 1000.0f);
+      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f);
     }
     result.iteration = 100;
     for (int k = 5; k < 100; ++k) {
       const float old_error = result.error;
-      const auto next = fit_update<Residuals>(observations, weights, result.map, p.aspect,
-                                              k < 8    ? 0.3f
-                                              : k < 10 ? 0.6f
-                                                       : 1.0f,
-                                              p.zoom, p.rotation);
+      const auto next = fit_update<Residuals, true>(observations, weights, result.map, p.aspect,
+                                                    k < 8    ? 0.3f
+                                                    : k < 10 ? 0.6f
+                                                             : 1.0f,
+                                                    p.zoom, p.rotation);
       result.map = next.map;
       result.error = next.error;
       if ((sub(old_error, result.error) < mul(0.01f, 0.5f) && k > 9) || result.error < 0.01f) {
         result.iteration = k;
         break;
       }
-      weights = select_weights(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f));
+      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f));
     }
   }
   result.good = result.error < p.error;

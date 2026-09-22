@@ -35,12 +35,14 @@ inline std::uint64_t biased_divide(std::uint64_t value) {
 }
 } // namespace interpolation_detail
 
-template <class T>
+template <class T, bool Validated = false>
 T interpolation_basic(T A, T C, T A0, T C0, int mF, int mB, int t, int bits) {
   using namespace interpolation_detail;
-  controls(t, mF, mB);
-  for (const auto value : {A, C, A0, C0})
-    sample(value, bits);
+  if constexpr (!Validated) {
+    controls(t, mF, mB);
+    for (const auto value : {A, C, A0, C0})
+      sample(value, bits);
+  }
   if constexpr (std::is_same_v<T, float>) {
     const auto innerU = divide(multiply(float(mF), add(multiply(C, float(256 - mB)), multiply(float(mB), A0))));
     const auto U = divide(add(multiply(A, float(256 - mF)), innerU));
@@ -55,12 +57,14 @@ T interpolation_basic(T A, T C, T A0, T C0, int mF, int mB, int t, int bits) {
   }
 }
 
-template <class T>
+template <class T, bool Validated = false>
 T interpolation_extra(T A, T C, T E, T K, int mF, int mB, int t, int bits) {
   using namespace interpolation_detail;
-  controls(t, mF, mB);
-  for (const auto value : {A, C, E, K})
-    sample(value, bits);
+  if constexpr (!Validated) {
+    controls(t, mF, mB);
+    for (const auto value : {A, C, E, K})
+      sample(value, bits);
+  }
   // std::min/max retain their first operand at an equal-value comparison.
   const auto lo = std::min(A, C), hi = std::max(A, C);
   const auto CK = std::max(lo, std::min(K, hi)), CE = std::max(lo, std::min(E, hi));

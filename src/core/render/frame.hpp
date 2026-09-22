@@ -99,7 +99,7 @@ public:
     }
     return output;
   }
-  template <class Kernels = ScalarRenderKernels<T>, class Generate>
+  template <class Kernels = ScalarRenderKernels<T>, bool Validated = false, class Generate>
   super_detail::PlaneBuffer<T> compose(int k, Generate&& generate) const {
     const auto& plan = composition(k);
     const auto& g = plan.geometry();
@@ -112,7 +112,10 @@ public:
     for (const auto& b : blocks)
       views.push_back(b.view());
     super_detail::PlaneBuffer<T> result(g.visible_width, g.visible_height);
-    Kernels::compose_render_blocks(plan, views, result.view(), bits());
+    if constexpr (Validated)
+      Kernels::compose_render_blocks_validated(plan, views, result.view(), bits());
+    else
+      Kernels::compose_render_blocks(plan, views, result.view(), bits());
     return result;
   }
 };
@@ -162,9 +165,9 @@ public:
         validate_compensation_footprint(rule_, grid_.phase_geometry(k), b, field.grid.values[i].vector, shift);
     });
     for (int k = 0; k < grid_.plane_count(); ++k)
-      output[k] = grid_.template compose<Kernels>(k, [&](BlockRegion b, std::size_t i, span2d::Plane<T> dst) {
-        Kernels::sample_compensated_block(rule_, grid_.phase_geometry(k), b, field.grid.values[i], shift,
-                                          current.planes[k], reference_image->planes[k], dst, grid_.bits());
+      output[k] = grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t i, span2d::Plane<T> dst) {
+        Kernels::sample_compensated_block_validated(rule_, grid_.phase_geometry(k), b, field.grid.values[i], shift,
+                                                    current.planes[k], reference_image->planes[k], dst, grid_.bits());
       });
     return output;
   }
@@ -236,25 +239,27 @@ public:
       if (!grid_.processed(k))
         continue;
       const auto g = grid_.phase_geometry(k);
-      auto composed = grid_.template compose<Kernels>(k, [&](BlockRegion b, std::size_t index, span2d::Plane<T> dst) {
-        super_detail::PlaneBuffer<T> centre(dst.width(), dst.height());
-        Kernels::sample_render_block(g, b, {0, 0}, current.planes[k], centre.view(), grid_.bits());
-        std::vector<super_detail::PlaneBuffer<T>> sampled;
-        std::vector<WeightedReferenceBlock<T>> blocks(selected.size());
-        std::vector<ReferenceReliability> reliability;
-        sampled.reserve(selected.size());
-        for (std::size_t i = 0; i < selected.size(); ++i) {
-          reliability.push_back({bool(selected[i]), selected[i] ? fields[i].grid.values[index].error : 0});
-          if (!selected[i])
-            continue;
-          sampled.emplace_back(dst.width(), dst.height());
-          const auto v = fields[i].grid.values[index].vector;
-          Kernels::sample_render_block(g, b, {v.x, v.y}, images[i].planes[k], sampled.back().view(), grid_.bits());
-          blocks[i] = {true, std::as_const(sampled.back()).view()};
-        }
-        Kernels::weighted_render_block(std::as_const(centre).view(), blocks, weights_(reliability, k), dst,
-                                       grid_.bits());
-      });
+      auto composed =
+          grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t index, span2d::Plane<T> dst) {
+            super_detail::PlaneBuffer<T> centre(dst.width(), dst.height());
+            Kernels::sample_render_block_validated(g, b, {0, 0}, current.planes[k], centre.view(), grid_.bits());
+            std::vector<super_detail::PlaneBuffer<T>> sampled;
+            std::vector<WeightedReferenceBlock<T>> blocks(selected.size());
+            std::vector<ReferenceReliability> reliability;
+            sampled.reserve(selected.size());
+            for (std::size_t i = 0; i < selected.size(); ++i) {
+              reliability.push_back({bool(selected[i]), selected[i] ? fields[i].grid.values[index].error : 0});
+              if (!selected[i])
+                continue;
+              sampled.emplace_back(dst.width(), dst.height());
+              const auto v = fields[i].grid.values[index].vector;
+              Kernels::sample_render_block_validated(g, b, {v.x, v.y}, images[i].planes[k], sampled.back().view(),
+                                                     grid_.bits());
+              blocks[i] = {true, std::as_const(sampled.back()).view()};
+            }
+            Kernels::weighted_render_block_validated(std::as_const(centre).view(), blocks, weights_(reliability, k),
+                                                     dst, grid_.bits());
+          });
       const auto centre =
           current.planes[k].planes[0].subplane(g.pad_x, g.pad_y, output[k].view().width(), output[k].view().height());
       Kernels::limit_render_plane(limits_[k ? 1 : 0], std::as_const(composed).view(), centre, output[k].view());

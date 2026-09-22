@@ -9,10 +9,11 @@ class InterpolationSamplingPlan : public neo_mv::InterpolationSamplingPlan {
     flow_sample(plan, field, nullptr, PhaseRounding::floor);
   }
   template <class T>
-  void channel(const SubpixelPhases<T>& image, const neo_mv::FlowSamplingPlan& geometry,
-               const DenseFlowField& field, int time, std::byte* output, std::size_t offset) const {
+  void channel(const SubpixelPhases<T>& image, const neo_mv::FlowSamplingPlan& geometry, const DenseFlowField& field,
+               int time, std::byte* output, std::size_t offset) const {
     const neo_mv::FlowSamplingPlan plan(geometry.geometry(), width(), height(), time);
     FlowSampleStorage storage{};
+    storage.coordinates_validated = true;
     for (int a = 0; a < image.pel * image.pel; ++a) {
       storage.planes[a] = reinterpret_cast<const std::byte*>(image.planes[a].row(0).data());
       storage.strides[a] = image.planes[a].stride_bytes();
@@ -23,6 +24,7 @@ class InterpolationSamplingPlan : public neo_mv::InterpolationSamplingPlan {
     storage.sample_bytes = sizeof(T);
     flow_sample(plan, field, &storage, PhaseRounding::floor);
   }
+
 public:
   using neo_mv::InterpolationSamplingPlan::InterpolationSamplingPlan;
   void preflight(const DenseFlowField& B, const DenseFlowField& F, const DenseFlowField* BB = nullptr,
@@ -36,14 +38,15 @@ public:
     }
     // Zero-displacement basic samples were admitted by construction.
   }
-  template <class T>
+  template <class T, bool Preflighted = false>
   std::vector<InterpolationSamples<T>>
   sample(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
          const DenseFlowField& F, const DenseFlowField* BB = nullptr, const DenseFlowField* FF = nullptr) const {
     mask_detail::validate_storage<T>(bits_);
     validate_image(left, left_.geometry());
     validate_image(right, right_.geometry());
-    preflight(B, F, BB, FF);
+    if constexpr (!Preflighted)
+      preflight(B, F, BB, FF);
     using Samples = InterpolationSamples<T>;
     const auto count = std::uint64_t(width()) * height();
     if (count > std::vector<Samples>().max_size() || count > std::uint64_t(PTRDIFF_MAX) / sizeof(Samples))

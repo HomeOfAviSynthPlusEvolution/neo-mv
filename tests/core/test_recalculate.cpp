@@ -107,6 +107,13 @@ void metrics_and_admission() {
     recalculate_vectors(unsafe.old_field(), unsafe.metadata, unsafe.geometry, SamplingFrames<std::uint16_t>{},
                         controls);
   });
+  // A malformed unused phase must fail admission even when the zero vector
+  // already meets thsad and the search never samples that phase.
+  MotionFixture<std::uint16_t> phased(16, 16, 8, 8, 4, 2, true);
+  auto invalid_frames = phased.frames;
+  invalid_frames.reference[2][3] = {};
+  rejects<std::invalid_argument>(
+      [&] { recalculate_vectors(phased.old_field(), phased.metadata, phased.geometry, invalid_frames, controls); });
   auto mismatch = f.old_field();
   mismatch.metadata.bits = 16;
   rejects<std::invalid_argument>([&] { recalculate_vectors(mismatch, f.metadata, f.geometry, f.frames, controls); });

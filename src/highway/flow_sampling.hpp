@@ -11,6 +11,7 @@ struct FlowSampleStorage {
   std::byte* output;
   std::ptrdiff_t output_stride;
   std::size_t sample_bytes, output_pixel_stride;
+  bool coordinates_validated = false; // Set only after a full preflight pass.
 };
 void flow_sample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage,
                  PhaseRounding rounding = PhaseRounding::nearest);
@@ -22,11 +23,13 @@ public:
     validate_dense(field);
     flow_sample(*this, field, nullptr);
   }
-  template <class T>
+  template <class T, bool Preflighted = false>
   void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
-    preflight(field);
+    if constexpr (!Preflighted)
+      preflight(field);
     validate_storage(field, source, output);
     FlowSampleStorage storage{};
+    storage.coordinates_validated = true;
     for (int a = 0; a < geometry().pel * geometry().pel; ++a) {
       storage.planes[a] = reinterpret_cast<const std::byte*>(source.planes[a].row(0).data());
       storage.strides[a] = source.planes[a].stride_bytes();

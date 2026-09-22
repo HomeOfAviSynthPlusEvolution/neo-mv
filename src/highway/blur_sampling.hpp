@@ -23,13 +23,15 @@ public:
         }
       }
   }
-  template <class T, class Average = ScalarBlurAverage>
+  template <class T, class Average = ScalarBlurAverage, bool Preflighted = false>
   void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
               span2d::Plane<T> output, int bits, Average average = {}) const {
     mask_detail::validate_storage<T>(bits);
-    preflight(forward, backward);
+    if constexpr (!Preflighted)
+      preflight(forward, backward);
     validate_storage(forward, backward, source, output);
     FlowSampleStorage storage{};
+    storage.coordinates_validated = true;
     for (int a = 0; a < geometry().pel * geometry().pel; ++a) {
       storage.planes[a] = reinterpret_cast<const std::byte*>(source.planes[a].row(0).data());
       storage.strides[a] = source.planes[a].stride_bytes();
@@ -42,7 +44,8 @@ public:
         const auto f = direction(forward.x[i], forward.y[i]), b = direction(backward.x[i], backward.y[i]);
         samples.resize(std::size_t(1 + f.count + b.count));
         // The constructor admits all zero-displacement center coordinates.
-        std::memcpy(samples.data(), source.planes[0].row(y + geometry().pad_y).data() + x + geometry().pad_x, sizeof(T));
+        std::memcpy(samples.data(), source.planes[0].row(y + geometry().pad_y).data() + x + geometry().pad_x,
+                    sizeof(T));
         std::size_t offset = 1;
         for (const auto d : {f, b}) {
           if (d.count) {

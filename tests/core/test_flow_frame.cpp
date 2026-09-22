@@ -123,10 +123,10 @@ void simple(int bits) {
 }
 struct ObservedKernels : TestKernels<std::uint8_t> {
   static inline int copies = 0;
-  static void sample(const TestKernels<std::uint8_t>::Sampling& plan, const DenseFlowField& field, const SubpixelPhases<std::uint8_t>& ref,
-                     span2d::Plane<std::uint8_t> out) {
+  static void sample_preflighted(const TestKernels<std::uint8_t>::Sampling& plan, const DenseFlowField& field,
+                                 const SubpixelPhases<std::uint8_t>& ref, span2d::Plane<std::uint8_t> out) {
     ++copies;
-    TestKernels<std::uint8_t>::sample(plan, field, ref, out);
+    TestKernels<std::uint8_t>::sample_preflighted(plan, field, ref, out);
   }
 };
 void admission_and_parity() {

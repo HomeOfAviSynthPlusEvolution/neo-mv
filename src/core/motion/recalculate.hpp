@@ -67,6 +67,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       (controls.satd && (target.block_width % 4 || target.block_height % 4)))
     throw std::invalid_argument("invalid Recalculate controls or input precision");
   validate_motion_layer(target, geometry, true);
+  validate_sampling_frames(geometry, frames);
   const auto lambda0 =
       scale_precision(scale_area(controls.mvlambda, target.block_width, target.block_height), target.bits);
   auto threshold = scale_area(scale_precision(controls.thsad, target.bits), target.block_width, target.block_height);
@@ -81,7 +82,8 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
       const auto evaluate = [&](MotionVector vector) {
-        return Kernels::block_error(geometry, block, frames, vector, controls.satd ? BlockMetric::satd : BlockMetric::sad);
+        return Kernels::block_error_validated(geometry, block, frames, vector,
+                                              controls.satd ? BlockMetric::satd : BlockMetric::sad);
       };
       const auto error = evaluate(u);
       SearchResult result{u, error.raw, error.raw};

@@ -90,23 +90,25 @@ public:
   }
 };
 
-template <class T>
+template <class T, bool Validated = false>
 void compose_render_blocks(const OverlapCompositionPlan& plan, const std::vector<span2d::Plane<const T>>& blocks,
                            span2d::Plane<T> output, int bits) {
   const auto& g = plan.geometry();
   const auto maximum = subpixel_detail::sample_max<T>(bits);
-  validate_plane(output);
-  if (blocks.size() != std::uint64_t(g.blocks_x) * g.blocks_y || output.width() != g.visible_width ||
-      output.height() != g.visible_height)
-    throw std::invalid_argument("block composition storage geometry mismatch");
-  for (auto block : blocks) {
-    validate_plane(block);
-    if (block.width() != g.block_width || block.height() != g.block_height || active_rows_overlap(block, output))
-      throw std::invalid_argument("invalid block storage or output aliases input");
-    // Cropping never excuses an invalid generated block rectangle.
-    for (int y = 0; y < block.height(); ++y)
-      for (int x = 0; x < block.width(); ++x)
-        subpixel_detail::valid_sample(block.row(y)[x], maximum);
+  if constexpr (!Validated) {
+    validate_plane(output);
+    if (blocks.size() != std::uint64_t(g.blocks_x) * g.blocks_y || output.width() != g.visible_width ||
+        output.height() != g.visible_height)
+      throw std::invalid_argument("block composition storage geometry mismatch");
+    for (auto block : blocks) {
+      validate_plane(block);
+      if (block.width() != g.block_width || block.height() != g.block_height || active_rows_overlap(block, output))
+        throw std::invalid_argument("invalid block storage or output aliases input");
+      // Cropping never excuses an invalid generated block rectangle.
+      for (int y = 0; y < block.height(); ++y)
+        for (int x = 0; x < block.width(); ++x)
+          subpixel_detail::valid_sample(block.row(y)[x], maximum);
+    }
   }
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   for (int y = 0; y < g.visible_height; ++y)

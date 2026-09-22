@@ -106,6 +106,25 @@ void borders() {
     require(value == T(7));
 }
 
+void overlap_boundaries() {
+  std::array<std::uint16_t, 40> storage{};
+  auto a = neo_mv::checked_plane(storage.data(), 2, 3, 16, sizeof(storage));
+  auto check = [&](auto b, bool expected) {
+    require(neo_mv::active_rows_overlap(a, b) == expected);
+    require(neo_mv::active_rows_overlap(b, a) == expected);
+  };
+  // Bounding spans overlap, but the active rows occupy each other's gaps.
+  check(neo_mv::checked_plane(storage.data() + 2, 2, 3, 16, 76), false);
+  // Only the last row of a overlaps; first-row-only tests cannot detect this.
+  check(neo_mv::checked_plane(storage.data() + 17, 1, 2, 16, 46), true);
+  // The next allocation begins exactly at the active end of a.
+  check(neo_mv::checked_plane(storage.data() + 18, 2, 2, 16, 44), false);
+  // Alias checks use bytes even when the view element types differ.
+  auto* bytes = reinterpret_cast<std::uint8_t*>(storage.data());
+  check(neo_mv::checked_plane(bytes + 35, 1, 1, 1, 45), true);
+  check(neo_mv::checked_plane(bytes + 36, 1, 1, 1, 44), false);
+}
+
 void floating_copy() {
   const float negative_zero = -0.0f;
   float output = 1.0f;
@@ -124,6 +143,7 @@ void floating_copy() {
 int main() {
   try {
     admission();
+    overlap_boundaries();
     borders<std::uint8_t>();
     borders<std::uint16_t>();
     borders<float>();

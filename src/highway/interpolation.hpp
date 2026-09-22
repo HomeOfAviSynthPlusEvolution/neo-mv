@@ -41,6 +41,7 @@ struct HighwayInterpolationKernels {
   using BlurAverage = HighwayBlurAverage;
   using Lane = std::conditional_t<std::is_same_v<T, float>, float, std::uint32_t>;
 
+  template <bool Validated = false>
   static void compose(const std::vector<InterpolationSamples<T>>& samples, const std::vector<std::uint8_t>& mF,
                       const std::vector<std::uint8_t>& mB, bool extra, int time, int bits, span2d::Plane<T> output) {
     interpolation_detail::controls(time);
@@ -58,7 +59,8 @@ struct HighwayInterpolationKernels {
         const auto& s = samples[i];
         const T values[] = {s.A, s.C, extra ? s.E : s.A0, extra ? s.K : s.C0};
         for (int k = 0; k < 4; ++k) {
-          interpolation_detail::sample(values[k], bits);
+          if constexpr (!Validated)
+            interpolation_detail::sample(values[k], bits);
           rows[k][x] = values[k];
         }
         rows[4][x] = mF[i];
