@@ -223,12 +223,32 @@ std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const s
                           std::ptrdiff_t bs, int w, int h) {
   const hn::Repartition<std::uint64_t, D> wide;
   const int n = int(hn::Lanes(d));
-  auto sum = hn::Zero(wide);
+  auto sum0 = hn::Zero(wide), sum1 = sum0, sum2 = sum0, sum3 = sum0;
   std::int64_t tail = 0;
-  for (int y = 0; y < h; ++y) {
+  int y = 0;
+  for (; y + 3 < h; y += 4) {
+    int x = 0;
+    for (; x <= w - n; x += n) {
+      sum0 = hn::Add(sum0, hn::SumsOf8AbsDiff(hn::LoadU(d, a + x), hn::LoadU(d, b + x)));
+      sum1 = hn::Add(sum1, hn::SumsOf8AbsDiff(hn::LoadU(d, a + as + x), hn::LoadU(d, b + bs + x)));
+      sum2 = hn::Add(sum2, hn::SumsOf8AbsDiff(hn::LoadU(d, a + 2 * as + x), hn::LoadU(d, b + 2 * bs + x)));
+      sum3 = hn::Add(sum3, hn::SumsOf8AbsDiff(hn::LoadU(d, a + 3 * as + x), hn::LoadU(d, b + 3 * bs + x)));
+    }
+    for (; x < w; ++x) {
+      tail += std::abs(int(a[x]) - int(b[x]));
+      tail += std::abs(int(a[as + x]) - int(b[bs + x]));
+      tail += std::abs(int(a[2 * as + x]) - int(b[2 * bs + x]));
+      tail += std::abs(int(a[3 * as + x]) - int(b[3 * bs + x]));
+    }
+    if (y + 4 < h) {
+      a += 4 * as;
+      b += 4 * bs;
+    }
+  }
+  for (; y < h; ++y) {
     int x = 0;
     for (; x <= w - n; x += n)
-      sum = hn::Add(sum, hn::SumsOf8AbsDiff(hn::LoadU(d, a + x), hn::LoadU(d, b + x)));
+      sum0 = hn::Add(sum0, hn::SumsOf8AbsDiff(hn::LoadU(d, a + x), hn::LoadU(d, b + x)));
     for (; x < w; ++x)
       tail += std::abs(int(a[x]) - int(b[x]));
     if (y + 1 < h) {
@@ -236,7 +256,7 @@ std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const s
       b += bs;
     }
   }
-  return tail + static_cast<std::int64_t>(hn::ReduceSum(wide, sum));
+  return tail + static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
 }
 #endif
 
