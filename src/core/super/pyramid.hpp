@@ -144,8 +144,15 @@ public:
         levels.emplace_back();
         auto& phases = levels.back();
         phases.reserve(size.phase_count);
-        for (int a = 0; a < size.phase_count; ++a)
-          phases.emplace_back(size.padded_width, size.padded_height);
+        for (int a = 0; a < size.phase_count; ++a) {
+          // Quarter-phase right/bottom edges are outside the logical view but
+          // remain initialized so copying an owning pyramid never reads gaps.
+          const bool complete = l != 0 || plan_.external() || pel != 4 || (a % pel != 3 && a / pel != 3);
+          if (complete)
+            phases.emplace_back(size.padded_width, size.padded_height, overwrite);
+          else
+            phases.emplace_back(size.padded_width, size.padded_height);
+        }
         if (l == 0)
           Kernels::extend_border_validated(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
         else {
