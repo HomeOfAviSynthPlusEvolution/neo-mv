@@ -1,6 +1,7 @@
 #include "highway/render_ops.hpp"
 #include "kernels/render_scalar.hpp"
 #include "hwy/targets.h"
+#include <algorithm>
 #include <iostream>
 #include <cstring>
 #include <random>
@@ -246,6 +247,12 @@ void fused_degrain(int bits) {
           inputs.back().random(rng, bits);
           inputs.emplace_back(w, 5);
           inputs.back().random(rng, bits);
+          if constexpr (std::is_same_v<T, std::uint8_t>) {
+            if (w == 16 && overlap == 3 && nr == 50)
+              for (int k = 0; k < 2; ++k)
+                for (int y = 0; y < 5; ++y)
+                  std::fill_n(inputs[2 * i + k].view().row(y).data(), w, std::uint8_t(255));
+          }
           auto c = inputs[2 * i].read(), r = inputs[2 * i + 1].read();
           const auto* coeff = plan.has_overlap() ? plan.coefficient_row(i % 2, i / 2, 0) : nullptr;
           p.sources.push_back({c.row(0).data(), c.stride(), coeff});

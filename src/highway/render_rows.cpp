@@ -378,7 +378,7 @@ HWY_INLINE void AdmitSample(D d, V value, std::int64_t maximum) {
   if constexpr (std::is_same_v<hn::TFromD<D>, float>) {
     if (!hn::AllTrue(d, hn::IsFinite(value)))
       throw std::invalid_argument("non-finite Degrain sample");
-  } else if (!hn::AllTrue(d, hn::Le(value, hn::Set(d, std::int32_t(maximum)))))
+  } else if (!hn::AllTrue(d, hn::Le(value, hn::Set(d, hn::TFromD<D>(maximum)))))
     throw std::invalid_argument("Degrain sample exceeds bit depth");
 }
 
@@ -391,7 +391,8 @@ HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const in
     AdmitSample(d, c, maximum);
   else if (maximum != std::numeric_limits<T>::max())
     AdmitSample(d, c, maximum);
-  auto sum = hn::Mul(c, hn::Set(d, Acc<T>(weights[0])));
+  using A = hn::TFromD<D>;
+  auto sum = hn::Mul(c, hn::Set(d, A(weights[0])));
   CheckFinite(d, sum);
   if constexpr (!std::is_same_v<T, float>)
     sum = hn::Add(sum, hn::Set(d, 128));
@@ -401,7 +402,7 @@ HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const in
       AdmitSample(d, sample, maximum);
     else if (maximum != std::numeric_limits<T>::max())
       AdmitSample(d, sample, maximum);
-    const auto product = hn::Mul(sample, hn::Set(d, Acc<T>(weights[r])));
+    const auto product = hn::Mul(sample, hn::Set(d, A(weights[r])));
     CheckFinite(d, product);
     sum = hn::Add(sum, product);
     CheckFinite(d, sum);
@@ -411,20 +412,44 @@ HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const in
   else
     return hn::ShiftRight<8>(sum);
 }
+template <class D, class V>
+HWY_INLINE void AddDegrainByte(D d, V sample, const std::uint16_t* coeff, std::uint16_t* sum) {
+  const auto weight = hn::LoadU(d, coeff);
+  const auto value = hn::MulHigh(hn::ShiftLeft<8>(sample), hn::ShiftLeft<2>(weight));
+  hn::StoreU(hn::Add(hn::LoadU(d, sum), value), d, sum);
+}
+template <class D>
+HWY_INLINE void FinishDegrainByteChunk(D d, const std::uint16_t* sum, std::uint8_t* out, std::uint16_t maximum) {
+  const hn::Rebind<std::uint8_t, D> bytes;
+  const auto value = hn::Min(hn::ShiftRight<5>(hn::Add(hn::LoadU(d, sum), hn::Set(d, std::uint16_t(16)))),
+                             hn::Set(d, maximum));
+  hn::StoreU(hn::DemoteTo(bytes, value), bytes, out);
+}
+void FinishDegrainByte(const std::uint16_t* sum, std::uint8_t* out, int count, std::uint16_t maximum) {
+  const hn::ScalableTag<std::uint16_t> d;
+  const int lanes = int(hn::Lanes(d));
+  int x = 0;
+  for (; x <= count - lanes; x += lanes)
+    FinishDegrainByteChunk(d, sum + x, out + x, maximum);
+  const hn::CappedTag<std::uint16_t, 1> one;
+  for (; x < count; ++x)
+    FinishDegrainByteChunk(one, sum + x, out + x, maximum);
+}
 
 template <class T, int Width, int FixedReferences = 0>
 void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
                      span2d::Plane<T> out, const ChangeLimit<T>& limit) {
+  using DegrainAcc = std::conditional_t<std::is_same_v<T, std::uint8_t>, std::uint16_t, Acc<T>>;
   const int references = FixedReferences ? FixedReferences : p.references;
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   const bool overlap = g.overlap_x || g.overlap_y;
-  std::vector<Acc<T>> sums(overlap ? g.visible_width : 0);
+  std::vector<DegrainAcc> sums(overlap ? g.visible_width : 0);
   const int height = (g.blocks_y - 1) * sy + g.block_height;
-  const hn::CappedTag<Acc<T>, Width> d;
+  const hn::CappedTag<DegrainAcc, Width> d;
   const int lanes = int(hn::Lanes(d));
-  const hn::CappedTag<Acc<T>, 1> one;
+  const hn::CappedTag<DegrainAcc, 1> one;
   for (int y = 0; y < height; ++y) {
-    std::fill(sums.begin(), sums.end(), Acc<T>(0));
+    std::fill(sums.begin(), sums.end(), DegrainAcc(0));
     const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
     const int last = std::min(y / sy, g.blocks_y - 1);
     for (int by = first; by <= last; ++by) {
@@ -438,9 +463,14 @@ void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p
         const auto consume = [&](auto tag, int x, bool write) HWY_ATTR {
           const auto value = DegrainValue<FixedReferences>(tag, sources, weights, references, ly, x, limit.maximum());
           if (write) {
-            if (overlap)
-              AddValue(tag, value, sources[0].coefficients + std::size_t(ly) * g.block_width + x, sums.data() + ox + x);
-            else
+            if (overlap) {
+              if constexpr (std::is_same_v<T, std::uint8_t>)
+                AddDegrainByte(tag, value, sources[0].coefficients + std::size_t(ly) * g.block_width + x,
+                               sums.data() + ox + x);
+              else
+                AddValue(tag, value, sources[0].coefficients + std::size_t(ly) * g.block_width + x,
+                         sums.data() + ox + x);
+            } else
               StoreSample(tag, value, out.row(y).data() + ox + x);
           }
         };
@@ -458,8 +488,12 @@ void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p
     }
     if (y < g.visible_height) {
       auto* dst = out.row(y).data();
-      if (overlap)
-        Finish(sums.data(), dst, g.visible_width, limit.maximum());
+      if (overlap) {
+        if constexpr (std::is_same_v<T, std::uint8_t>)
+          FinishDegrainByte(sums.data(), dst, g.visible_width, std::uint16_t(limit.maximum()));
+        else
+          Finish(sums.data(), dst, g.visible_width, limit.maximum());
+      }
       if (limit.active())
         Limit(dst, centre.row(y).data(), dst, g.visible_width, true, limit.maximum(), limit.integer_limit(),
               limit.float_limit());
