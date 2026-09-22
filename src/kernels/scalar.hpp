@@ -9,6 +9,9 @@ namespace neo_mv {
 // Compile-time pixel operations; control flow and search stay in the core.
 template <class T>
 struct ScalarKernels {
+  static const SamplingFrames<T>& prepare_frames(const SamplingGeometry&, const SamplingFrames<T>& frames) {
+    return frames;
+  }
   static auto prepare_block_error(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames,
                                   BlockMetric metric) {
     return [&geometry, block, &frames, metric](MotionVector vector) {

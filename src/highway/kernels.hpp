@@ -294,17 +294,47 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
 }
 
+// Immutable phase pointers and strides are shared by all blocks in one layer.
+template <class T>
+struct PreparedSamplingFrames {
+  std::array<span2d::Plane<const T>, 3> current{};
+  std::array<std::array<const T*, 16>, 3> references{};
+  std::array<std::array<std::ptrdiff_t, 16>, 3> strides{};
+
+  PreparedSamplingFrames(const SamplingGeometry& g, const SamplingFrames<T>& frames) : current(frames.current) {
+    for (int k = 0; k < (g.chroma ? 3 : 1); ++k)
+      for (int a = 0; a < g.pel * g.pel; ++a) {
+        references[k][a] = frames.reference[k][a].data();
+        strides[k][a] = frames.reference[k][a].stride();
+      }
+  }
+};
+
 // One search block owns this evaluator; its caller has already admitted the
 // complete candidate domain and all frame views. Search invokes it serially.
-template <class T>
+template <class T, bool OwnsFrames = true>
 class PreparedBlockError {
+  using FrameInput = std::conditional_t<OwnsFrames, SamplingFrames<T>, PreparedSamplingFrames<T>>;
+  using FrameStorage = std::conditional_t<OwnsFrames, PreparedSamplingFrames<T>, const PreparedSamplingFrames<T>*>;
   int pel_, ratio_x_, ratio_y_;
   bool chroma_;
   std::array<int, 3> x_{}, y_{};
-  std::array<std::array<const T*, 16>, 3> references_{};
-  std::array<std::array<std::ptrdiff_t, 16>, 3> strides_{};
+  FrameStorage frames_;
   std::array<detail::MetricRequest<T>, 3> requests_{};
   detail::MetricBatchFunction<T> metric_batch_;
+
+  static FrameStorage store_frames(const SamplingGeometry& g, const FrameInput& frames) {
+    if constexpr (OwnsFrames)
+      return PreparedSamplingFrames<T>(g, frames);
+    else
+      return &frames;
+  }
+  const PreparedSamplingFrames<T>& frames() const {
+    if constexpr (OwnsFrames)
+      return frames_;
+    else
+      return *frames_;
+  }
 
   std::int64_t quotient(std::int64_t value) const {
     switch (pel_) {
@@ -315,9 +345,9 @@ class PreparedBlockError {
     }
   }
   void reference(int k, std::int64_t qx, std::int64_t qy, std::size_t phase) {
-    requests_[k].reference = references_[k][phase] +
-        (std::ptrdiff_t(y_[k]) + qy) * strides_[k][phase] + (std::ptrdiff_t(x_[k]) + qx);
-    requests_[k].reference_stride = strides_[k][phase];
+    requests_[k].reference = frames().references[k][phase] +
+        (std::ptrdiff_t(y_[k]) + qy) * frames().strides[k][phase] + (std::ptrdiff_t(x_[k]) + qx);
+    requests_[k].reference_stride = frames().strides[k][phase];
   }
   void reference_pair(int first, int last, std::int64_t vx, std::int64_t vy) {
     const auto qx = quotient(vx), qy = quotient(vy);
@@ -327,8 +357,9 @@ class PreparedBlockError {
   }
 
 public:
-  PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const SamplingFrames<T>& frames, BlockMetric metric)
-      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma) {
+  PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const FrameInput& frame_input, BlockMetric metric)
+      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
+        frames_(store_frames(g, frame_input)) {
     if constexpr (std::is_same_v<T, float>)
       metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
     else
@@ -341,16 +372,11 @@ public:
       x_[k] = g.planes[k].pad_x + block.x / rx;
       y_[k] = g.planes[k].pad_y + block.y / ry;
       auto& request = requests_[k];
-      request.source = frames.current[k].row(y_[k]).data() + x_[k];
-      request.source_stride = frames.current[k].stride();
+      request.source = frames().current[k].row(y_[k]).data() + x_[k];
+      request.source_stride = frames().current[k].stride();
       request.width = block.width / rx;
       request.height = block.height / ry;
       request.satd = k == 0 && metric == BlockMetric::satd;
-      for (int a = 0; a < pel_ * pel_; ++a) {
-        const auto plane = frames.reference[k][a];
-        references_[k][a] = plane.data();
-        strides_[k][a] = plane.stride();
-      }
     }
   }
   BlockError operator()(MotionVector vector) {
@@ -416,8 +442,19 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 namespace neo_mv {
 template <class T>
 struct HighwayKernels {
+  static decltype(auto) prepare_frames(const SamplingGeometry& geometry, const SamplingFrames<T>& frames) {
+    if constexpr (std::is_same_v<T, std::uint8_t>)
+      return simd::PreparedSamplingFrames<T>{geometry, frames};
+    else
+      return (frames);
+  }
   static simd::PreparedBlockError<T> prepare_block_error(const SamplingGeometry& geometry, BlockRegion block,
                                                          const SamplingFrames<T>& frames, BlockMetric metric) {
+    return {geometry, block, frames, metric};
+  }
+  static simd::PreparedBlockError<T, false> prepare_block_error(const SamplingGeometry& geometry, BlockRegion block,
+                                                                const simd::PreparedSamplingFrames<T>& frames,
+                                                                BlockMetric metric) {
     return {geometry, block, frames, metric};
   }
   static void validate_samples(const T* samples, int count, std::int64_t maximum) {

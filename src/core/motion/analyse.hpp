@@ -228,6 +228,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
               parent, x, y, {m.block_width, m.block_height, m.overlap_x, m.overlap_y, parent_pel, m.pel});
     const auto global =
         enter_global_level(coarsest ? MotionVector{0, 0} : global_predictor(parent, controls.globalmv), m.pel, f);
+    decltype(auto) prepared_frames = Kernels::prepare_frames(layer.sampling, frames[index]);
     for (int y = 0; y < m.blocks_y; ++y) {
       const int direction = controls.meander && y % 2 ? -1 : 1;
       std::int64_t base = 0;
@@ -246,7 +247,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         if (coarsest)
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
-        auto evaluate = Kernels::prepare_block_error(layer.sampling, block, frames[index],
+        auto evaluate = Kernels::prepare_block_error(layer.sampling, block, prepared_frames,
                                                      controls.satd ? BlockMetric::satd : BlockMetric::sad);
         const auto result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
                                                   badsad, controls, evaluate);

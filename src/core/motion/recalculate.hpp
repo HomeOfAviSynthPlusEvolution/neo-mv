@@ -78,13 +78,14 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
     threshold = prediction_detail::add(threshold, 2 * (threshold / (target.ratio_x * target.ratio_y)));
   MotionGrid output{target.blocks_x, target.blocks_y, {}};
   output.values.resize(static_cast<std::size_t>(field_detail::count(target)));
+  decltype(auto) prepared_frames = Kernels::prepare_frames(geometry, frames);
   for (int by = 0; by < target.blocks_y; ++by)
     for (int index = 0; index < target.blocks_x; ++index) {
       const int bx = controls.meander && by % 2 ? target.blocks_x - 1 - index : index;
       const auto block = analysis_block(target, bx, by);
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
-      auto evaluate = Kernels::prepare_block_error(geometry, block, frames,
+      auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames,
                                                    controls.satd ? BlockMetric::satd : BlockMetric::sad);
       const auto error = evaluate(u);
       SearchResult result{u, error.raw, error.raw};
