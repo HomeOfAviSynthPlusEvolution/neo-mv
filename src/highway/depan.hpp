@@ -7,7 +7,7 @@
 namespace neo_mv::depan {
 struct HighwayResiduals {
   static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
-                                    const std::array<float, 4>& gradients, std::size_t count) {
+                                     const std::array<float, 4>& gradients, std::size_t count) {
     simd::depan_rows::adjust(values.data(), scales.data(), gradients.data(), count, values.data());
     return values;
   }
@@ -42,9 +42,9 @@ class HighwaySamplingPlan : public SamplingPlan {
 public:
   using SamplingPlan::SamplingPlan;
   template <class T>
-  void render(span2d::Plane<const T> source, span2d::Plane<T> output) const {
+  void render(span2d::Plane<const T> source, span2d::Plane<T> output, bool preserve = false) const {
     if (mode() == 0) {
-      SamplingPlan::render(source, output);
+      SamplingPlan::render(source, output, preserve);
       return;
     }
     validate(source, output);
@@ -64,7 +64,7 @@ public:
         const bool complete = mode() == 1 ? (q.i >= 0 && q.i < width() - 1 && q.j >= 0 && q.j < height() - 1)
                                           : (q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2);
         if (mode() == 0 || !complete) {
-          output.row(y)[x] = evaluate(source, q);
+          write_sample(source, output.row(y)[x], q, preserve);
           return;
         }
         const auto index = columns.size();

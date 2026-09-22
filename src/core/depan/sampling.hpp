@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 
 namespace neo_mv::depan {
 enum class SamplingClass { translation, scale, affine };
@@ -63,10 +64,10 @@ class SamplingPlan {
     return source.row(static_cast<int>(y))[static_cast<int>(x)];
   }
   template <class T>
-  T general(span2d::Plane<const T> source, double i, double j) const {
+  std::optional<T> general(span2d::Plane<const T> source, double i, double j) const {
     j = reflect(j, height_, mirror_ & 1, mirror_ & 2);
     i = reflect(i, width_, mirror_ & 4, mirror_ & 8);
-    return valid(i, width_) && valid(j, height_) ? read(source, i, j) : T(border_);
+    return valid(i, width_) && valid(j, height_) ? read(source, i, j) : std::optional<T>{};
   }
   template <class T>
   T clamped_mean(span2d::Plane<const T> source, double start, std::uint32_t count, int row) const {
@@ -88,7 +89,7 @@ class SamplingPlan {
     return static_cast<T>(sum / count);
   }
   template <class T>
-  T horizontal(span2d::Plane<const T> source, double i, int row, bool bilinear, int blur) const {
+  std::optional<T> horizontal(span2d::Plane<const T> source, double i, int row, bool bilinear, int blur) const {
     double start = 0, length = 1;
     if (i < 0 && (mirror_ & 4)) {
       start = -i;
@@ -101,7 +102,7 @@ class SamplingPlan {
       if (blur > 0)
         length = std::min(double(blur), i - width_ + (bilinear ? 2 : 1));
     } else {
-      return T(border_);
+      return std::nullopt;
     }
     if (blur == 0)
       return read(source, std::clamp(start, 0.0, double(width_ - 1)), row);
@@ -209,7 +210,7 @@ public:
   // Separate from row iteration so dispatched implementations can reuse the
   // exact scalar border table while batching complete interior footprints.
   template <class T>
-  T evaluate(span2d::Plane<const T> source, SamplingCoordinates q) const {
+  std::optional<T> evaluate_result(span2d::Plane<const T> source, SamplingCoordinates q) const {
     const bool complete2 = q.i >= 0 && q.i < width_ - 1 && q.j >= 0 && q.j < height_ - 1;
     const bool complete4 = q.i >= 1 && q.i < width_ - 2 && q.j >= 1 && q.j < height_ - 2;
     if (class_ == SamplingClass::affine) {
@@ -221,7 +222,7 @@ public:
     }
     q.j = reflect(q.j, height_, mirror_ & 1, mirror_ & 2);
     if (!valid(q.j, height_))
-      return T(border_);
+      return std::nullopt;
     const int row = static_cast<int>(q.j);
     if (mode_ == 0)
       return valid(q.i, width_) ? read(source, q.i, q.j) : horizontal(source, q.i, row, false, blur_);
@@ -230,7 +231,7 @@ public:
         return q.i >= 0 && q.i < width_ - 1 ? bilinear(source, q) : horizontal(source, q.i, row, true, blur_);
       if (valid(q.i, width_))
         return read(source, q.i, q.j);
-      return class_ == SamplingClass::translation ? horizontal(source, q.i, row, false, 0) : T(border_);
+      return class_ == SamplingClass::translation ? horizontal(source, q.i, row, false, 0) : std::optional<T>{};
     }
     if (q.j >= 1 && q.j < height_ - 2) {
       if (q.i >= 1 && q.i < width_ - 2)
@@ -250,6 +251,18 @@ public:
   }
 
   template <class T>
+  T evaluate(span2d::Plane<const T> source, SamplingCoordinates q) const {
+    return evaluate_result(source, q).value_or(T(border_));
+  }
+  template <class T>
+  void write_sample(span2d::Plane<const T> source, T& destination, SamplingCoordinates q, bool preserve) const {
+    const auto result = evaluate_result(source, q);
+    if (result)
+      destination = *result;
+    else if (!preserve)
+      destination = T(border_);
+  }
+  template <class T>
   void validate(span2d::Plane<const T> source, span2d::Plane<T> output) const {
     static_assert(std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t>);
     if ((std::is_same_v<T, std::uint8_t> && bits_ != 8) || (std::is_same_v<T, std::uint16_t> && bits_ == 8))
@@ -266,10 +279,11 @@ public:
           throw std::invalid_argument("Depan source sample exceeds precision");
   }
   template <class T>
-  void render(span2d::Plane<const T> source, span2d::Plane<T> output) const {
+  void render(span2d::Plane<const T> source, span2d::Plane<T> output, bool preserve = false) const {
     validate(source, output);
     for (int y = 0; y < height_; ++y)
-      row_coordinates(y, [&](int x, const SamplingCoordinates& q) { output.row(y)[x] = evaluate(source, q); });
+      row_coordinates(
+          y, [&](int x, const SamplingCoordinates& q) { write_sample(source, output.row(y)[x], q, preserve); });
   }
 };
 } // namespace neo_mv::depan
