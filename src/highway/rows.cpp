@@ -205,8 +205,15 @@ std::int64_t SmallSad(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdi
   std::int64_t tail = 0;
   for (int y = 0; y < h; ++y) {
     int x = 0;
-    for (; x <= w - n; x += n)
-      sum = hn::Add(sum, hn::Abs(hn::Sub(LoadWide(d, a + x, 1), LoadWide(d, b + x, 1))));
+    for (; x <= w - n; x += n) {
+      if constexpr (std::is_same_v<T, std::uint16_t>) {
+        const hn::Rebind<T, D> narrow;
+        const auto difference = hn::AbsDiff(hn::LoadU(narrow, a + x), hn::LoadU(narrow, b + x));
+        sum = hn::Add(sum, hn::PromoteTo(d, difference));
+      } else {
+        sum = hn::Add(sum, hn::Abs(hn::Sub(LoadWide(d, a + x, 1), LoadWide(d, b + x, 1))));
+      }
+    }
     for (; x < w; ++x)
       tail += std::abs(int(a[x]) - int(b[x]));
     if (y + 1 < h) {
