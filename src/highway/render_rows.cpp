@@ -252,6 +252,61 @@ void ComposeDirectPairByte(const BlockCompositionGeometry& g, const SampledRende
   }
 }
 #endif
+#if HWY_TARGET == HWY_AVX3_SPR
+void ComposeDirectQuadByte(const BlockCompositionGeometry& g, const SampledRenderBlock<std::uint8_t>* blocks,
+                           span2d::Plane<std::uint8_t> output, int tx, int ty, int ox, int oy,
+                           std::int64_t maximum) {
+  DirectInput<std::uint8_t> input[4][4];
+  std::ptrdiff_t strides[4][4];
+  int n = 0;
+  for (int by = ty - 1; by <= ty; ++by)
+    for (int hx = 0; hx < 2; ++hx) {
+      const int local_y = by == ty ? 0 : 8;
+      const int local_x = hx ? 0 : 8;
+      for (int tile = 0; tile < 4; ++tile) {
+        const int bx = tx - 1 + hx + tile;
+        const auto& block = blocks[std::size_t(by) * g.blocks_x + bx];
+        input[n][tile] = {block.data + local_y * block.stride + local_x,
+                          block.coefficients + std::size_t(local_y) * 16 + local_x};
+        strides[n][tile] = block.stride;
+      }
+      ++n;
+    }
+  const hn::CappedTag<std::uint16_t, 32> full;
+  const hn::CappedTag<std::uint16_t, 16> half;
+  const hn::CappedTag<std::uint16_t, 8> quarter;
+  const hn::Rebind<std::uint8_t, decltype(quarter)> quarter_bytes;
+  const hn::Rebind<std::uint8_t, decltype(full)> full_bytes;
+  auto* dst = output.row(oy).data() + ox;
+  for (int row = 0; row < 8; ++row) {
+    auto sum = hn::Zero(full);
+    for (int i = 0; i < 4; ++i) {
+      const auto sample = [&](int tile) HWY_ATTR {
+        return hn::PromoteTo(quarter, hn::LoadU(quarter_bytes, input[i][tile].samples));
+      };
+      const auto lo = hn::Combine(half, sample(1), sample(0));
+      const auto hi = hn::Combine(half, sample(3), sample(2));
+      const auto samples = hn::Combine(full, hi, lo);
+      const auto weight_lo = hn::Combine(half, hn::LoadU(quarter, input[i][1].coefficients),
+                                         hn::LoadU(quarter, input[i][0].coefficients));
+      const auto weight_hi = hn::Combine(half, hn::LoadU(quarter, input[i][3].coefficients),
+                                         hn::LoadU(quarter, input[i][2].coefficients));
+      const auto weight = hn::Combine(full, weight_hi, weight_lo);
+      sum = hn::Add(sum, hn::MulHigh(hn::ShiftLeft<8>(samples), hn::ShiftLeft<2>(weight)));
+    }
+    const auto rounded = hn::ShiftRight<5>(hn::Add(sum, hn::Set(full, std::uint16_t(16))));
+    hn::StoreU(hn::DemoteTo(full_bytes, hn::Min(rounded, hn::Set(full, std::uint16_t(maximum)))), full_bytes, dst);
+    if (row + 1 < 8) {
+      dst += output.stride();
+      for (int i = 0; i < 4; ++i)
+        for (int tile = 0; tile < 4; ++tile) {
+          input[i][tile].samples += strides[i][tile];
+          input[i][tile].coefficients += 16;
+        }
+    }
+  }
+}
+#endif
 
 template <class T>
 void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
@@ -261,6 +316,17 @@ void ComposeDirectTiled16(const BlockCompositionGeometry& g, const SampledRender
     const int first_y = ty ? ty - 1 : 0;
     const int last_y = std::min(ty, g.blocks_y - 1);
     for (int tx = 0, ox = 0; ox < g.visible_width; ++tx, ox += 8) {
+#if HWY_TARGET == HWY_AVX3_SPR
+      if constexpr (std::is_same_v<T, std::uint8_t>) {
+        if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 3 < g.blocks_x && tile_height == 8 &&
+            ox + 32 <= g.visible_width) {
+          ComposeDirectQuadByte(g, blocks, output, tx, ty, ox, oy, maximum);
+          tx += 3;
+          ox += 24;
+          continue;
+        }
+      }
+#endif
 #if HWY_TARGET == HWY_AVX2
       if constexpr (std::is_same_v<T, std::uint8_t>) {
         if (ty > 0 && ty < g.blocks_y && tx > 0 && tx + 1 < g.blocks_x && tile_height == 8 &&
@@ -315,6 +381,12 @@ void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRender
       return ComposeDirectTiled16(g, blocks, output, maximum);
   }
 #if HWY_TARGET == HWY_AVX2
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
+      return ComposeDirectTiled16(g, blocks, output, maximum);
+  }
+#endif
+#if HWY_TARGET == HWY_AVX3_SPR
   if constexpr (std::is_same_v<T, std::uint8_t>) {
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
       return ComposeDirectTiled16(g, blocks, output, maximum);
