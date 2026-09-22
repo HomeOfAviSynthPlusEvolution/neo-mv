@@ -324,7 +324,7 @@ class PreparedBlockError {
   FrameStorage frames_;
   std::array<detail::MetricRequest<T>, 3> requests_{};
   detail::MetricBatchFunction<T> metric_batch_;
-  bool bounded_sad_ = false;
+  detail::BoundedMetricBatchFunction<T> bounded_metric_batch_ = nullptr;
 
   static FrameStorage store_frames(const SamplingGeometry& g, const FrameInput& frames) {
     if constexpr (OwnsFrames)
@@ -388,7 +388,9 @@ public:
       metric_batch_ = block.width == 16 ? detail::metric_batch_420_function(static_cast<T *>(nullptr))
                      : block.width == 8 ? detail::metric_batch_420_small_function(static_cast<T *>(nullptr))
                                         : detail::metric_batch_function(static_cast<T *>(nullptr));
-      bounded_sad_ = block.width == 16 || block.width == 8;
+      bounded_metric_batch_ = block.width == 16 ? detail::metric_batch_420_bounded_function(static_cast<T *>(nullptr))
+                              : block.width == 8 ? detail::metric_batch_420_small_bounded_function(static_cast<T *>(nullptr))
+                                                 : nullptr;
     } else
       metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
     for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
@@ -416,19 +418,13 @@ public:
     // The selected 420 blocks have at most 384 samples. With these bounds,
     // distance, full SAD and both penalties fit int64; otherwise retain the
     // ordinary path and its overflow errors.
-    if (!bounded_sad_ || lambda < 0 || lambda > INT32_MAX || penalty < 0 || penalty > 256 ||
+    if (!bounded_metric_batch_ || lambda < 0 || lambda > INT32_MAX || penalty < 0 || penalty > 256 ||
         dx < -32767 || dx > 32767 || dy < -32767 || dy > 32767)
       return operator()(vector);
     prepare_references(vector);
     std::array<std::int64_t, 3> errors{};
-    for (int k = 0; k < 3; ++k) {
-      const auto& r = requests_[k];
-      errors[k] = detail::metric(r.source, r.source_stride, r.reference, r.reference_stride,
-                                 r.width, r.height, false);
-      if (errors[k] >= limit)
-        return std::nullopt;
-      limit -= errors[k];
-    }
+    if (!bounded_metric_batch_(requests_.data(), limit, errors.data()))
+      return std::nullopt;
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return BlockError{errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
   }

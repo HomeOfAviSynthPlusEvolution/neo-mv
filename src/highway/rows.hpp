@@ -15,6 +15,8 @@ template <class T> struct MetricRequest {
 };
 template <class T>
 using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t *);
+template <class T>
+using BoundedMetricBatchFunction = bool (*)(const MetricRequest<T> *, std::int64_t, std::int64_t *);
 // step=2 requires 2*count accessible samples at each tap for deinterleaving.
 #define NEO_DECLARE(T)                                                                                                 \
   void extract(const T *, T *, int, int, int);                                                                         \
@@ -26,7 +28,9 @@ using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t
   void metric_batch(const MetricRequest<T> *, int, std::int64_t *);                                                     \
   MetricBatchFunction<T> metric_batch_function(T *);                                                                    \
   MetricBatchFunction<T> metric_batch_420_function(T *);                                                                \
-  MetricBatchFunction<T> metric_batch_420_small_function(T *);
+  MetricBatchFunction<T> metric_batch_420_small_function(T *);                                                          \
+  BoundedMetricBatchFunction<T> metric_batch_420_bounded_function(T *);                                                  \
+  BoundedMetricBatchFunction<T> metric_batch_420_small_bounded_function(T *);
 NEO_DECLARE(std::uint8_t)
 NEO_DECLARE(std::uint16_t)
 NEO_DECLARE(float)

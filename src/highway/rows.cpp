@@ -570,6 +570,28 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
     errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);
   }
 }
+template <class T, int LumaWidth>
+bool MetricBatch420Bounded(const MetricRequest<T> *requests, std::int64_t limit, std::int64_t *errors) {
+  for (int k = 0; k < 3; ++k) {
+    const auto &r = requests[k];
+#if HWY_TARGET != HWY_SCALAR
+    if constexpr (std::is_same_v<T, std::uint8_t>) {
+      if constexpr (LumaWidth == 16)
+        errors[k] = k == 0 ? FixedByteSad<16, 16>(r.source, r.source_stride, r.reference, r.reference_stride)
+                           : FixedByteSad<8, 8>(r.source, r.source_stride, r.reference, r.reference_stride);
+      else
+        errors[k] = k == 0 ? FixedByteSad<8, 8>(r.source, r.source_stride, r.reference, r.reference_stride)
+                           : FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
+    } else
+#endif
+      errors[k] = Metric(r.source, r.source_stride, r.reference, r.reference_stride,
+                         r.width, r.height, false);
+    if (errors[k] >= limit)
+      return false;
+    limit -= errors[k];
+  }
+  return true;
+}
 #define NEO_IMPL(T, S)                                                                                                 \
   void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
     Extract(p, q, n, pel, phase);                                                                                      \
@@ -600,6 +622,12 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
   }                                                                                                                    \
   void MetricBatch420Small##S(const MetricRequest<T> *requests, int count, std::int64_t *errors) {                     \
     MetricBatch420Small(requests, count, errors);                                                                      \
+  }                                                                                                                    \
+  bool MetricBatch420Bounded##S(const MetricRequest<T> *requests, std::int64_t limit, std::int64_t *errors) {           \
+    return MetricBatch420Bounded<T, 16>(requests, limit, errors);                                                       \
+  }                                                                                                                    \
+  bool MetricBatch420SmallBounded##S(const MetricRequest<T> *requests, std::int64_t limit, std::int64_t *errors) {      \
+    return MetricBatch420Bounded<T, 8>(requests, limit, errors);                                                        \
   }
 NEO_IMPL(std::uint8_t, U8) NEO_IMPL(std::uint16_t, U16) NEO_IMPL(float, F32)
 #undef NEO_IMPL
@@ -622,6 +650,8 @@ const char *target_name() {
   HWY_EXPORT(MetricBatch##S);                                                                                          \
   HWY_EXPORT(MetricBatch420##S);                                                                                       \
   HWY_EXPORT(MetricBatch420Small##S);                                                                                  \
+  HWY_EXPORT(MetricBatch420Bounded##S);                                                                                \
+  HWY_EXPORT(MetricBatch420SmallBounded##S);                                                                           \
   void extract(const T *p, T *q, int n, int pel, int phase) {                                                          \
     HWY_DYNAMIC_DISPATCH(Extract##S)(p, q, n, pel, phase);                                                             \
   }                                                                                                                    \
@@ -651,6 +681,12 @@ const char *target_name() {
   }                                                                                                                    \
   MetricBatchFunction<T> metric_batch_420_small_function(T *) {                                                        \
     return HWY_DYNAMIC_DISPATCH(MetricBatch420Small##S);                                                               \
+  }                                                                                                                    \
+  BoundedMetricBatchFunction<T> metric_batch_420_bounded_function(T *) {                                               \
+    return HWY_DYNAMIC_DISPATCH(MetricBatch420Bounded##S);                                                             \
+  }                                                                                                                    \
+  BoundedMetricBatchFunction<T> metric_batch_420_small_bounded_function(T *) {                                         \
+    return HWY_DYNAMIC_DISPATCH(MetricBatch420SmallBounded##S);                                                        \
   }
 NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
 #undef NEO_EXPORT
