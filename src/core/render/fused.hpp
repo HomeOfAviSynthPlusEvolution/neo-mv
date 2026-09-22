@@ -64,6 +64,43 @@ struct RenderPreparation {
       }
     return blocks;
   }
+  template <bool DomainProven = false>
+  static std::array<CompensationBlocks, 2>
+  prepare_compensated_chroma(const std::array<const OverlapCompositionPlan*, 2>& plans, const CompensationRule& rule,
+                             const RenderPhaseGeometry& geometry, const MotionGrid& field, int shift,
+                             const std::array<const SubpixelPhases<T>*, 2>& current,
+                             const std::array<const SubpixelPhases<T>*, 2>& reference,
+                             const std::vector<CompensationDecision>* decisions = nullptr) {
+    const auto& g = plans[0]->geometry();
+    if (decisions && decisions->size() != field.values.size())
+      throw std::invalid_argument("compensation decision count mismatch");
+    std::array<CompensationBlocks, 2> blocks;
+    for (auto& plane : blocks)
+      plane.reserve(field.values.size());
+    for (int by = 0; by < g.blocks_y; ++by)
+      for (int bx = 0; bx < g.blocks_x; ++bx) {
+        const BlockRegion block{bx * (g.block_width - g.overlap_x) * geometry.ratio_x,
+                                by * (g.block_height - g.overlap_y) * geometry.ratio_y,
+                                g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
+        const auto index = std::size_t(by) * g.blocks_x + bx;
+        const auto v = field.values[index];
+        const auto selected = decisions ? (*decisions)[index].selected : rule.select(v.vector, v.error, shift);
+        const auto displacement =
+            decisions ? (*decisions)[index].reference_displacement : rule.reference_displacement(v.vector, shift);
+        const auto reference_footprint = DomainProven ? render_footprint_domain_proven(geometry, block, displacement)
+                                                      : render_footprint_admitted(geometry, block, displacement);
+        const auto footprint =
+            selected.reference ? reference_footprint
+                               : (DomainProven ? render_footprint_domain_proven(geometry, block, selected.displacement)
+                                               : render_footprint_admitted(geometry, block, selected.displacement));
+        for (int k = 0; k < 2; ++k) {
+          const auto plane = (selected.reference ? *reference[k] : *current[k]).planes[footprint.phase];
+          blocks[k].push_back({plane.row(footprint.y).data() + footprint.x, plane.stride(),
+                               plans[k]->has_overlap() ? plans[k]->coefficient_row(bx, by, 0) : nullptr});
+        }
+      }
+    return blocks;
+  }
   using DegrainPlane = neo_mv::DegrainPlane<T>;
   template <bool DomainProven = false, class Images>
   static DegrainPlane

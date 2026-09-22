@@ -182,8 +182,23 @@ public:
     // Admit every plane's actual footprints before any plane samples pixels.
     // Descriptors borrow the source; no temporary pixel blocks are produced.
     std::array<typename Kernels::CompensationBlocks, 3> blocks;
-    for (int k = 0; k < grid_.plane_count(); ++k)
-      if (shift == 0)
+    const bool pair_chroma = grid_.plane_count() == 3;
+    for (int k = 0; k < grid_.plane_count(); ++k) {
+      if (pair_chroma && k == 2)
+        continue;
+      if (pair_chroma && k == 1) {
+        auto pair = shift == 0
+                        ? Kernels::template prepare_compensated_chroma<true>(
+                              {&grid_.composition(1), &grid_.composition(2)}, rule_, grid_.phase_geometry(1),
+                              field.grid, shift, {&current.planes[1], &current.planes[2]},
+                              {&reference_image->planes[1], &reference_image->planes[2]}, &decisions)
+                        : Kernels::template prepare_compensated_chroma<false>(
+                              {&grid_.composition(1), &grid_.composition(2)}, rule_, grid_.phase_geometry(1),
+                              field.grid, shift, {&current.planes[1], &current.planes[2]},
+                              {&reference_image->planes[1], &reference_image->planes[2]}, &decisions);
+        blocks[1] = std::move(pair[0]);
+        blocks[2] = std::move(pair[1]);
+      } else if (shift == 0)
         blocks[k] = Kernels::template prepare_compensated<true>(grid_.composition(k), rule_, grid_.phase_geometry(k),
                                                                 field.grid, shift, current.planes[k],
                                                                 reference_image->planes[k], &decisions);
@@ -191,6 +206,7 @@ public:
         blocks[k] = Kernels::template prepare_compensated<false>(grid_.composition(k), rule_, grid_.phase_geometry(k),
                                                                  field.grid, shift, current.planes[k],
                                                                  reference_image->planes[k], &decisions);
+    }
     for (int k = 0; k < grid_.plane_count(); ++k)
       Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
     return output;
