@@ -294,6 +294,68 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
 }
 
+// One search block owns this evaluator; its caller has already admitted the
+// complete candidate domain and all frame views. Search invokes it serially.
+template <class T>
+class PreparedBlockError {
+  int pel_, ratio_x_, ratio_y_;
+  bool chroma_;
+  std::array<int, 3> x_{}, y_{};
+  std::array<std::array<const T*, 16>, 3> references_{};
+  std::array<std::array<std::ptrdiff_t, 16>, 3> strides_{};
+  std::array<detail::MetricRequest<T>, 3> requests_{};
+
+  std::int64_t quotient(std::int64_t value) const {
+    switch (pel_) {
+    case 1: return value;
+    case 2: return value >= 0 ? value / 2 : -((-value + 1) / 2);
+    case 4: return value >= 0 ? value / 4 : -((-value + 3) / 4);
+    default: return sampling_detail::floor_div(value, pel_);
+    }
+  }
+  void reference(int k, std::int64_t vx, std::int64_t vy) {
+    const auto qx = quotient(vx), qy = quotient(vy);
+    const auto phase = std::size_t((vy - pel_ * qy) * pel_ + vx - pel_ * qx);
+    requests_[k].reference = references_[k][phase] +
+        (std::ptrdiff_t(y_[k]) + qy) * strides_[k][phase] + (std::ptrdiff_t(x_[k]) + qx);
+    requests_[k].reference_stride = strides_[k][phase];
+  }
+
+public:
+  PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const SamplingFrames<T>& frames, BlockMetric metric)
+      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma) {
+    for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
+      const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
+      x_[k] = g.planes[k].pad_x + block.x / rx;
+      y_[k] = g.planes[k].pad_y + block.y / ry;
+      auto& request = requests_[k];
+      request.source = frames.current[k].row(y_[k]).data() + x_[k];
+      request.source_stride = frames.current[k].stride();
+      request.width = block.width / rx;
+      request.height = block.height / ry;
+      request.satd = k == 0 && metric == BlockMetric::satd;
+      for (int a = 0; a < pel_ * pel_; ++a) {
+        const auto plane = frames.reference[k][a];
+        references_[k][a] = plane.data();
+        strides_[k][a] = plane.stride();
+      }
+    }
+  }
+  BlockError operator()(MotionVector vector) {
+    reference(0, vector.x, vector.y);
+    if (chroma_) {
+      const auto tx = ratio_x_ == 2 ? std::int64_t(vector.x) / 2 : vector.x;
+      const auto ty = ratio_y_ == 2 ? std::int64_t(vector.y) / 2 : vector.y;
+      reference(1, tx, ty);
+      reference(2, tx, ty);
+    }
+    std::array<std::int64_t, 3> errors{};
+    detail::metric_batch(requests_.data(), chroma_ ? 3 : 1, errors.data());
+    const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
+    return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
+  }
+};
+
 template <class T>
 SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d::Plane<const T> external,
                                              int actual_width, int actual_height, int pad_x, int pad_y, int pel,
@@ -343,6 +405,10 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 namespace neo_mv {
 template <class T>
 struct HighwayKernels {
+  static simd::PreparedBlockError<T> prepare_block_error(const SamplingGeometry& geometry, BlockRegion block,
+                                                         const SamplingFrames<T>& frames, BlockMetric metric) {
+    return {geometry, block, frames, metric};
+  }
   static void validate_samples(const T* samples, int count, std::int64_t maximum) {
     simd::detail::scan(samples, count, maximum);
   }

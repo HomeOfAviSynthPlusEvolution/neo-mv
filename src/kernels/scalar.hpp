@@ -9,6 +9,12 @@ namespace neo_mv {
 // Compile-time pixel operations; control flow and search stay in the core.
 template <class T>
 struct ScalarKernels {
+  static auto prepare_block_error(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames,
+                                  BlockMetric metric) {
+    return [&geometry, block, &frames, metric](MotionVector vector) {
+      return neo_mv::block_error<T, true>(geometry, block, frames, vector, metric);
+    };
+  }
   static void validate_samples(const T* samples, int count, std::int64_t maximum) {
     for (int i = 0; i < count; ++i)
       subpixel_detail::valid_sample(samples[i], maximum);

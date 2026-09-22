@@ -124,7 +124,11 @@ template <class T> void sampled_motion() {
       for (auto metric : {BlockMetric::sad, BlockMetric::satd}) {
         const auto a = block_error(f.geometry, {0, 0, 8, 8}, f.frames, v, metric);
         const auto b = simd::block_error(f.geometry, {0, 0, 8, 8}, f.frames, v, metric);
-        check(a.luma == b.luma && a.chroma == b.chroma && a.raw == b.raw, "sampled error mismatch");
+        auto prepared = simd::PreparedBlockError<T>(f.geometry, {0, 0, 8, 8}, f.frames, metric);
+        const auto c = prepared(v);
+        check(a.luma == b.luma && a.chroma == b.chroma && a.raw == b.raw && a.luma == c.luma &&
+                  a.chroma == c.chroma && a.raw == c.raw,
+              "sampled error mismatch");
       }
     };
     for (int y : {-3, -1, 0, 1, 3})
@@ -181,7 +185,10 @@ template <class T> void narrow_reference_motion() {
   validate_sampling_frames(geometry, frames);
   const auto scalar = block_error<T, true>(geometry, block, frames, vector, BlockMetric::sad);
   const auto highway = simd::block_error<T, true>(geometry, block, frames, vector, BlockMetric::sad);
-  check(scalar.luma == highway.luma && scalar.raw == highway.raw, "narrow reference mismatch");
+  auto prepared = simd::PreparedBlockError<T>(geometry, block, frames, BlockMetric::sad);
+  const auto fast = prepared(vector);
+  check(scalar.luma == highway.luma && scalar.raw == highway.raw && scalar.luma == fast.luma &&
+            scalar.raw == fast.raw, "narrow reference mismatch");
 }
 
 template <class T> void integer_metric_extremes() {

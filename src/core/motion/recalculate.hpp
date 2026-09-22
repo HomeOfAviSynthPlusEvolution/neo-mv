@@ -84,10 +84,8 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto block = analysis_block(target, bx, by);
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
-      const auto evaluate = [&](MotionVector vector) {
-        return Kernels::block_error_validated(geometry, block, frames, vector,
-                                              controls.satd ? BlockMetric::satd : BlockMetric::sad);
-      };
+      auto evaluate = Kernels::prepare_block_error(geometry, block, frames,
+                                                   controls.satd ? BlockMetric::satd : BlockMetric::sad);
       const auto error = evaluate(u);
       SearchResult result{u, error.raw, error.raw};
       if (error.raw > threshold) {
