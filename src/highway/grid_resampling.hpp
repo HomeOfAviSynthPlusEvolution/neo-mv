@@ -9,8 +9,7 @@ class GridResamplingPlan {
   std::int64_t covered_width_, covered_height_;
   bool horizontal_first_;
   std::vector<std::int32_t> left_, right_, weights_, vertical_weights_;
-  std::vector<std::int64_t> left_float_, right_float_;
-  std::vector<double> remainders_;
+  std::vector<double> fractions_;
   std::vector<grid_detail::Axis> vertical_;
 
 public:
@@ -27,19 +26,15 @@ public:
     left_.reserve(g.width);
     right_.reserve(g.width);
     weights_.reserve(g.width);
-    left_float_.reserve(g.width);
-    right_float_.reserve(g.width);
-    remainders_.reserve(g.width);
+    fractions_.reserve(g.width);
     vertical_.reserve(g.height);
     vertical_weights_.reserve(g.height);
     for (int x = 0; x < g.width; ++x) {
       const auto a = grid_detail::axis(x, g.blocks_x, covered_width_);
       left_.push_back(a.first);
       right_.push_back(a.second);
-      left_float_.push_back(a.first);
-      right_float_.push_back(a.second);
       weights_.push_back(static_cast<std::int32_t>(grid_detail::coefficient(a.remainder, a.denominator)));
-      remainders_.push_back(double(a.remainder));
+      fractions_.push_back(double(a.remainder) / double(a.denominator));
     }
     for (int y = 0; y < g.height; ++y) {
       const auto a = grid_detail::axis(y, g.blocks_y, covered_height_);
@@ -81,35 +76,79 @@ public:
           }
         }
     }
-    const auto dx = std::uint64_t(covered_width_) * 2, dy = std::uint64_t(covered_height_) * 2;
-    using Sample = std::conditional_t<std::is_same_v<T, float>, double, std::int32_t>;
-    OverwriteVector<Sample> top(g.blocks_x), bottom(g.blocks_x);
-    int first = -1, second = -1;
-    constexpr int offset = std::is_same_v<T, std::int16_t> ? 32768 : 0;
-    for (int y = 0; y < g.height; ++y) {
-      const auto& axis = vertical_[y];
-      if (first != axis.first) {
+    if constexpr (!std::is_same_v<T, float>) {
+      constexpr int bias = std::is_same_v<T, std::int16_t> ? 32768 : 0;
+      OverwriteVector<std::int32_t> small(g.blocks_x), top(horizontal_first_ ? g.width : g.blocks_x),
+          bottom(top.size());
+      const auto load = [&](int y, auto& row) {
         for (int x = 0; x < g.blocks_x; ++x)
-          if constexpr (std::is_same_v<T, std::int16_t>)
-            top[x] = std::int32_t(input.row(axis.first)[x]) + offset;
+          row[x] = int(input.row(y)[x]) + bias;
+      };
+      const auto expand = [&](int y, auto& row) {
+        load(y, small);
+        mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
+                               row.data());
+      };
+      int first = -1, second = -1;
+      for (int y = 0; y < g.height; ++y) {
+        const auto& a = vertical_[y];
+        if (first != a.first && second == a.first) {
+          top.swap(bottom);
+          std::swap(first, second);
+        }
+        if (first != a.first) {
+          if (horizontal_first_)
+            expand(a.first, top);
           else
-            top[x] = Sample(input.row(axis.first)[x]);
-        first = axis.first;
-      }
-      if (second != axis.second) {
-        for (int x = 0; x < g.blocks_x; ++x)
-          if constexpr (std::is_same_v<T, std::int16_t>)
-            bottom[x] = std::int32_t(input.row(axis.second)[x]) + offset;
+            load(a.first, top);
+          first = a.first;
+        }
+        if (second != a.second) {
+          if (horizontal_first_)
+            expand(a.second, bottom);
           else
-            bottom[x] = Sample(input.row(axis.second)[x]);
-        second = axis.second;
+            load(a.second, bottom);
+          second = a.second;
+        }
+        if (horizontal_first_)
+          mask_rows::resize_pass(top.data(), bottom.data(), nullptr, nullptr, nullptr, g.width, vertical_weights_[y],
+                                 output.row(y).data());
+        else {
+          mask_rows::resize_pass(top.data(), bottom.data(), nullptr, nullptr, nullptr, g.blocks_x, vertical_weights_[y],
+                                 small.data());
+          mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
+                                 output.row(y).data());
+        }
       }
-      if constexpr (std::is_same_v<T, float>)
-        mask_rows::resize(top.data(), bottom.data(), left_float_.data(), right_float_.data(), remainders_.data(),
-                          g.width, double(dx), double(dy), double(axis.remainder), output.row(y).data());
-      else
-        mask_rows::resize(top.data(), bottom.data(), left_.data(), right_.data(), weights_.data(), g.width,
-                          vertical_weights_[y], horizontal_first_, output.row(y).data());
+      return;
+    }
+    if constexpr (std::is_same_v<T, float>) {
+      OverwriteVector<double> top(g.width), bottom(g.width);
+      int first = -1, second = -1;
+      const auto expand = [&](int y, auto& row) {
+        const auto source = input.row(y);
+        for (int x = 0; x < g.width; ++x) {
+          const double a = fractions_[x];
+          row[x] = (1.0 - a) * double(source[left_[x]]) + a * double(source[right_[x]]);
+        }
+      };
+      for (int y = 0; y < g.height; ++y) {
+        const auto& a = vertical_[y];
+        if (first != a.first && second == a.first) {
+          top.swap(bottom);
+          std::swap(first, second);
+        }
+        if (first != a.first) {
+          expand(a.first, top);
+          first = a.first;
+        }
+        if (second != a.second) {
+          expand(a.second, bottom);
+          second = a.second;
+        }
+        mask_rows::resize_float_vertical(top.data(), bottom.data(), g.width,
+                                         double(a.remainder) / double(a.denominator), output.row(y).data());
+      }
     }
   }
 };

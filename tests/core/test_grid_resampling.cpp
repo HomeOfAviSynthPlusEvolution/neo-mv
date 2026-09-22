@@ -141,6 +141,60 @@ void integer_passes() {
   fp_output.gaps();
 }
 
+template <class T>
+void row_cache() {
+  for (const GridResamplingGeometry g :
+       {GridResamplingGeometry{3, 4, 5, 4, 2, 1, 11, 13}, {2, 2, 16, 2, 0, 1, 32, 3}, {4, 3, 9, 5, 1, 2, 33, 11}}) {
+    Buffer<T> input(g.blocks_x, g.blocks_y), output(g.width, g.height);
+    const TestGridPlan plan(g);
+    const auto cw = std::int64_t(g.blocks_x) * (g.block_width - g.overlap_x) + g.overlap_x;
+    const auto ch = std::int64_t(g.blocks_y) * (g.block_height - g.overlap_y) + g.overlap_y;
+    const bool horizontal = grid_detail::horizontal_first(cw, ch, g.blocks_x, g.blocks_y);
+    constexpr int bias = std::is_same_v<T, std::int16_t> ? 32768 : 0;
+    constexpr int bits = std::is_same_v<T, float> ? 32 : sizeof(T) * 8;
+    for (int frame = 0; frame < 3; ++frame) {
+      for (int y = 0; y < g.blocks_y; ++y)
+        for (int x = 0; x < g.blocks_x; ++x) {
+          const unsigned n = (x * 317u + y * 11971u + frame * 23231u) & ((1u << (bits == 32 ? 16 : bits)) - 1);
+          if constexpr (std::is_same_v<T, float>)
+            input.view().row(y)[x] = (float(n) - 32768.0f) / 713.0f;
+          else
+            input.view().row(y)[x] = static_cast<T>(int(n) - bias);
+        }
+      plan.resize(input.read(), output.view(), bits);
+      // Four independently fetched samples per pixel exercise both cache reuse
+      // and replacement, including clamped edge rows and changing frame data.
+      for (int y = 0; y < g.height; ++y)
+        for (int x = 0; x < g.width; ++x) {
+          const auto ax = grid_detail::axis(x, g.blocks_x, cw);
+          const auto ay = grid_detail::axis(y, g.blocks_y, ch);
+          const auto sample = [&](int xx, int yy) {
+            return double(input.read().row(yy)[xx]) + bias;
+          };
+          const double a = sample(ax.first, ay.first), b = sample(ax.second, ay.first);
+          const double c = sample(ax.first, ay.second), d = sample(ax.second, ay.second);
+          T expected;
+          if constexpr (std::is_same_v<T, float>) {
+            const double u = double(ax.remainder) / double(ax.denominator);
+            const double v = double(ay.remainder) / double(ay.denominator);
+            expected = static_cast<float>((1.0 - v) * ((1.0 - u) * a + u * b) + v * ((1.0 - u) * c + u * d));
+          } else {
+            const auto u = grid_detail::coefficient(ax.remainder, ax.denominator);
+            const auto v = grid_detail::coefficient(ay.remainder, ay.denominator);
+            const auto mix = [](double a, double b, unsigned w) {
+              return (std::uint64_t(a) * (16384 - w) + std::uint64_t(b) * w + 8192) >> 14;
+            };
+            expected = static_cast<T>(
+                int(horizontal ? mix(mix(a, b, u), mix(c, d, u), v) : mix(mix(a, c, v), mix(b, d, v), u)) - bias);
+          }
+          CHECK(std::memcmp(&output.view().row(y)[x], &expected, sizeof(T)) == 0);
+        }
+      input.gaps();
+      output.gaps();
+    }
+  }
+}
+
 void exact_wide_arithmetic() {
   // Literal rational examples distinguish coefficient ties-to-even from sample
   // half-up. Scaling preserves each rational without forming a Q*R product.
@@ -193,6 +247,10 @@ int main() {
   try {
     examples();
     integer_passes();
+    row_cache<std::uint8_t>();
+    row_cache<std::uint16_t>();
+    row_cache<std::int16_t>();
+    row_cache<float>();
     exact_wide_arithmetic();
     failures();
     std::cout << "Exact grid resampling checks passed\n";

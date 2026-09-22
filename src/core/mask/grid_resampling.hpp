@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/base/plane.hpp"
+#include "core/base/overwrite.hpp"
 #include "core/mask/numeric.hpp"
 #include <algorithm>
 #include <array>
@@ -179,34 +180,59 @@ public:
           }
         }
     }
-    for (int y = 0; y < output.height(); ++y) {
-      const auto& ay = vertical_[y].axis;
-      for (int x = 0; x < output.width(); ++x) {
-        const auto& ax = horizontal_[x].axis;
-        const std::array<T, 4> s{input.row(ay.first)[ax.first], input.row(ay.first)[ax.second],
-                                 input.row(ay.second)[ax.first], input.row(ay.second)[ax.second]};
-        if constexpr (std::is_same_v<T, float>) {
-          const double a = horizontal_[x].fraction, b = vertical_[y].fraction;
-          const double c = 1.0 - a, e = 1.0 - b;
-          const double h0 = c * double(s[0]) + a * double(s[1]);
-          const double h1 = c * double(s[2]) + a * double(s[3]);
-          const double value = e * h0 + b * h1;
-          // Finite float inputs and convex binary64 weights bound all products
-          // well below binary64 overflow; reject a non-finite final narrowing.
-          output.row(y)[x] = mask_detail::binary32(value);
-        } else {
-          constexpr int offset = std::is_same_v<T, std::int16_t> ? 32768 : 0;
-          std::array<std::uint32_t, 4> biased{};
-          for (int i = 0; i < 4; ++i)
-            biased[i] = static_cast<std::uint32_t>(int(s[i]) + offset);
-          const auto a = horizontal_[x].weight;
-          const auto b = vertical_[y].weight;
-          using grid_detail::interpolate;
-          const auto value =
-              horizontal_first_
-                  ? interpolate(interpolate(biased[0], biased[1], a), interpolate(biased[2], biased[3], a), b)
-                  : interpolate(interpolate(biased[0], biased[2], b), interpolate(biased[1], biased[3], b), a);
-          output.row(y)[x] = static_cast<T>(int(value) - offset);
+    using Value = std::conditional_t<std::is_same_v<T, float>, double, std::uint32_t>;
+    constexpr int offset = std::is_same_v<T, std::int16_t> ? 32768 : 0;
+    const auto sample = [&](int x, int y) -> Value {
+      if constexpr (std::is_same_v<T, float>)
+        return double(input.row(y)[x]);
+      else
+        return static_cast<Value>(int(input.row(y)[x]) + offset);
+    };
+    if (horizontal_first_ || std::is_same_v<T, float>) {
+      OverwriteVector<Value> top(g.width), bottom(g.width);
+      int first = -1, second = -1;
+      const auto expand = [&](int y, auto& row) {
+        for (int x = 0; x < g.width; ++x) {
+          const auto& a = horizontal_[x];
+          const auto s0 = sample(a.axis.first, y), s1 = sample(a.axis.second, y);
+          if constexpr (std::is_same_v<T, float>)
+            row[x] = (1.0 - a.fraction) * s0 + a.fraction * s1;
+          else
+            row[x] = grid_detail::interpolate(s0, s1, a.weight);
+        }
+      };
+      for (int y = 0; y < g.height; ++y) {
+        const auto& a = vertical_[y];
+        if (first != a.axis.first && second == a.axis.first) {
+          top.swap(bottom);
+          std::swap(first, second);
+        }
+        if (first != a.axis.first) {
+          expand(a.axis.first, top);
+          first = a.axis.first;
+        }
+        if (second != a.axis.second) {
+          expand(a.axis.second, bottom);
+          second = a.axis.second;
+        }
+        for (int x = 0; x < g.width; ++x) {
+          if constexpr (std::is_same_v<T, float>)
+            output.row(y)[x] = mask_detail::binary32((1.0 - a.fraction) * top[x] + a.fraction * bottom[x]);
+          else
+            output.row(y)[x] = static_cast<T>(int(grid_detail::interpolate(top[x], bottom[x], a.weight)) - offset);
+        }
+      }
+    } else {
+      // Preserve vertical-first Q14 rounding before expanding the small row.
+      OverwriteVector<Value> row(g.blocks_x);
+      for (int y = 0; y < g.height; ++y) {
+        const auto& a = vertical_[y];
+        for (int x = 0; x < g.blocks_x; ++x)
+          row[x] = grid_detail::interpolate(sample(x, a.axis.first), sample(x, a.axis.second), a.weight);
+        for (int x = 0; x < g.width; ++x) {
+          const auto& b = horizontal_[x];
+          output.row(y)[x] =
+              static_cast<T>(int(grid_detail::interpolate(row[b.axis.first], row[b.axis.second], b.weight)) - offset);
         }
       }
     }

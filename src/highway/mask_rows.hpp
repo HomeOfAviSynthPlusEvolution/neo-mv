@@ -2,17 +2,17 @@
 #include <cstddef>
 #include <cstdint>
 namespace neo_mv::simd::mask_rows {
-// Integer source rows are biased to [0,65535]. Coefficients lie in [0,16384].
-#define NEO_MASK_RESIZE(T)                                                                                             \
-  void resize(const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,                           \
-              const std::int32_t* right, const std::int32_t* coefficients, int width, std::int32_t vertical,           \
-              bool horizontal_first, T* output);
-NEO_MASK_RESIZE(std::uint8_t)
-NEO_MASK_RESIZE(std::uint16_t)
-NEO_MASK_RESIZE(std::int16_t)
-#undef NEO_MASK_RESIZE
-void resize(const double* top, const double* bottom, const std::int64_t* left, const std::int64_t* right,
-            const double* rx, int width, double dx, double dy, double ry, float* output);
+// One Q14 pass; null indices select contiguous vertical interpolation.
+#define NEO_MASK_PASS(T)                                                                                               \
+  void resize_pass(const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,                      \
+                   const std::int32_t* right, const std::int32_t* weights, int width, std::int32_t vertical,           \
+                   T* output);
+NEO_MASK_PASS(std::int32_t)
+NEO_MASK_PASS(std::int16_t)
+NEO_MASK_PASS(std::uint16_t)
+NEO_MASK_PASS(std::uint8_t)
+#undef NEO_MASK_PASS
+void resize_float_vertical(const double* top, const double* bottom, int width, double coefficient, float* output);
 void magnitude(const double* x, const double* y, std::size_t count, int pel, float f2, float exponent, float maximum,
                double* scores);
 void sad(const float* samples, std::size_t count, float scale, float exponent, float maximum, float* scores);
