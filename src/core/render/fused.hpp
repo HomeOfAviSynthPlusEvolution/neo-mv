@@ -42,9 +42,9 @@ struct RenderPreparation {
         const auto selected = rule.select(v.vector, v.error, shift);
         // Preflight the actual reference even when SAD selects current pixels.
         const auto reference_footprint =
-            render_footprint(geometry, block, rule.reference_displacement(v.vector, shift));
-        const auto footprint =
-            selected.reference ? reference_footprint : render_footprint(geometry, block, selected.displacement);
+            render_footprint_admitted(geometry, block, rule.reference_displacement(v.vector, shift));
+        const auto footprint = selected.reference ? reference_footprint
+                                                  : render_footprint_admitted(geometry, block, selected.displacement);
         const auto plane = (selected.reference ? reference : current).planes[footprint.phase];
         blocks.push_back({plane.row(footprint.y).data() + footprint.x, plane.stride(),
                           plan.has_overlap() ? plan.coefficient_row(bx, by, 0) : nullptr});
@@ -79,7 +79,7 @@ struct RenderPreparation {
                                 g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
         const auto* window = plan.has_overlap() ? plan.coefficient_row(bx, by, 0) : nullptr;
         const auto append = [&](const SubpixelPhases<T>& image, RenderDisplacement displacement) {
-          const auto f = render_footprint(geometry, block, displacement);
+          const auto f = render_footprint_admitted(geometry, block, displacement);
           const auto view = image.planes[f.phase];
           result.sources.push_back({view.row(f.y).data() + f.x, view.stride(), window});
         };

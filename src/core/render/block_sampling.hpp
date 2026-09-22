@@ -51,18 +51,32 @@ inline sampling_detail::OffsetRange phase_range(std::int64_t first, std::int64_t
 
 // Unlike analysis-error sampling, floor the total coordinate, including the
 // negative chroma displacement. The returned rectangle includes cropped edges.
-inline RenderFootprint render_footprint(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
+template <bool GeometryAdmitted = false>
+inline RenderFootprint render_footprint_impl(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
   using namespace render_sampling_detail;
-  validate(g, b);
-  const auto ax = coordinate(b.x, g.pel, d.x, g.ratio_x);
-  const auto ay = coordinate(b.y, g.pel, d.y, g.ratio_y);
+  if constexpr (!GeometryAdmitted)
+    validate(g, b);
+  // In frame preparation, creation already admitted the geometry and the
+  // decoded vector is int32 (plus at most one field shift). The sums fit i64.
+  const auto ax = GeometryAdmitted ? sampling_detail::floor_div(std::int64_t(b.x) * g.pel + d.x, g.ratio_x)
+                                   : coordinate(b.x, g.pel, d.x, g.ratio_x);
+  const auto ay = GeometryAdmitted ? sampling_detail::floor_div(std::int64_t(b.y) * g.pel + d.y, g.ratio_y)
+                                   : coordinate(b.y, g.pel, d.y, g.ratio_y);
   const int phase = remainder(ay, g.pel) * g.pel + remainder(ax, g.pel);
-  const auto x = prediction_detail::add(g.pad_x, sampling_detail::floor_div(ax, g.pel));
-  const auto y = prediction_detail::add(g.pad_y, sampling_detail::floor_div(ay, g.pel));
+  const auto x = GeometryAdmitted ? std::int64_t(g.pad_x) + sampling_detail::floor_div(ax, g.pel)
+                                  : prediction_detail::add(g.pad_x, sampling_detail::floor_div(ax, g.pel));
+  const auto y = GeometryAdmitted ? std::int64_t(g.pad_y) + sampling_detail::floor_div(ay, g.pel)
+                                  : prediction_detail::add(g.pad_y, sampling_detail::floor_div(ay, g.pel));
   const int width = b.width / g.ratio_x, height = b.height / g.ratio_y;
   if (!fits(x, width, g.phases[phase].width) || !fits(y, height, g.phases[phase].height))
     throw std::invalid_argument("render block exceeds its logical phase domain");
   return {phase, static_cast<int>(x), static_cast<int>(y), width, height};
+}
+inline RenderFootprint render_footprint(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
+  return render_footprint_impl(g, b, d);
+}
+inline RenderFootprint render_footprint_admitted(const RenderPhaseGeometry& g, BlockRegion b, RenderDisplacement d) {
+  return render_footprint_impl<true>(g, b, d);
 }
 
 // Geometry proof for every integer vector in the unchanged public rectangle.

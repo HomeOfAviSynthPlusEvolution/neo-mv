@@ -72,6 +72,21 @@ void domain_proof() {
   CHECK(rejects([&] { validate_render_domain(wide, {0, 0, 1, 1}, {0, 0, 1, 1}, 257); }));
 }
 void spec_examples() {
+  for (int pel : {1, 2, 4})
+    for (int ratio : {1, 2}) {
+      const auto gg = geometry(pel, ratio, ratio, 4);
+      const BlockRegion block{4, 4, 4, 4};
+      for (int dy = -20; dy <= 20; ++dy)
+        for (int dx = -20; dx <= 20; ++dx) {
+          const RenderDisplacement d{dx, dy};
+          const bool accepted = !rejects([&] { render_footprint(gg, block, d); });
+          CHECK(!rejects([&] { render_footprint_admitted(gg, block, d); }) == accepted);
+          if (accepted) {
+            const auto a = render_footprint(gg, block, d), b = render_footprint_admitted(gg, block, d);
+            CHECK(a.phase == b.phase && a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height);
+          }
+        }
+    }
   auto g = geometry(2, 2, 2, 4);
   auto f = render_footprint(g, {0, 0, 8, 8}, {-1, 0});
   CHECK(f.phase == 1 && f.x == 1 && f.y == 2 && f.width == 4 && f.height == 4);
