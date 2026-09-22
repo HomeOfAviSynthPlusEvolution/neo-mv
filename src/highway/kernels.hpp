@@ -313,12 +313,16 @@ class PreparedBlockError {
     default: return sampling_detail::floor_div(value, pel_);
     }
   }
-  void reference(int k, std::int64_t vx, std::int64_t vy) {
-    const auto qx = quotient(vx), qy = quotient(vy);
-    const auto phase = std::size_t((vy - pel_ * qy) * pel_ + vx - pel_ * qx);
+  void reference(int k, std::int64_t qx, std::int64_t qy, std::size_t phase) {
     requests_[k].reference = references_[k][phase] +
         (std::ptrdiff_t(y_[k]) + qy) * strides_[k][phase] + (std::ptrdiff_t(x_[k]) + qx);
     requests_[k].reference_stride = strides_[k][phase];
+  }
+  void reference_pair(int first, int last, std::int64_t vx, std::int64_t vy) {
+    const auto qx = quotient(vx), qy = quotient(vy);
+    const auto phase = std::size_t((vy - pel_ * qy) * pel_ + vx - pel_ * qx);
+    for (int k = first; k < last; ++k)
+      reference(k, qx, qy, phase);
   }
 
 public:
@@ -342,12 +346,11 @@ public:
     }
   }
   BlockError operator()(MotionVector vector) {
-    reference(0, vector.x, vector.y);
+    reference_pair(0, 1, vector.x, vector.y);
     if (chroma_) {
       const auto tx = ratio_x_ == 2 ? std::int64_t(vector.x) / 2 : vector.x;
       const auto ty = ratio_y_ == 2 ? std::int64_t(vector.y) / 2 : vector.y;
-      reference(1, tx, ty);
-      reference(2, tx, ty);
+      reference_pair(1, 3, tx, ty);
     }
     std::array<std::int64_t, 3> errors{};
     detail::metric_batch(requests_.data(), chroma_ ? 3 : 1, errors.data());
