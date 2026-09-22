@@ -3,6 +3,7 @@
 #include "kernels/selection.hpp"
 #if NEO_MV_ENABLE_HIGHWAY
 #include "highway/kernels.hpp"
+#include "highway/scene.hpp"
 #endif
 
 namespace neo_mv::ds2 {
@@ -247,8 +248,13 @@ struct SceneRuntime final : Runtime {
   void process(ds::VideoProcessContext& ctx) const override {
     auto input = frame(ctx.frames, 1, ctx.output_frame);
     auto field = read_field(input, prefix);
+    auto count = scalar_scene_count;
+#if NEO_MV_ENABLE_HIGHWAY
+    if (selected_backend() == KernelBackend::highway)
+      count = simd::scene_count;
+#endif
     set_scalar(properties(ctx.dst), field.metadata.delta > 0 ? "_SceneChangeNext" : "_SceneChangePrev",
-               classifier(field));
+               classifier(field, count));
   }
 };
 enum class Operation { Super, Analyse, Recalculate, SCDetection };

@@ -17,6 +17,17 @@ struct SceneThresholds {
   float count;
 };
 
+inline std::int64_t scalar_scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
+  std::int64_t bad = 0;
+  for (std::size_t i = 0; i < grid.values.size(); ++i) {
+    const auto value = grid.values[i];
+    field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
+    if (value.error > threshold)
+      ++bad;
+  }
+  return bad;
+}
+
 inline SceneThresholds scene_thresholds(SceneDescriptor d, std::int64_t thscd1, double thscd2) {
   if (d.block_width < 2 || d.block_height < 2 || d.blocks_x <= 0 || d.blocks_y <= 0 ||
       (d.ratio_x != 1 && d.ratio_x != 2) || (d.ratio_y != 1 && d.ratio_y != 2) ||
@@ -47,7 +58,10 @@ public:
   SceneClassifier(SceneDescriptor d, std::int64_t thscd1, double thscd2)
       : descriptor(d), thresholds(scene_thresholds(d, thscd1, thscd2)) {}
 
-  int operator()(const AnalysisField& field) const {
+  // The counter validates every vector and error, even after the threshold
+  // has been exceeded. Descriptor and storage admission stay shared.
+  using Counter = std::int64_t (*)(const AnalysisMetadata&, const MotionGrid&, std::int64_t);
+  int operator()(const AnalysisField& field, Counter count = scalar_scene_count) const {
     if (field.state == FieldState::invalid_metadata)
       return 1;
     const auto& m = field.metadata;
@@ -61,13 +75,7 @@ public:
     if (field.state != FieldState::complete || field.grid.width != d.blocks_x || field.grid.height != d.blocks_y ||
         field.grid.values.size() != std::uint64_t(d.blocks_x) * d.blocks_y)
       throw std::invalid_argument("malformed complete scene field");
-    std::int64_t bad = 0;
-    for (std::size_t i = 0; i < field.grid.values.size(); ++i) {
-      const auto value = field.grid.values[i];
-      field_detail::vector(m, value, static_cast<int>(i % d.blocks_x), static_cast<int>(i / d.blocks_x));
-      if (value.error > thresholds.error)
-        ++bad;
-    }
+    const auto bad = count(m, field.grid, thresholds.error);
     return static_cast<float>(bad) > thresholds.count ? 1 : 0;
   }
 };
