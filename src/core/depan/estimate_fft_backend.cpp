@@ -1,4 +1,7 @@
 #include "core/depan/estimate_fft_backend.hpp"
+#include <algorithm>
+#include <limits>
+#include <vector>
 
 // Built multiple times with separate dependency namespaces. No shared
 // cache or worker pool exists between targets.
@@ -40,6 +43,25 @@ void inverse(int width, int height, const std::complex<float>* input, float* out
   const pf::stride_t real{std::ptrdiff_t(width) * std::ptrdiff_t(sizeof(float)), std::ptrdiff_t(sizeof(float))};
   const pf::stride_t complex{std::ptrdiff_t(width / 2 + 1) * std::ptrdiff_t(sizeof(std::complex<float>)),
                              std::ptrdiff_t(sizeof(std::complex<float>))};
+#if defined(NEO_MV_FFT_AVX512)
+  // Padding improves measured AVX512 throughput for these 4 KiB-multiple
+  // row strides; cache-set contention is a suspected cause. Other layouts
+  // avoid the extra allocation and copy.
+  if (width % 1024 == 0 && height >= 16) {
+    const std::size_t pitch = std::size_t(width) + 16;
+    const auto limit = (std::min)(std::vector<float>{}.max_size(),
+        std::size_t(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(float));
+    if (pitch <= limit / std::size_t(height)) {
+      std::vector<float> temporary(pitch * std::size_t(height));
+      const pf::stride_t padded{std::ptrdiff_t(pitch) * std::ptrdiff_t(sizeof(float)),
+                                 std::ptrdiff_t(sizeof(float))};
+      pf::c2r(shape, complex, padded, axes, pf::BACKWARD, input, temporary.data(), 1.0f, 1);
+      for (int y = 0; y < height; ++y)
+        std::copy_n(temporary.data() + std::size_t(y) * pitch, width, output + std::size_t(y) * width);
+      return;
+    }
+  }
+#endif
   pf::c2r(shape, complex, real, axes, pf::BACKWARD, input, output, 1.0f, 1);
 }
 } // namespace

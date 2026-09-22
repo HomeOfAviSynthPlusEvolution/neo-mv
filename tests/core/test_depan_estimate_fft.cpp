@@ -167,6 +167,24 @@ struct Difference {
   }
 };
 
+void large_roundtrips(FftProfile profile) {
+  for (const auto shape : {std::array<int, 2>{1022, 17}, {1024, 15}, {1024, 16}, {1024, 17},
+                           {1024, 33}, {1026, 17}, {2048, 17}}) {
+    const FftPlan plan(shape[0], shape[1], profile);
+    const FftPlan scalar(shape[0], shape[1], FftProfile::scalar);
+    std::vector<float> input(plan.real_count());
+    for (std::size_t i = 0; i < input.size(); ++i)
+      input[i] = float(int((i * 37 + i / 11) % 257) - 128) / 128;
+    const auto spectrum = plan.forward(input), saved = spectrum;
+    const auto restored = plan.inverse(spectrum), reference = scalar.inverse(spectrum);
+    CHECK(std::memcmp(saved.data(), spectrum.data(), spectrum.size() * sizeof(spectrum[0])) == 0);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+      close(float(double(restored[i]) / input.size()), input[i], 1);
+      close(restored[i], reference[i], input.size());
+    }
+  }
+}
+
 void profile_differences() {
   Difference spectrum_difference, correlation_difference;
   for (const auto shape : {std::array<int, 2>{32, 16}, {66, 17}, {128, 32}}) {
@@ -224,6 +242,7 @@ int main() {
       std::cout << "FFT profile=" << fft_profile_name(profile)
                 << " lanes=" << fft_lanes(profile) << '\n';
       examples(profile);
+      large_roundtrips(profile);
       for (int width : {2, 4, 6, 10, 14, 16, 18})
         for (int height : {2, 3, 4, 5, 7, 8}) transforms(width, height, profile);
       errors(profile);
