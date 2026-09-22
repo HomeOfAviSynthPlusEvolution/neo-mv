@@ -50,6 +50,9 @@ inline std::int64_t penalty(std::int64_t error, int q) {
 }
 } // namespace search_detail
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((always_inline))
+#endif
 inline std::int64_t candidate_cost(MotionVector vector, MotionVector predictor, std::int64_t lambda, int penalty,
                                    BlockError error) {
   if (lambda < 0 || penalty < 0 || penalty > 256 || error.luma < 0 || error.chroma < 0)
