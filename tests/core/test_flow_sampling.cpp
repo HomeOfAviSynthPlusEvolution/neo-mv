@@ -1,10 +1,20 @@
 #include "core/flow/sampling.hpp"
 #include "core/super/pyramid.hpp"
+#if NEO_MV_TEST_HIGHWAY
+#include "highway/flow_sampling.hpp"
+#include "hwy/targets.h"
+#endif
 
 #include <iostream>
 
 namespace {
 using namespace neo_mv;
+using TestPlan =
+#if NEO_MV_TEST_HIGHWAY
+    simd::FlowSamplingPlan;
+#else
+    FlowSamplingPlan;
+#endif
 void check(bool condition, int line) {
   if (!condition)
     throw std::runtime_error("Flow sampling assertion at " + std::to_string(line));
@@ -56,17 +66,17 @@ void rounding() {
   field.x = {1, -1, -3};
   std::vector<T> output(7, T{19});
   auto view = checked_plane(output.data() + 1, 3, 1, 6 * sizeof(T), 6 * sizeof(T));
-  FlowSamplingPlan(image.geometry, 3, 1, 128).sample(field, image.view(), view);
+  TestPlan(image.geometry, 3, 1, 128).sample(field, image.view(), view);
   CHECK(output[1] == image.at(1, 2, 2));
   CHECK(output[2] == image.at(0, 3, 2));
   CHECK(output[3] == image.at(1, 3, 2));
   CHECK(output.front() == T{19} && output[4] == T{19} && output.back() == T{19});
   field.x = {-3, 0, 0};
-  FlowSamplingPlan(image.geometry, 3, 1, 256).sample(field, image.view(), view);
+  TestPlan(image.geometry, 3, 1, 256).sample(field, image.view(), view);
   CHECK(output[1] == image.at(1, 0, 2));
   field.x = {INT16_MAX, INT16_MIN, INT16_MAX};
   field.y = {INT16_MIN, INT16_MAX, INT16_MIN};
-  FlowSamplingPlan(image.geometry, 3, 1, 0).sample(field, image.view(), view);
+  TestPlan(image.geometry, 3, 1, 0).sample(field, image.view(), view);
   for (int x = 0; x < 3; ++x)
     CHECK(output[x + 1] == image.at(0, x + 2, 2));
 }
@@ -92,7 +102,7 @@ void negative_rounding_boundaries() {
           while ((integer + 1) * pel <= offset)
             ++integer;
           const int fraction = offset - integer * pel;
-          FlowSamplingPlan(image.geometry, 1, 1, time).sample(field, image.view(), out);
+          TestPlan(image.geometry, 1, 1, time).sample(field, image.view(), out);
           CHECK(pixel == image.at(vertical ? fraction * pel : fraction, 8 + (vertical ? 0 : integer),
                                   8 + (vertical ? integer : 0)));
         }
@@ -102,7 +112,7 @@ void admission_and_errors() {
   Image<std::uint8_t> image(3, 1, 1, 2);
   auto field = dense(3, 1);
   field.x[0] = -3;
-  FlowSamplingPlan accepted(image.geometry, 3, 1, 256); // No whole-domain admission.
+  TestPlan accepted(image.geometry, 3, 1, 256); // No whole-domain admission.
   rejects([&] { accepted.preflight(field); });
   std::uint8_t pixels[] = {19, 19, 19};
   auto output = checked_plane(pixels, 3, 1, 3, sizeof(pixels));
@@ -119,16 +129,16 @@ void admission_and_errors() {
   rejects([&] { accepted.preflight(field); });
   auto broken = image.geometry;
   broken.phases[0].width = 3;
-  rejects([&] { FlowSamplingPlan bad_plan(broken, 3, 1, 0); });
-  rejects([&] { FlowSamplingPlan bad_plan(image.geometry, 3, 1, -1); });
-  rejects([&] { FlowSamplingPlan bad_plan(image.geometry, 3, 1, 257); });
+  rejects([&] { TestPlan bad_plan(broken, 3, 1, 0); });
+  rejects([&] { TestPlan bad_plan(image.geometry, 3, 1, -1); });
+  rejects([&] { TestPlan bad_plan(image.geometry, 3, 1, 257); });
 
   Image<std::uint8_t> quarter(1, 1, 1, 4, true), external(1, 1, 1, 4);
   auto edge = dense(1, 1);
   edge.x[0] = 7; // phase 3, logical column 2, excluded by built-in quarter phase.
-  rejects([&] { FlowSamplingPlan(quarter.geometry, 1, 1, 256).preflight(edge); });
+  rejects([&] { TestPlan(quarter.geometry, 1, 1, 256).preflight(edge); });
   auto one = output.subplane(0, 0, 1, 1);
-  FlowSamplingPlan(external.geometry, 1, 1, 256).sample(edge, external.view(), one);
+  TestPlan(external.geometry, 1, 1, 256).sample(edge, external.view(), one);
   CHECK(pixels[0] == external.at(3, 2, 1));
 }
 void float_representation() {
@@ -140,22 +150,73 @@ void float_representation() {
     std::memcpy(plane.row(y + 1).data() + 1, patterns, sizeof(patterns));
   std::vector<float> output(11 * 2, 19);
   auto view = checked_plane(output.data(), 8, 2, 11 * sizeof(float), output.size() * sizeof(float));
-  FlowSamplingPlan(image.geometry, 8, 2, 256).sample(field, image.view(), view);
+  TestPlan(image.geometry, 8, 2, 256).sample(field, image.view(), view);
   for (int y = 0; y < 2; ++y) {
     CHECK(std::memcmp(view.row(y).data(), patterns, sizeof(patterns)) == 0);
     for (int x = 8; x < 11; ++x)
       CHECK(output[y * 11 + x] == 19);
   }
 }
+#if NEO_MV_TEST_HIGHWAY
+template <class T>
+void vector_boundaries() {
+  for (const int width : {1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65, 129})
+    for (const int pel : {1, 2, 4}) {
+      Image<T> image(width, 3, 16, pel, pel == 4);
+      auto field = dense(width, 3);
+      for (std::size_t i = 0; i < field.x.size(); ++i) {
+        field.x[i] = static_cast<std::int16_t>(int(i % 31) - 15);
+        field.y[i] = static_cast<std::int16_t>(15 - int(i % 31));
+      }
+      const auto stride = width + 3;
+      std::vector<T> a(stride * 3, T{19}), b = a;
+      auto av = checked_plane(a.data(), width, 3, stride * sizeof(T), a.size() * sizeof(T));
+      auto bv = checked_plane(b.data(), width, 3, stride * sizeof(T), b.size() * sizeof(T));
+      for (int time = 0; time <= 256; ++time) {
+        neo_mv::FlowSamplingPlan(image.geometry, width, 3, time).sample(field, image.view(), av);
+        TestPlan(image.geometry, width, 3, time).sample(field, image.view(), bv);
+        CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
+      }
+      // Each lane, including final partial groups, must fail before any write.
+      for (int x = 0; x < width; ++x) {
+        const auto saved = field.x[2 * width + x];
+        field.x[2 * width + x] = INT16_MAX;
+        std::fill(b.begin(), b.end(), T{19});
+        rejects([&] { TestPlan(image.geometry, width, 3, 256).sample(field, image.view(), bv); });
+        for (const auto value : b)
+          CHECK(value == T{19});
+        field.x[2 * width + x] = saved;
+      }
+      field.x.assign(field.x.size(), INT16_MIN);
+      field.y.assign(field.y.size(), INT16_MAX);
+      neo_mv::FlowSamplingPlan(image.geometry, width, 3, 0).sample(field, image.view(), av);
+      TestPlan(image.geometry, width, 3, 0).sample(field, image.view(), bv);
+      for (int y = 0; y < 3; ++y)
+        CHECK(std::memcmp(av.row(y).data(), bv.row(y).data(), width * sizeof(T)) == 0);
+    }
+}
+#endif
 } // namespace
 int main() {
   try {
+#if NEO_MV_TEST_HIGHWAY
+    for (const auto target : hwy::SupportedAndGeneratedTargets()) {
+      hwy::SetSupportedTargetsForTest(target);
+      std::cout << "Testing " << hwy::TargetName(target) << '\n';
+      vector_boundaries<std::uint8_t>();
+      vector_boundaries<std::uint16_t>();
+      vector_boundaries<float>();
+#endif
     rounding<std::uint8_t>();
     rounding<std::uint16_t>();
     rounding<float>();
     negative_rounding_boundaries();
     admission_and_errors();
     float_representation();
+#if NEO_MV_TEST_HIGHWAY
+    }
+    hwy::SetSupportedTargetsForTest(0);
+#endif
     std::cout << "Flow sampling specifications passed\n";
     return 0;
   } catch (const std::exception& error) {

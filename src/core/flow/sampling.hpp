@@ -22,6 +22,7 @@ class FlowSamplingPlan {
     return scaled >= 0 ? scaled / 256 : -((255 - scaled) / 256);
   }
 
+protected:
   void validate_dense(const DenseFlowField& field) const {
     const auto count = std::uint64_t(width_) * height_;
     if (field.width != width_ || field.height != height_ || field.x.size() != count || field.y.size() != count)
@@ -67,10 +68,12 @@ public:
       }
   }
 
+protected:
+  // Shared storage checks; callers admit every coordinate before reading pixels.
   template <class T>
-  void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
+  void validate_storage(const DenseFlowField& field, const SubpixelPhases<T>& source,
+                        span2d::Plane<T> output) const {
     static_assert(supported_sample<T>);
-    preflight(field);
     validate_plane(output);
     const auto& g = geometry_;
     if (output.width() != width_ || output.height() != height_ || source.pel != g.pel)
@@ -90,6 +93,12 @@ public:
       if (active_rows_overlap(view, output))
         throw std::invalid_argument("Flow output aliases dense input");
     }
+  }
+public:
+  template <class T>
+  void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
+    preflight(field);
+    validate_storage(field, source, output);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto i = std::size_t(y) * width_ + x;

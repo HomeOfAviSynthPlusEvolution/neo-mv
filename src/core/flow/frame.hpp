@@ -21,7 +21,7 @@ class FlowFramePlan {
   bool fields_;
   std::optional<bool> tff_;
   std::vector<typename Kernels::DenseFlow> dense_;
-  std::vector<FlowSamplingPlan> sampling_plans_;
+  std::vector<typename Kernels::Sampling> sampling_plans_;
 
   int plane_count() const { return video_.chroma ? 3 : 1; }
   int field_shift(std::int64_t n, std::optional<bool> current_top, std::optional<bool> reference_top) const {
