@@ -226,6 +226,27 @@ std::int64_t SmallSad(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdi
 
 #if HWY_TARGET != HWY_SCALAR
 template <int Width, int Height>
+std::int64_t FixedShortSad(const std::uint16_t *a, std::ptrdiff_t as, const std::uint16_t *b, std::ptrdiff_t bs) {
+  const hn::CappedTag<std::int32_t, Width> d;
+  const hn::Rebind<std::uint16_t, decltype(d)> narrow;
+  const int lanes = int(hn::Lanes(d));
+  auto sum0 = hn::Zero(d), sum1 = sum0, sum2 = sum0, sum3 = sum0;
+  for (int y = 0; y < Height; y += 4) {
+    const auto* ar = a + y * as;
+    const auto* br = b + y * bs;
+    for (int x = 0; x < Width; x += lanes) {
+      sum0 = hn::Add(sum0, hn::PromoteTo(d, hn::AbsDiff(hn::LoadU(narrow, ar + x), hn::LoadU(narrow, br + x))));
+      sum1 = hn::Add(sum1, hn::PromoteTo(d, hn::AbsDiff(hn::LoadU(narrow, ar + as + x),
+                                                        hn::LoadU(narrow, br + bs + x))));
+      sum2 = hn::Add(sum2, hn::PromoteTo(d, hn::AbsDiff(hn::LoadU(narrow, ar + 2 * as + x),
+                                                        hn::LoadU(narrow, br + 2 * bs + x))));
+      sum3 = hn::Add(sum3, hn::PromoteTo(d, hn::AbsDiff(hn::LoadU(narrow, ar + 3 * as + x),
+                                                        hn::LoadU(narrow, br + 3 * bs + x))));
+    }
+  }
+  return hn::ReduceSum(d, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3)));
+}
+template <int Width, int Height>
 std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
   const hn::CappedTag<std::uint8_t, Width> d;
   const hn::Repartition<std::uint64_t, decltype(d)> wide;
@@ -436,6 +457,12 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
           return SmallByteSad(hn::CappedTag<T, 16>{}, a, as, b, bs, w, h);
         if (w >= 8)
           return SmallByteSad(hn::CappedTag<T, 8>{}, a, as, b, bs, w, h);
+      }
+      if constexpr (std::is_same_v<T, std::uint16_t>) {
+        if (w == 16 && h == 16 && 16 % hn::Lanes(hn::CappedTag<std::int32_t, 16>{}) == 0)
+          return FixedShortSad<16, 16>(a, as, b, bs);
+        if (w == 8 && h == 8 && 8 % hn::Lanes(hn::CappedTag<std::int32_t, 8>{}) == 0)
+          return FixedShortSad<8, 8>(a, as, b, bs);
       }
 #endif
       if (w < 8)
