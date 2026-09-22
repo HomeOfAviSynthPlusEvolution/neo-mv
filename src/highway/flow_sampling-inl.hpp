@@ -138,6 +138,19 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
             hn::Store(offset, d, offsets);
           }
         }
+#if HWY_TARGET == HWY_AVX2
+        if (pixel_stride == Bytes) {
+#if defined(__clang__)
+#pragma clang loop unroll_count(4)
+#endif
+          for (int i = 0; i < used; ++i) {
+            const auto a = static_cast<std::size_t>(phases[i]);
+            const auto* source = use_offsets ? source_planes[a] + offsets[i]
+                                             : source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
+            std::memcpy(output_row + std::size_t(x + i) * Bytes, source, Bytes);
+          }
+        } else
+#endif
         for (int i = 0; i < used; ++i) {
           const auto a = static_cast<std::size_t>(phases[i]);
           const auto* source = use_offsets ? source_planes[a] + offsets[i]
