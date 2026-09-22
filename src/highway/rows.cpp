@@ -564,6 +564,9 @@ const char *target_name() {
   }                                                                                                                    \
   void metric_batch(const MetricRequest<T> *requests, int count, std::int64_t *errors) {                               \
     HWY_DYNAMIC_DISPATCH(MetricBatch##S)(requests, count, errors);                                                     \
+  }                                                                                                                    \
+  MetricBatchFunction<T> metric_batch_function(T *) {                                                                  \
+    return HWY_DYNAMIC_DISPATCH(MetricBatch##S);                                                                       \
   }
 NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
 #undef NEO_EXPORT

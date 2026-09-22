@@ -304,6 +304,7 @@ class PreparedBlockError {
   std::array<std::array<const T*, 16>, 3> references_{};
   std::array<std::array<std::ptrdiff_t, 16>, 3> strides_{};
   std::array<detail::MetricRequest<T>, 3> requests_{};
+  detail::MetricBatchFunction<T> metric_batch_;
 
   std::int64_t quotient(std::int64_t value) const {
     switch (pel_) {
@@ -327,7 +328,8 @@ class PreparedBlockError {
 
 public:
   PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const SamplingFrames<T>& frames, BlockMetric metric)
-      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma) {
+      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
+        metric_batch_(detail::metric_batch_function(static_cast<T *>(nullptr))) {
     for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
       const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
       x_[k] = g.planes[k].pad_x + block.x / rx;
@@ -353,7 +355,7 @@ public:
       reference_pair(1, 3, tx, ty);
     }
     std::array<std::int64_t, 3> errors{};
-    detail::metric_batch(requests_.data(), chroma_ ? 3 : 1, errors.data());
+    metric_batch_(requests_.data(), chroma_ ? 3 : 1, errors.data());
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
   }
