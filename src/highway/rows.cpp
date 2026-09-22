@@ -225,6 +225,21 @@ std::int64_t SmallSad(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdi
 }
 
 #if HWY_TARGET != HWY_SCALAR
+template <int Width, int Height>
+std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
+  const hn::CappedTag<std::uint8_t, Width> d;
+  const hn::Repartition<std::uint64_t, decltype(d)> wide;
+  auto sum0 = hn::Zero(wide), sum1 = sum0, sum2 = sum0, sum3 = sum0;
+  for (int y = 0; y < Height; y += 4) {
+    const auto* ar = a + y * as;
+    const auto* br = b + y * bs;
+    sum0 = hn::Add(sum0, hn::SumsOf8AbsDiff(hn::LoadU(d, ar), hn::LoadU(d, br)));
+    sum1 = hn::Add(sum1, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + as), hn::LoadU(d, br + bs)));
+    sum2 = hn::Add(sum2, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 2 * as), hn::LoadU(d, br + 2 * bs)));
+    sum3 = hn::Add(sum3, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 3 * as), hn::LoadU(d, br + 3 * bs)));
+  }
+  return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
+}
 template <class D>
 std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b,
                           std::ptrdiff_t bs, int w, int h) {
@@ -409,6 +424,10 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
     if (!satd && w <= 128 && h <= 128) {
 #if HWY_TARGET != HWY_SCALAR
       if constexpr (std::is_same_v<T, std::uint8_t>) {
+        if (w == 16 && h == 16)
+          return FixedByteSad<16, 16>(a, as, b, bs);
+        if (w == 8 && h == 8)
+          return FixedByteSad<8, 8>(a, as, b, bs);
         if (w >= 64)
           return SmallByteSad(hn::CappedTag<T, 64>{}, a, as, b, bs, w, h);
         if (w >= 32)
