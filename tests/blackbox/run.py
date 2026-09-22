@@ -2,7 +2,7 @@
 
 No benchmarks, timings, source checkout or package installation are performed.
 Use --list to inspect cases. Reports are stored in a fresh directory on each run.
-Exit status: 0 = exact matches, approved known differences or explicitly enabled tolerance;
+Exit status: 0 = exact matches or explicitly enabled tolerance;
 1 = new observed differences; 2 = incomplete/failed run.
 """
 import argparse
@@ -93,7 +93,7 @@ def write_report(directory, report):
         if item.get("difference"):
             lines += ["", "## " + item["id"], "", "```json",
                       json.dumps(item["difference"], indent=2), "```"]
-    lines += ["", "known_difference denotes an approved exact exception, not complete equality.",
+    lines += ["",
               "within_tolerance denotes finite DepanAnalyse motion differences within the explicitly selected fixed bounds; it is not exact equality.",
               "This is a binary compatibility result, not a specification verdict or performance measurement.",
               "Worker JSON and logs retain the full observations and errors. No reference private payload is exported."]
@@ -116,7 +116,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30, help="per backend/case timeout in seconds")
     parser.add_argument("--output-root", type=Path, default=Path(__file__).resolve().parents[2] / "build" / "blackbox")
     parser.add_argument("--vs-version", default="79")
-    parser.add_argument("--mvu-version", default="8")
+    parser.add_argument("--mvu-version", default="9")
     parser.add_argument("--neo-kernel", choices=["scalar", "highway"], default="scalar",
                         help="select and query the loaded candidate backend; highway requires a real SIMD target")
     parser.add_argument("--depan-float-tolerance", action="store_true",
@@ -181,7 +181,6 @@ def main():
     statuses = {item["status"] for item in report["cases"]}
     code = 2 if statuses & {"execution_error", "input_mismatch"} else 1 if "difference" in statuses else 0
     report["status"] = ("error" if code == 2 else "difference" if code == 1 else
-                        "known_difference" if "known_difference" in statuses else
                         "within_tolerance" if "within_tolerance" in statuses else "pass")
     write_report(directory, report)
     return code

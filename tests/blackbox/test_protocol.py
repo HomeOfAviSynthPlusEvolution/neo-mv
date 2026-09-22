@@ -302,34 +302,24 @@ class ProtocolTests(unittest.TestCase):
             record["properties"]["_Range"]["values"] = [0]
         return spec, reference, candidate
 
-    def test_exact_mask_range_exception_retains_raw_observations(self):
+    def test_mask_range_is_strict_for_all_reference_versions(self):
         spec, reference, candidate = self.mask_range_pair()
-        before = copy.deepcopy((reference, candidate))
-        self.assertEqual(compare(reference, candidate)[0], "difference")
-        status, detail = compare(reference, candidate, spec)
-        self.assertEqual(status, "known_difference")
-        self.assertEqual(len(detail["known_differences"]), len(spec["requests"]))
-        for i, observed in enumerate(detail["known_differences"]):
-            self.assertEqual(observed["rule"], "mvu8-vs79-mask-range")
-            self.assertEqual(observed["reference"], dict(type="int", count=1, values=[0]))
-            self.assertEqual(observed["candidate"], dict(type="int", count=1, values=[1]))
-            self.assertEqual(observed["request"]["request"], i)
-        self.assertEqual((reference, candidate), before)
-        self.assertEqual(compare(candidate, candidate, spec), ("pass", None))
-
-    def test_mask_range_exception_has_narrow_scope(self):
-        spec, reference, candidate = self.mask_range_pair()
-        for changed_spec in [None, dict(spec, phase=2), dict(spec, operation="Flow")]:
-            self.assertEqual(compare(reference, candidate, changed_spec)[0], "difference")
-        for side, key, value in [(0, "mvu_package", "9"), (0, "vs_package", "80"),
-                                 (1, "vs_package", "80")]:
-            pair = copy.deepcopy([reference, candidate])
-            pair[side]["environment"][key] = value
-            self.assertEqual(compare(*pair, spec)[0], "difference")
-        self.assertEqual(compare(candidate, reference, spec)[0], "difference")
+        for version in ("8", "9"):
+            reference["environment"]["mvu_package"] = version
+            for operation in ("VectorLengthMask", "SADMask", "OcclusionMask"):
+                selected = dict(spec, operation=operation)
+                before = copy.deepcopy((reference, candidate))
+                for selection in (None, selected):
+                    status, detail = compare(reference, candidate, selection)
+                    self.assertEqual(status, "difference")
+                    self.assertEqual(detail["path"], "/records/0/properties/_Range/values/0")
+                    self.assertNotIn("known_differences", detail)
+                self.assertEqual((reference, candidate), before)
+                self.assertEqual(compare(candidate, candidate, selected), ("pass", None))
 
     def test_mask_range_wrong_payload_and_missing_name_stay_red(self):
         spec, reference, candidate = self.mask_range_pair()
+        reference["records"] = copy.deepcopy(candidate["records"])
         for wrong in [dict(type="int", count=1, values=[2]),
                       dict(type="int", count=2, values=[1, 1]),
                       dict(type="float64", count=1, values=["3ff0000000000000"]),
@@ -344,8 +334,9 @@ class ProtocolTests(unittest.TestCase):
         changed["records"][-1]["property_names"] = []
         self.assertEqual(compare(reference, changed, spec)[0], "difference")
 
-    def test_range_exception_does_not_hide_other_differences(self):
+    def test_mask_comparison_keeps_other_fields_strict(self):
         spec, reference, candidate = self.mask_range_pair()
+        reference["records"] = copy.deepcopy(candidate["records"])
         for mutate in [lambda r: r["outputs"][0].update(bits=16),
                        lambda r: r["records"][-1]["properties"].update(TestMarker=dict(type="int", count=1, values=[7])),
                        lambda r: r["records"][-1]["property_names"].append("Unexpected"),
@@ -355,7 +346,7 @@ class ProtocolTests(unittest.TestCase):
             mutate(changed)
             status, detail = compare(reference, changed, spec)
             self.assertEqual(status, "difference")
-            self.assertIn("known_differences", detail)
+            self.assertNotIn("known_differences", detail)
         changed = copy.deepcopy(candidate)
         changed["inputs"][0]["properties"]["_Range"] = dict(type="int", count=1, values=[1])
         self.assertEqual(compare(reference, changed, spec)[0], "input_mismatch")
@@ -363,7 +354,7 @@ class ProtocolTests(unittest.TestCase):
         changed["records"][-1] = dict(request=4, member=0, frame=0, error=dict(type="Error", message="failed"))
         status, detail = compare(reference, changed, spec)
         self.assertEqual(status, "difference")
-        self.assertEqual(len(detail["known_differences"]), len(spec["requests"]) - 1)
+        self.assertNotIn("known_differences", detail)
 
     def flow_result(self):
         _, result = self.render_result()
@@ -390,7 +381,7 @@ class ProtocolTests(unittest.TestCase):
             changed["auxiliary_inputs"][index]["frames"][0]["properties"].clear()
             self.assertEqual(compare(result, changed, spec)[0], "input_mismatch")
 
-    def test_flow_preserves_range_comparison_without_mask_exception(self):
+    def test_flow_preserves_strict_range_comparison(self):
         spec, reference = self.flow_result()
         reference["environment"].update(vs_package="79", mvu_package="8")
         candidate = copy.deepcopy(reference)

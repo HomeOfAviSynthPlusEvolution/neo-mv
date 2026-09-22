@@ -36,8 +36,7 @@ CASES = [
 
 def prepare(vs, core, spec):
     inputs = render_cases.prepare(vs, core, spec)
-    # Flow preserves the clip property map. Range must be compared literally:
-    # the existing mask-only range exception does not apply to this operation.
+    # Flow preserves the clip property map, including the exact range value.
     inputs["clip"] = core.std.SetFrameProps(inputs["clip"], _Range=1, _Matrix=1)
     if spec.get("field_property") == "missing":
         inputs["super_source"] = core.std.RemoveFrameProps(inputs["super_source"], props=["_Field"])

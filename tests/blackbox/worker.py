@@ -150,7 +150,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--threads", type=int, choices=[1, 4], required=True)
     parser.add_argument("--vs-version", default="79")
-    parser.add_argument("--mvu-version", default="8")
+    parser.add_argument("--mvu-version", default="9")
     args = parser.parse_args()
     spec = BY_ID[args.case]
     result = dict(schema=SCHEMA, case_id=args.case, case_sha256=digest_json(spec),

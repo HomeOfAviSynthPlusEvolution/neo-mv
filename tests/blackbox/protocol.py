@@ -217,35 +217,6 @@ def first_difference(left, right, path=""):
     return None
 
 
-def mask_range_observations(reference, candidate, spec):
-    """Project only the approved MVU 8 / VS R79 mask discrepancy for comparison.
-
-    Returned records are copies; worker observations are never rewritten.
-    Omitted spec keeps the comparator completely strict.
-    """
-    left, right = reference["records"], candidate["records"]
-    if not spec or spec.get("phase") != 3 or spec.get("operation") not in (
-            "VectorLengthMask", "SADMask", "OcclusionMask") or \
-            reference.get("backend") != "mvu" or candidate.get("backend") != "neo" or \
-            reference.get("environment", {}).get("mvu_package") != "8" or \
-            any(r.get("environment", {}).get("vs_package") != "79" for r in (reference, candidate)):
-        return left, right, []
-    expected_left = dict(type="int", count=1, values=[0])
-    expected_right = dict(type="int", count=1, values=[1])
-    left, right, known = list(left), list(right), []
-    for i, (a, b) in enumerate(zip(left, right)):
-        av, bv = a.get("properties", {}).get("_Range"), b.get("properties", {}).get("_Range")
-        if "_Range" not in a.get("property_names", []) or "_Range" not in b.get("property_names", []) or \
-                first_difference(av, expected_left) or first_difference(bv, expected_right):
-            continue
-        known.append(dict(rule="mvu8-vs79-mask-range", path=f"/records/{i}/properties/_Range",
-                          reference=av, candidate=bv,
-                          request={key: a[key] for key in ("request", "member", "frame")}))
-        left[i] = dict(a, properties={k: v for k, v in a["properties"].items() if k != "_Range"})
-        right[i] = dict(b, properties={k: v for k, v in b["properties"].items() if k != "_Range"})
-    return left, right, known
-
-
 def depan_float_observations(reference, candidate, spec, left, right):
     """Project only finite motion values within the fixed, explicitly enabled bound.
 
@@ -321,8 +292,7 @@ def compare(reference, candidate, spec=None, *, depan_float_tolerance=False):
         # are red; preserve both messages without claiming their causes match.
         return "difference", dict(path="/creation", reference=reference.get("creation_error", "success"),
                                   candidate=candidate.get("creation_error", "success"))
-    left_records, right_records, known = mask_range_observations(reference, candidate, spec)
-    left_records, right_records = list(left_records), list(right_records)
+    left_records, right_records = list(reference["records"]), list(candidate["records"])
     for index, (left, right) in enumerate(zip(reference["records"], candidate["records"])):
         expected = next((item for item in (spec or {}).get("expected_output_errors", [])
                          if (item["member"], item["frame"]) == (left["member"], left["frame"])), None)
@@ -342,8 +312,6 @@ def compare(reference, candidate, spec=None, *, depan_float_tolerance=False):
             difference = dict(path=f"/records/{index}/error", reference=left.get("error", "success"),
                               candidate=right.get("error", "success"),
                               request={key: left[key] for key in ("request", "member", "frame")})
-            if known:
-                difference["known_differences"] = known
             if expected is not None:
                 difference["expected_error"] = expected
             return "difference", difference
@@ -360,15 +328,11 @@ def compare(reference, candidate, spec=None, *, depan_float_tolerance=False):
                 if index is not None:
                     difference["request"] = {key: reference[field][index][key]
                                              for key in ("request", "member", "frame")}
-            if known:
-                difference["known_differences"] = known
             if tolerated:
                 difference["tolerated_differences"] = tolerated
             if rejected:
                 difference["rejected_float_differences"] = rejected
             return "difference", difference
-    if known:
-        return "known_difference", dict(known_differences=known)
     if tolerated:
         return "within_tolerance", dict(tolerated_differences=tolerated,
             absolute_tolerance=DEPAN_FLOAT_ABSOLUTE_TOLERANCE,
