@@ -500,6 +500,33 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
   }
   return MetricWithTag(hn::ScalableTag<Wide<T>>{}, a, as, b, bs, w, h, satd);
 }
+// Selected only for three 4:2:0 SAD planes with 16x16 Y and 8x8 U/V.
+template <class T>
+void MetricBatch420(const MetricRequest<T> *requests, int, std::int64_t *errors) {
+#if HWY_TARGET != HWY_SCALAR
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    const auto &y = requests[0], &u = requests[1], &v = requests[2];
+    errors[0] = FixedByteSad<16, 16>(y.source, y.source_stride, y.reference, y.reference_stride);
+    errors[1] = FixedByteSad<8, 8>(u.source, u.source_stride, u.reference, u.reference_stride);
+    errors[2] = FixedByteSad<8, 8>(v.source, v.source_stride, v.reference, v.reference_stride);
+    return;
+  }
+  if constexpr (std::is_same_v<T, std::uint16_t>) {
+    if (16 % hn::Lanes(hn::CappedTag<std::int32_t, 16>{}) == 0 &&
+        8 % hn::Lanes(hn::CappedTag<std::int32_t, 8>{}) == 0) {
+      const auto &y = requests[0], &u = requests[1], &v = requests[2];
+      errors[0] = FixedShortSad<16, 16>(y.source, y.source_stride, y.reference, y.reference_stride);
+      errors[1] = FixedShortSad<8, 8>(u.source, u.source_stride, u.reference, u.reference_stride);
+      errors[2] = FixedShortSad<8, 8>(v.source, v.source_stride, v.reference, v.reference_stride);
+      return;
+    }
+  }
+#endif
+  for (int i = 0; i < 3; ++i) {
+    const auto &r = requests[i];
+    errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);
+  }
+}
 #define NEO_IMPL(T, S)                                                                                                 \
   void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
     Extract(p, q, n, pel, phase);                                                                                      \
@@ -524,6 +551,9 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
       const auto &r = requests[i];                                                                                     \
       errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);     \
     }                                                                                                                  \
+  }                                                                                                                    \
+  void MetricBatch420##S(const MetricRequest<T> *requests, int count, std::int64_t *errors) {                          \
+    MetricBatch420(requests, count, errors);                                                                           \
   }
 NEO_IMPL(std::uint8_t, U8) NEO_IMPL(std::uint16_t, U16) NEO_IMPL(float, F32)
 #undef NEO_IMPL
@@ -544,6 +574,7 @@ const char *target_name() {
   HWY_EXPORT(Formula##S);                                                                                              \
   HWY_EXPORT(Metric##S);                                                                                               \
   HWY_EXPORT(MetricBatch##S);                                                                                          \
+  HWY_EXPORT(MetricBatch420##S);                                                                                       \
   void extract(const T *p, T *q, int n, int pel, int phase) {                                                          \
     HWY_DYNAMIC_DISPATCH(Extract##S)(p, q, n, pel, phase);                                                             \
   }                                                                                                                    \
@@ -567,6 +598,9 @@ const char *target_name() {
   }                                                                                                                    \
   MetricBatchFunction<T> metric_batch_function(T *) {                                                                  \
     return HWY_DYNAMIC_DISPATCH(MetricBatch##S);                                                                       \
+  }                                                                                                                    \
+  MetricBatchFunction<T> metric_batch_420_function(T *) {                                                              \
+    return HWY_DYNAMIC_DISPATCH(MetricBatch420##S);                                                                    \
   }
 NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
 #undef NEO_EXPORT

@@ -328,8 +328,14 @@ class PreparedBlockError {
 
 public:
   PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const SamplingFrames<T>& frames, BlockMetric metric)
-      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
-        metric_batch_(detail::metric_batch_function(static_cast<T *>(nullptr))) {
+      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma) {
+    if constexpr (std::is_same_v<T, float>)
+      metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
+    else
+      metric_batch_ = chroma_ && ratio_x_ == 2 && ratio_y_ == 2 && block.width == 16 && block.height == 16 &&
+                              metric == BlockMetric::sad
+                          ? detail::metric_batch_420_function(static_cast<T *>(nullptr))
+                          : detail::metric_batch_function(static_cast<T *>(nullptr));
     for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
       const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
       x_[k] = g.planes[k].pad_x + block.x / rx;
