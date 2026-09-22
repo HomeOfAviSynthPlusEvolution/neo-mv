@@ -9,6 +9,10 @@ namespace neo_mv {
 // Compile-time pixel operations; control flow and search stay in the core.
 template <class T>
 struct ScalarKernels {
+  static void validate_samples(const T* samples, int count, std::int64_t maximum) {
+    for (int i = 0; i < count; ++i)
+      subpixel_detail::valid_sample(samples[i], maximum);
+  }
   static constexpr auto extend_border = &neo_mv::extend_border<T>;
   static constexpr auto reduce_pyramid = &neo_mv::reduce_pyramid<T>;
   static constexpr auto interpolate_subpixels = &neo_mv::interpolate_subpixels<T>;

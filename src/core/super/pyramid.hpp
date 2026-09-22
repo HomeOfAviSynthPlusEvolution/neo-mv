@@ -130,9 +130,13 @@ public:
     const auto maximum = subpixel_detail::sample_max<T>(plan_.bits());
     for (int k = 0; k < g.plane_count; ++k) {
       const auto& p = g.planes[k];
-      for (int y = 0; y < source[k].height(); ++y)
-        for (int x = 0; x < source[k].width(); ++x)
-          subpixel_detail::valid_sample(source[k].row(y)[x], maximum);
+      if constexpr (std::is_same_v<T, float>) {
+        for (int y = 0; y < source[k].height(); ++y)
+          Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
+      } else if (maximum < std::numeric_limits<T>::max()) {
+        for (int y = 0; y < source[k].height(); ++y)
+          Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
+      }
       auto& levels = planes_[k];
       levels.reserve(p.levels.size());
       for (std::size_t l = 0; l < p.levels.size(); ++l) {

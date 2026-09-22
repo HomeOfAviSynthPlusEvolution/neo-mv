@@ -118,6 +118,11 @@ void external_and_errors() {
   CHECK(unused.phase(0, 0).row(4)[4] == 7);
   source.data[0][0] = std::numeric_limits<float>::quiet_NaN();
   rejects([&] { SuperPyramid<float>(SuperPlan<float>(p, 32), source.views); });
+  Input<std::uint16_t> limited(p, 1023);
+  SuperPyramid<std::uint16_t> accepted(SuperPlan<std::uint16_t>(p, 10), limited.views);
+  CHECK(accepted.phase(0, 0).row(0)[0] == 1023);
+  limited.data[0][0] = 1024;
+  rejects([&] { SuperPyramid<std::uint16_t>(SuperPlan<std::uint16_t>(p, 10), limited.views); });
   rejects([&] { SuperPlan<float>(p, 16); });
   rejects([&] { SuperPlan<float>(p, 32, 3); });
   rejects([&] { SuperPlan<float>(p, 32, 2, -1); });

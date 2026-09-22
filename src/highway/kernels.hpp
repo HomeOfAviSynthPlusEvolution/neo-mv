@@ -343,6 +343,9 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 namespace neo_mv {
 template <class T>
 struct HighwayKernels {
+  static void validate_samples(const T* samples, int count, std::int64_t maximum) {
+    simd::detail::scan(samples, count, maximum);
+  }
   static constexpr auto extend_border = &simd::extend_border<T>;
   static constexpr auto reduce_pyramid = &simd::reduce_pyramid<T>;
   static constexpr auto interpolate_subpixels = &simd::interpolate_subpixels<T>;
