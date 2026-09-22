@@ -301,7 +301,7 @@ void tiled_compensate(int bits) {
   using namespace neo_mv;
   std::mt19937 rng(18032);
   for (int half : {4, 8}) {
-    for (int columns : {3, 6}) {
+    for (int columns : {3, 6, 10}) {
       for (int crop : {0, 3}) {
         const int block = 2 * half;
         const int width = (columns + 1) * half;
