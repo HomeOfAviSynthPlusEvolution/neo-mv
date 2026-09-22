@@ -67,7 +67,7 @@ protected:
   };
   static std::int64_t floor_div(std::int64_t value, int divisor) {
     // These coordinates and products are bounded far away from INT64_MIN.
-    return value >= 0 ? value / divisor : -((divisor - 1 - value) / divisor);
+    return flow_coordinates::floor_shift(value, divisor == 256 ? 8 : flow_coordinates::shift(divisor));
   }
   Direction direction(std::int16_t x, std::int16_t y) const {
     const auto zx = std::int64_t(x) * time_, zy = std::int64_t(y) * time_;
@@ -102,6 +102,7 @@ public:
   const RenderPhaseGeometry& geometry() const { return geometry_; }
   int width() const { return width_; }
   int height() const { return height_; }
+  int time_coefficient() const { return time_; }
 
   template <class Visit>
   std::size_t trajectory(int x, int y, std::int16_t fx, std::int16_t fy, std::int16_t bx, std::int16_t by,
@@ -120,11 +121,25 @@ public:
   void preflight(const DenseFlowField& forward, const DenseFlowField& backward) const {
     validate_field(forward);
     validate_field(backward);
+    const flow_coordinates::CommonDomain domain(geometry_);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto i = std::size_t(y) * width_ + x;
-        trajectory(x, y, forward.x[i], forward.y[i], backward.x[i], backward.y[i],
-                   [&](std::int64_t ax, std::int64_t ay) { (void)location(ax, ay); });
+        for (const auto* field : {&forward, &backward}) {
+          if (domain.contains_scaled(x, y, 0, 0) &&
+              domain.contains_scaled(x, y, std::int64_t(field->x[i]) * time_, std::int64_t(field->y[i]) * time_))
+            continue;
+          const auto d = direction(field->x[i], field->y[i]);
+          if (!d.count)
+            continue;
+          // Each coordinate is monotone along a direction. If both endpoints
+          // lie in the common rectangle, every intermediate phase is safe.
+          if (domain.contains_scaled(x, y, 0, 0) && domain.contains_scaled(x, y, d.count * d.x, d.count * d.y))
+            continue;
+          for (int step = 1; step <= d.count; ++step)
+            (void)location(std::int64_t(geometry_.pel) * x + floor_div(step * d.x, 256),
+                           std::int64_t(geometry_.pel) * y + floor_div(step * d.y, 256));
+        }
       }
   }
 
@@ -174,17 +189,21 @@ public:
           using Sum = std::conditional_t<std::is_same_v<T, float>, double, std::uint32_t>;
           Sum sum = 0;
           bool first = true;
-          trajectory(x, y, forward.x[i], forward.y[i], backward.x[i], backward.y[i],
-                     [&](std::int64_t ax, std::int64_t ay) {
-                       const auto at = location<true>(ax, ay);
-                       const T q = source.planes[at.phase].row(at.y)[at.x];
-                       subpixel_detail::valid_sample(q, maximum);
-                       sum = first ? Sum(q) : sum + Sum(q);
-                       first = false;
-                       if constexpr (std::is_same_v<T, float>)
-                         if (!std::isfinite(sum))
-                           throw std::overflow_error("non-finite blur accumulation");
-                     });
+          const auto consume = [&](std::int64_t ax, std::int64_t ay) {
+            const auto at = location<true>(ax, ay);
+            const T q = source.planes[at.phase].row(at.y)[at.x];
+            subpixel_detail::valid_sample(q, maximum);
+            sum = first ? Sum(q) : sum + Sum(q);
+            first = false;
+            if constexpr (std::is_same_v<T, float>)
+              if (!std::isfinite(sum))
+                throw std::overflow_error("non-finite blur accumulation");
+          };
+          const auto qx = std::int64_t(geometry_.pel) * x, qy = std::int64_t(geometry_.pel) * y;
+          consume(qx, qy);
+          for (const auto d : {f, b})
+            for (int step = 1; step <= d.count; ++step)
+              consume(qx + floor_div(step * d.x, 256), qy + floor_div(step * d.y, 256));
           if constexpr (std::is_same_v<T, float>)
             output.row(y)[x] = mask_detail::binary32(sum / double(count));
           else

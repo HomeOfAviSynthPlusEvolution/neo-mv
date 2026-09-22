@@ -163,6 +163,45 @@ void domains_and_copy() {
   });
   CHECK(output[0] == 19 && output[1] == 19); // Last pixel preflight precedes the first sample.
 }
+// Independent trajectory enumeration checks that the rectangle certificate
+// never admits an unsafe intermediate phase or rejects a safe edge trajectory.
+void admission_oracle() {
+  const auto floor = [](std::int64_t n, int d) {
+    const auto q = n / d, r = n % d;
+    return q - (r < 0);
+  };
+  for (int pel : {1, 2, 4})
+    for (int layout : {0, 1, 2}) {
+      auto g = geometry(1, 1, 2, pel);
+      for (int a = 1; a < pel * pel; ++a)
+        if (layout)
+          g.phases[a] = {layout == 1 ? 1 + a % 5 : 5, layout == 2 ? 1 + a % 5 : 5};
+      for (int time : {0, 1, 127, 256})
+        for (int precision : {1, 3, 32})
+          for (int vx : {-17, -8, -1, 0, 1, 7, 16})
+            for (int vy : {-17, -7, -1, 0, 1, 8, 16}) {
+              bool expected = true;
+              for (int sign : {-1, 1}) {
+                const auto zx = std::int64_t(vx) * time * sign, zy = std::int64_t(vy) * time * sign;
+                const auto count = (std::max)(std::abs(zx), std::abs(zy)) / precision / 256;
+                for (int n = 1; n <= count; ++n) {
+                  const auto ax = floor(n * (zx / count), 256), ay = floor(n * (zy / count), 256);
+                  const auto x = floor(ax, pel), y = floor(ay, pel);
+                  const auto phase = (ay - y * pel) * pel + ax - x * pel;
+                  expected &=
+                      x + 2 >= 0 && y + 2 >= 0 && x + 2 < g.phases[phase].width && y + 2 < g.phases[phase].height;
+                }
+              }
+              bool accepted = true;
+              try {
+                TestPlan(g, 1, 1, precision, time).preflight(field(1, 1, vx, vy), field(1, 1, -vx, -vy));
+              } catch (const std::invalid_argument&) {
+                accepted = false;
+              }
+              CHECK(accepted == expected);
+            }
+    }
+}
 #if NEO_MV_TEST_HIGHWAY
 template <class T>
 void vertical_sequences(int bits) {
@@ -266,6 +305,7 @@ int main() {
       sampled_sequences<std::uint16_t>(16);
       sampled_sequences<float>(32);
 #endif
+      admission_oracle();
       trajectories();
       averages();
       sampling<std::uint8_t>(8);

@@ -21,18 +21,12 @@ protected:
   struct Locations {
     Location A{}, C{}, A0{}, C0{}, E{}, K{};
   };
-  static std::int64_t floor_div(std::int64_t value, int divisor) {
-    // Positive-numerator division avoids signed-remainder optimization issues
-    // at exact negative multiples and is defined even for INT64_MIN.
-    return value >= 0 ? value / divisor : -1 - ((-1 - value) / divisor);
-  }
   template <bool Validated = false>
   static Location locate(const RenderPhaseGeometry& g, int x, int y, std::int16_t vx, std::int16_t vy, int t) {
-    const auto ax = std::int64_t(g.pel) * x + floor_div(std::int64_t(vx) * t, 256);
-    const auto ay = std::int64_t(g.pel) * y + floor_div(std::int64_t(vy) * t, 256);
-    const auto qx = floor_div(ax, g.pel), qy = floor_div(ay, g.pel);
-    const int phase = static_cast<int>((ay - qy * g.pel) * g.pel + ax - qx * g.pel);
-    const auto sx = g.pad_x + qx, sy = g.pad_y + qy;
+    const auto at = flow_coordinates::locate(g, x, y, flow_coordinates::floor_shift(std::int64_t(vx) * t, 8),
+                                             flow_coordinates::floor_shift(std::int64_t(vy) * t, 8));
+    const auto sx = at.x, sy = at.y;
+    const int phase = at.phase;
     if constexpr (!Validated)
       if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
         throw std::invalid_argument("interpolation sample exceeds its logical phase domain");
@@ -96,9 +90,21 @@ public:
   void preflight(const DenseFlowField& B, const DenseFlowField& F, const DenseFlowField* BB = nullptr,
                  const DenseFlowField* FF = nullptr) const {
     validate_fields(B, F, BB, FF);
+    const flow_coordinates::CommonDomain left(left_.geometry()), right(right_.geometry());
     for (int y = 0; y < height(); ++y)
-      for (int x = 0; x < width(); ++x)
-        (void)positions(x, y, B, F, BB, FF);
+      for (int x = 0; x < width(); ++x) {
+        const auto i = std::size_t(y) * width() + x;
+        const auto admit = [&](const auto& domain, const auto& g, const DenseFlowField& field, int t) {
+          if (!domain.contains_scaled(x, y, std::int64_t(field.x[i]) * t, std::int64_t(field.y[i]) * t))
+            (void)locate(g, x, y, field.x[i], field.y[i], t);
+        };
+        admit(left, left_.geometry(), F, time_);
+        admit(right, right_.geometry(), B, 256 - time_);
+        if (BB) {
+          admit(left, left_.geometry(), *FF, time_);
+          admit(right, right_.geometry(), *BB, 256 - time_);
+        }
+      }
   }
   // Frame-only fused entry: image storage, fields and all plane coordinates
   // were admitted; masks match the visible dimensions and output is independent.

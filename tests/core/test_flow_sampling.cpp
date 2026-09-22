@@ -108,6 +108,19 @@ void negative_rounding_boundaries() {
         }
   }
 }
+void wide_preflight() {
+  RenderPhaseGeometry g{4, 1, 1, INT32_MAX - 1, INT32_MAX - 1, {}};
+  for (auto& phase : g.phases)
+    phase = {INT32_MAX, INT32_MAX};
+  auto f = dense(1, 1);
+  TestPlan plan(g, 1, 1, 256);
+  plan.preflight(f);
+  f.x[0] = 4;
+  rejects([&] { plan.preflight(f); });
+  f.x[0] = INT16_MIN;
+  f.y[0] = INT16_MIN;
+  plan.preflight(f);
+}
 void admission_and_errors() {
   Image<std::uint8_t> image(3, 1, 1, 2);
   auto field = dense(3, 1);
@@ -246,6 +259,7 @@ int main() {
       rounding<std::uint16_t>();
       rounding<float>();
       negative_rounding_boundaries();
+      wide_preflight();
       admission_and_errors();
       float_representation();
       phase_extent_boundaries();

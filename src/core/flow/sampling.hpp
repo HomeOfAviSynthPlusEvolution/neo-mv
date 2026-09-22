@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/flow/dense.hpp"
+#include "core/flow/coordinates.hpp"
 #include "core/render/block_sampling.hpp"
 
 #include <cstring>
@@ -19,7 +20,7 @@ class FlowSamplingPlan {
     // Nonnegative division also avoids a compiler misoptimization of signed
     // remainder correction at exact negative multiples of 256. The int16
     // component and [0,256] time bounds make both numerators representable.
-    return scaled >= 0 ? scaled / 256 : -((255 - scaled) / 256);
+    return flow_coordinates::floor_shift(scaled, 8);
   }
 
 protected:
@@ -31,11 +32,9 @@ protected:
   template <bool Validated = false>
   Location location(int x, int y, std::int16_t vx, std::int16_t vy) const {
     const auto& g = geometry_;
-    const auto ax = std::int64_t(g.pel) * x + displacement(vx);
-    const auto ay = std::int64_t(g.pel) * y + displacement(vy);
-    const auto qx = sampling_detail::floor_div(ax, g.pel), qy = sampling_detail::floor_div(ay, g.pel);
-    const int phase = static_cast<int>((ay - qy * g.pel) * g.pel + ax - qx * g.pel);
-    const auto sx = std::int64_t(g.pad_x) + qx, sy = std::int64_t(g.pad_y) + qy;
+    const auto at = flow_coordinates::locate(g, x, y, displacement(vx), displacement(vy));
+    const auto sx = at.x, sy = at.y;
+    const int phase = at.phase;
     if constexpr (!Validated)
       if (sx < 0 || sy < 0 || sx >= g.phases[phase].width || sy >= g.phases[phase].height)
         throw std::invalid_argument("Flow sample exceeds its logical phase domain");
@@ -63,10 +62,13 @@ public:
 
   void preflight(const DenseFlowField& field) const {
     validate_dense(field);
+    const flow_coordinates::CommonDomain domain(geometry_);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto i = std::size_t(y) * width_ + x;
-        (void)location(x, y, field.x[i], field.y[i]);
+        if (!domain.contains_scaled(x, y, std::int64_t(field.x[i]) * time_ + 128,
+                                    std::int64_t(field.y[i]) * time_ + 128))
+          (void)location(x, y, field.x[i], field.y[i]);
       }
   }
 

@@ -61,12 +61,18 @@ void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int
   });
 }
 void BlurPreflight(const BlurSamplingPlan& plan, const DenseFlowField& f, const DenseFlowField& b) {
+  const flow_coordinates::CommonDomain domain(plan.geometry());
   for (int y = 0; y < plan.height(); ++y)
     for (int x = 0; x < plan.width(); ++x) {
       const auto i = std::size_t(y) * plan.width() + x;
       for (const auto* field : {&f, &b}) {
+        if (domain.contains_scaled(x, y, 0, 0) &&
+            domain.contains_scaled(x, y, std::int64_t(field->x[i]) * plan.time_coefficient(),
+                                   std::int64_t(field->y[i]) * plan.time_coefficient()))
+          continue;
         const auto d = plan.direction(field->x[i], field->y[i]);
-        if (d.count)
+        if (d.count &&
+            !(domain.contains_scaled(x, y, 0, 0) && domain.contains_scaled(x, y, d.count * d.x, d.count * d.y)))
           BlurSamples<1>(plan.geometry(), x, y, d.count, d.x, d.y, nullptr);
       }
     }
