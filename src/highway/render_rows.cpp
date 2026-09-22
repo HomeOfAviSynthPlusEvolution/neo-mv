@@ -461,6 +461,8 @@ void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRender
   if constexpr (std::is_same_v<T, std::uint16_t>) {
     if (g.block_width == 16 && g.block_height == 16 && g.overlap_x == 8 && g.overlap_y == 8)
       return ComposeDirectTiledHalf<T, 8>(g, blocks, output, maximum);
+    if (g.block_width == 8 && g.block_height == 8 && g.overlap_x == 4 && g.overlap_y == 4)
+      return ComposeDirectTiledHalf<T, 4>(g, blocks, output, maximum);
   }
 #if HWY_TARGET == HWY_AVX2
   if constexpr (std::is_same_v<T, std::uint8_t>) {
