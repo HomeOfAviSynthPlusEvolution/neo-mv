@@ -438,6 +438,12 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
   }                                                                                                                    \
   std::int64_t Metric##S(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool s) {         \
     return Metric(a, as, b, bs, w, h, s);                                                                              \
+  }                                                                                                                    \
+  void MetricBatch##S(const MetricRequest<T> *requests, int count, std::int64_t *errors) {                             \
+    for (int i = 0; i < count; ++i) {                                                                                   \
+      const auto &r = requests[i];                                                                                     \
+      errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);     \
+    }                                                                                                                  \
   }
 NEO_IMPL(std::uint8_t, U8) NEO_IMPL(std::uint16_t, U16) NEO_IMPL(float, F32)
 #undef NEO_IMPL
@@ -457,6 +463,7 @@ const char *target_name() {
   HWY_EXPORT(Fill##S);                                                                                                 \
   HWY_EXPORT(Formula##S);                                                                                              \
   HWY_EXPORT(Metric##S);                                                                                               \
+  HWY_EXPORT(MetricBatch##S);                                                                                          \
   void extract(const T *p, T *q, int n, int pel, int phase) {                                                          \
     HWY_DYNAMIC_DISPATCH(Extract##S)(p, q, n, pel, phase);                                                             \
   }                                                                                                                    \
@@ -474,6 +481,9 @@ const char *target_name() {
   }                                                                                                                    \
   std::int64_t metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool s) {            \
     return HWY_DYNAMIC_DISPATCH(Metric##S)(a, as, b, bs, w, h, s);                                                     \
+  }                                                                                                                    \
+  void metric_batch(const MetricRequest<T> *requests, int count, std::int64_t *errors) {                               \
+    HWY_DYNAMIC_DISPATCH(MetricBatch##S)(requests, count, errors);                                                     \
   }
 NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
 #undef NEO_EXPORT

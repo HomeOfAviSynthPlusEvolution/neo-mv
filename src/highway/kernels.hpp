@@ -247,6 +247,7 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
     validate_sampling_frames(g, frames);
   }
   std::array<std::int64_t, 3> errors{};
+  std::array<detail::MetricRequest<T>, 3> requests{};
   const auto phase_quotient = [pel = g.pel](std::int64_t value) {
     switch (pel) {
     case 1: return value;
@@ -265,8 +266,8 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
       // The plan admits every candidate footprint and the frame views before search.
       const auto* source = current.row(y).data() + x;
       const auto* target = reference.row(static_cast<int>(y + qy)).data() + static_cast<int>(x + qx);
-      errors[k] = detail::metric(source, current.stride(), target, reference.stride(), bw, bh,
-                                 k == 0 && metric == BlockMetric::satd);
+      requests[k] = {source, current.stride(), target, reference.stride(), bw, bh,
+                     k == 0 && metric == BlockMetric::satd};
     } else {
       const auto source = current.subplane(x, y, bw, bh);
       const auto target = reference.subplane(static_cast<int>(x + qx), static_cast<int>(y + qy), bw, bh);
@@ -287,6 +288,8 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
     evaluate_plane(1, bx, by, bw, bh, qx, qy, phase);
     evaluate_plane(2, bx, by, bw, bh, qx, qy, phase);
   }
+  if constexpr (Validated)
+    detail::metric_batch(requests.data(), g.chroma ? 3 : 1, errors.data());
   const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
   return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
 }
