@@ -139,7 +139,7 @@ public:
         return request_fallback(ctx, r);
       r.B = read_field(frame(ctx.frames, 2, static_cast<int>(r.left)), prefix_);
       r.F = read_field(frame(ctx.frames, 3, static_cast<int>(r.right)), prefix_);
-      r.motion = plan_.input().main_eligible(r.B, r.F);
+      r.motion = plan_.main_eligible(r.B, r.F);
       if (!r.motion)
         return request_fallback(ctx, r);
       if (extras_) {
@@ -153,7 +153,7 @@ public:
     if (r.stage == 2) {
       r.BB = read_field(frame(ctx.frames, 2, static_cast<int>(r.right)), prefix_);
       r.FF = read_field(frame(ctx.frames, 3, static_cast<int>(r.left)), prefix_);
-      r.extra = plan_.input().extra_eligible(r.BB, r.FF);
+      r.extra = plan_.extra_eligible(r.BB, r.FF);
       return request_images(ctx, r);
     }
     finish_origin(ctx, r);

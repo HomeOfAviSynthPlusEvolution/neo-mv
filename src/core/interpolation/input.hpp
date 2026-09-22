@@ -58,20 +58,23 @@ public:
   bool in_range(std::int64_t left, std::int64_t right) const {
     return left >= 0 && left < frames() && right >= 0 && right < frames();
   }
-  bool eligible(const AnalysisField& field, std::size_t direction) const {
+  bool eligible(const AnalysisField& field, std::size_t direction,
+                SceneClassifier::Counter count = scalar_scene_count) const {
     const auto& saved = metadata_.at(direction);
     if (field.state == FieldState::invalid_metadata)
       return false;
     if (!valid_analysis_metadata(field.metadata) || !same_render_analysis(saved, field.metadata))
       throw std::invalid_argument("interpolation vector metadata changed");
-    return scene_(field) == 0;
+    return scene_(field, count) == 0;
   }
-  bool main_eligible(const AnalysisField& backward, const AnalysisField& forward) const {
-    const bool b = eligible(backward, 0), f = eligible(forward, 1);
+  bool main_eligible(const AnalysisField& backward, const AnalysisField& forward,
+                     SceneClassifier::Counter count = scalar_scene_count) const {
+    const bool b = eligible(backward, 0, count), f = eligible(forward, 1, count);
     return b && f;
   }
-  bool extra_eligible(const AnalysisField& backward, const AnalysisField& forward) const {
-    return main_eligible(backward, forward);
+  bool extra_eligible(const AnalysisField& backward, const AnalysisField& forward,
+                      SceneClassifier::Counter count = scalar_scene_count) const {
+    return main_eligible(backward, forward, count);
   }
   template <class ReadField>
   PairSelection select(std::int64_t left, std::int64_t right, ReadField&& read, bool extras = true) const {

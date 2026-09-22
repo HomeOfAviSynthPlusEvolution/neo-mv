@@ -200,6 +200,35 @@ void representations_and_equal_blend() {
   constant(plan.blend(image.pixels(), image.pixels(), 85), 0, 1.75f + 0x1p-22f);
   constant(plan.copy(image.pixels()), 0, 1.75f + 0x1p-23f);
 }
+struct CountingKernels : TestKernels<std::uint8_t> {
+  inline static int calls = 0;
+  static std::int64_t scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
+    ++calls;
+    return TestKernels<std::uint8_t>::scene_count(m, grid, threshold);
+  }
+};
+void scene_dispatch() {
+  const SuperPlan<std::uint8_t> super({8, 8, 8, 8, 0, 0, 4, 4}, 8);
+  const RenderVideo video{8, 8, 8, false, 1, 1, 3};
+  const auto m = metadata(super);
+  const InterpolationInputPlan<std::uint8_t> input(video, super, 3, m, {3, 3});
+  const InterpolationFramePlan<std::uint8_t, CountingKernels> plan(input, video);
+  auto B = field(m[0]), F = field(m[1]);
+  B.grid.values.front().error = INT64_MAX;
+  F.grid.values.back().error = -1;
+  CountingKernels::calls = 0;
+  // Scene rejection of the first field cannot hide corrupt second/extra fields.
+  rejects([&] { plan.main_eligible(B, F); });
+  CHECK(CountingKernels::calls == 2);
+  rejects([&] { plan.extra_eligible(B, F); });
+  CHECK(CountingKernels::calls == 4);
+  B.state = FieldState::metadata_only;
+  rejects([&] { plan.main_eligible(B, F); });
+  CHECK(CountingKernels::calls == 5);
+  const BlurFramePlan<std::uint8_t, CountingKernels> blur(input, video, 0, 1);
+  rejects([&] { blur.main_eligible(B, F); });
+  CHECK(CountingKernels::calls == 6);
+}
 } // namespace
 int main() {
   try {
@@ -208,6 +237,7 @@ int main() {
     complete_frames<std::uint16_t>(10, true);
     complete_frames<std::uint16_t>(16, true);
     complete_frames<float>(32, true);
+    scene_dispatch();
     negative_floor();
     all_plane_preflight();
     blur_trajectory<std::uint8_t>(8);

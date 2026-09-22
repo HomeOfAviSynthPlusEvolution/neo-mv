@@ -2,6 +2,7 @@
 
 #include "highway/grid_resampling.hpp"
 #include "highway/interpolation_rows.hpp"
+#include "highway/scene.hpp"
 #include "kernels/interpolation_scalar.hpp"
 
 namespace neo_mv {
@@ -31,6 +32,7 @@ struct HighwayBlurAverage {
 
 template <class T>
 struct HighwayInterpolationKernels {
+  static constexpr auto scene_count = &simd::scene_count;
   using Dense = DenseInterpolationPlan<simd::GridResamplingPlan>;
   using DenseFlow = DenseFlowPlan<simd::GridResamplingPlan>;
   using BlurAverage = HighwayBlurAverage;

@@ -12,7 +12,7 @@ inline int interpolation_time_coefficient(double parameter) {
   return static_cast<int>(scaled / 100.0f);
 }
 
-template <class T>
+template <class T, class Kernels>
 class TemporalFrameBase {
 protected:
   InterpolationInputPlan<T> input_;
@@ -21,6 +21,12 @@ protected:
 public:
   TemporalFrameBase(InterpolationInputPlan<T> input, RenderVideo video) : input_(std::move(input)), video_(video) {}
   const InterpolationInputPlan<T>& input() const { return input_; }
+  bool main_eligible(const AnalysisField& backward, const AnalysisField& forward) const {
+    return input_.main_eligible(backward, forward, Kernels::scene_count);
+  }
+  bool extra_eligible(const AnalysisField& backward, const AnalysisField& forward) const {
+    return input_.extra_eligible(backward, forward, Kernels::scene_count);
+  }
   void validate_clip(const RenderPixels<T>& clip) const {
     for (int k = 0; k < input_.plane_count(); ++k) {
       validate_plane(clip[k]);
@@ -48,8 +54,8 @@ public:
 };
 
 template <class T, class Kernels = ScalarInterpolationKernels<T>>
-class InterpolationFramePlan : public TemporalFrameBase<T> {
-  using Base = TemporalFrameBase<T>;
+class InterpolationFramePlan : public TemporalFrameBase<T, Kernels> {
+  using Base = TemporalFrameBase<T, Kernels>;
   std::vector<typename Kernels::Dense> dense_;
 
 public:
@@ -70,7 +76,7 @@ public:
   RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const AnalysisField* BB,
                          const AnalysisField* FF, const RenderImage<T>& left, const RenderImage<T>& right,
                          int time) const {
-    if (!this->input_.main_eligible(B, F) || bool(BB) != bool(FF) || (BB && !this->input_.extra_eligible(*BB, *FF)))
+    if (!this->main_eligible(B, F) || bool(BB) != bool(FF) || (BB && !this->extra_eligible(*BB, *FF)))
       throw std::invalid_argument("motion interpolation requires eligible fields");
     this->input_.validate_image(left);
     this->input_.validate_image(right);
@@ -98,8 +104,8 @@ public:
 };
 
 template <class T, class Kernels = ScalarInterpolationKernels<T>>
-class BlurFramePlan : public TemporalFrameBase<T> {
-  using Base = TemporalFrameBase<T>;
+class BlurFramePlan : public TemporalFrameBase<T, Kernels> {
+  using Base = TemporalFrameBase<T, Kernels>;
   std::vector<typename Kernels::DenseFlow> dense_;
   std::vector<BlurSamplingPlan> plans_;
 
@@ -115,7 +121,7 @@ public:
     }
   }
   RenderOutput<T> motion(const AnalysisField& B, const AnalysisField& F, const RenderImage<T>& image) const {
-    if (!this->input_.main_eligible(B, F))
+    if (!this->main_eligible(B, F))
       throw std::invalid_argument("motion blur requires eligible fields");
     this->input_.validate_image(image);
     std::vector<DenseFlowField> backward, forward;

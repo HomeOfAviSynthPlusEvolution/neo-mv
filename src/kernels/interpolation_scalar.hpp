@@ -3,10 +3,12 @@
 #include "core/interpolation/dense.hpp"
 #include "core/interpolation/sampling.hpp"
 #include "core/interpolation/blur.hpp"
+#include "core/motion/scene_classification.hpp"
 
 namespace neo_mv {
 template <class T>
 struct ScalarInterpolationKernels {
+  static constexpr auto scene_count = &scalar_scene_count;
   using Dense = DenseInterpolationPlan<>;
   using DenseFlow = DenseFlowPlan<>;
   using BlurAverage = ScalarBlurAverage;
