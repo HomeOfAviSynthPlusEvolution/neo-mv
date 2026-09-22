@@ -120,6 +120,21 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
           if (use_offsets) {
             const auto stride = hn::GatherIndex(d, narrow_strides, phase);
             const auto offset = hn::Add(hn::Mul(sy, stride), hn::Mul(sx, hn::Set(d, std::int32_t(Bytes))));
+#if HWY_TARGET == HWY_AVX2
+            if (pixel_stride == Bytes) {
+              const auto first_phase = hn::GetLane(phase);
+              const auto first_offset = hn::GetLane(offset);
+              const auto expected =
+                  hn::Add(hn::Set(d, first_offset), hn::Mul(hn::Iota(d, 0), hn::Set(d, std::int32_t(Bytes))));
+              if (hn::AllTrue(d, hn::Eq(phase, hn::Set(d, first_phase))) && hn::AllTrue(d, hn::Eq(offset, expected))) {
+                std::memcpy(output_row + std::size_t(x) * Bytes,
+                            source_planes[static_cast<std::size_t>(first_phase)] + first_offset,
+                            std::size_t(lanes) * Bytes);
+                x += used;
+                continue;
+              }
+            }
+#endif
             hn::Store(offset, d, offsets);
           }
         }
