@@ -251,7 +251,8 @@ public:
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k))
         prepared[k] = Kernels::prepare_degrain(grid_.composition(k), grid_.phase_geometry(k), fields, selected,
-                                               current.planes[k], images, weights_, k);
+                                               current.planes[k], images, weights_, k,
+                                               k == 2 && grid_.processed(1) ? &prepared[1].weights : nullptr);
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k)) {
         const auto g = grid_.phase_geometry(k);

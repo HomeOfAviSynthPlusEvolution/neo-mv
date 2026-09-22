@@ -57,7 +57,8 @@ struct RenderPreparation {
                                       const std::vector<AnalysisField>& fields,
                                       const std::vector<std::optional<std::int64_t>>& selected,
                                       const SubpixelPhases<T>& current, const Images& images,
-                                      const DegrainWeightPlan& weight_plan, int plane_index) {
+                                      const DegrainWeightPlan& weight_plan, int plane_index,
+                                      const std::vector<int>* shared_weights = nullptr) {
     const auto& g = plan.geometry();
     DegrainPlane result;
     result.references = int(selected.size());
@@ -69,7 +70,12 @@ struct RenderPreparation {
       throw std::overflow_error("Degrain block storage size is unrepresentable");
     const auto count = blocks * stride;
     result.sources.reserve(count);
-    result.weights.resize(count);
+    if (shared_weights) {
+      if (shared_weights->size() != count)
+        throw std::invalid_argument("Degrain shared weight count mismatch");
+      result.weights = *shared_weights;
+    } else
+      result.weights.resize(count);
     std::array<ReferenceReliability, 50> reliability{};
     for (int by = 0; by < g.blocks_y; ++by)
       for (int bx = 0; bx < g.blocks_x; ++bx) {
@@ -85,15 +91,17 @@ struct RenderPreparation {
         };
         append(current, {0, 0});
         for (std::size_t r = 0; r < selected.size(); ++r) {
-          reliability[r] = {bool(selected[r]), selected[r] ? fields[r].grid.values[index].error : 0};
+          if (!shared_weights)
+            reliability[r] = {bool(selected[r]), selected[r] ? fields[r].grid.values[index].error : 0};
           if (selected[r]) {
             const auto v = fields[r].grid.values[index].vector;
             append(images[r].planes[plane_index], {v.x, v.y});
           } else
             result.sources.push_back({nullptr, 0, nullptr});
         }
-        weight_plan.compute(reliability.data(), selected.size(), plane_index,
-                            result.weights.data() + index * (selected.size() + 1));
+        if (!shared_weights)
+          weight_plan.compute(reliability.data(), selected.size(), plane_index,
+                              result.weights.data() + index * (selected.size() + 1));
       }
     return result;
   }
