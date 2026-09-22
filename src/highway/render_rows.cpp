@@ -111,6 +111,99 @@ void Finish(const Acc<T>* sum, T* out, int count, std::int64_t maximum) {
   for (; x < count; ++x)
     FinishChunk(one, sum + x, out + x, maximum);
 }
+// Run the whole plane under one target dispatch. Short chroma rows use
+// capped vectors rather than falling through a full-width loop to scalars.
+template <class T>
+HWY_INLINE void AddShort(const T* src, const std::uint16_t* coeff, Acc<T>* sum, int count) {
+  const hn::ScalableTag<Acc<T>> full;
+  const int lanes = int(hn::Lanes(full));
+  int x = 0;
+  for (; x + lanes <= count; x += lanes)
+    AddChunk(full, src + x, coeff + x, sum + x);
+  const hn::CappedTag<Acc<T>, 8> eight;
+  const int n8 = int(hn::Lanes(eight));
+  if (x + n8 <= count) {
+    AddChunk(eight, src + x, coeff + x, sum + x);
+    x += n8;
+  }
+  const hn::CappedTag<Acc<T>, 4> four;
+  const int n4 = int(hn::Lanes(four));
+  if (x + n4 <= count) {
+    AddChunk(four, src + x, coeff + x, sum + x);
+    x += n4;
+  }
+  const hn::CappedTag<Acc<T>, 1> one;
+  for (; x < count; ++x)
+    AddChunk(one, src + x, coeff + x, sum + x);
+}
+
+template <class T, int BlockWidth = 0>
+void ComposeSampled(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks, span2d::Plane<T> output,
+                    std::int64_t maximum) {
+  // Validate the complete selected blocks, including cropped-away samples.
+  // Full-range integer storage cannot contain an out-of-range sample.
+  const bool scan = std::is_same_v<T, float> || maximum < std::numeric_limits<T>::max();
+  if (scan) {
+    const hn::CappedTag<T, 8> d;
+    const int lanes = int(hn::Lanes(d));
+    for (std::size_t i = 0; i < std::size_t(g.blocks_x) * g.blocks_y; ++i)
+      for (int y = 0; y < g.block_height; ++y) {
+        const auto* row = blocks[i].data + y * blocks[i].stride;
+        int x = 0;
+        for (; x + lanes <= g.block_width; x += lanes) {
+          const auto v = hn::LoadU(d, row + x);
+          if constexpr (std::is_same_v<T, float>) {
+            if (!hn::AllTrue(d, hn::IsFinite(v)))
+              throw std::invalid_argument("non-finite compensation sample");
+          } else if (!hn::AllTrue(d, hn::Le(v, hn::Set(d, T(maximum)))))
+            throw std::invalid_argument("compensation sample exceeds bit depth");
+        }
+        for (; x < g.block_width; ++x)
+          subpixel_detail::valid_sample(row[x], maximum);
+      }
+  }
+  const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
+  const bool overlap = g.overlap_x || g.overlap_y;
+  std::vector<Acc<T>> sums(overlap ? g.visible_width : 0);
+  for (int y = 0; y < g.visible_height; ++y) {
+    auto* dst = output.row(y).data();
+    if (!overlap) {
+      for (int bx = 0, x = 0; x < g.visible_width; ++bx, x += sx) {
+        const auto& b = blocks[std::size_t(y / sy) * g.blocks_x + bx];
+        std::copy_n(b.data + (y % sy) * b.stride, std::min(sx, g.visible_width - x), dst + x);
+      }
+      continue;
+    }
+    std::fill(sums.begin(), sums.end(), Acc<T>(0));
+    const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
+    const int last = std::min(y / sy, g.blocks_y - 1);
+    // Same block-row/column accumulation order and rounding as the reference.
+    for (int by = first; by <= last; ++by) {
+      const int ly = y - by * sy;
+      for (int bx = 0, x = 0; bx < g.blocks_x && x < g.visible_width; ++bx, x += sx) {
+        const auto& b = blocks[std::size_t(by) * g.blocks_x + bx];
+        const auto* src = b.data + ly * b.stride;
+        const auto* weights = b.coefficients + std::size_t(ly) * g.block_width;
+        const int count = std::min(g.block_width, g.visible_width - x);
+        if constexpr (BlockWidth != 0) {
+          if (count == BlockWidth) {
+            const hn::CappedTag<Acc<T>, BlockWidth> d;
+            const int lanes = int(hn::Lanes(d));
+            int offset = 0;
+            for (; offset + lanes <= BlockWidth; offset += lanes)
+              AddChunk(d, src + offset, weights + offset, sums.data() + x + offset);
+            if (offset < BlockWidth)
+              AddShort(src + offset, weights + offset, sums.data() + x + offset, BlockWidth - offset);
+          } else
+            AddShort(src, weights, sums.data() + x, count);
+        } else
+          AddShort(src, weights, sums.data() + x, count);
+      }
+    }
+    Finish(sums.data(), dst, g.visible_width, maximum);
+  }
+}
+
 template <class D, class T>
 void LimitChunk(D d, const T* q, const T* centre, T* out, std::int64_t maximum, std::int64_t limit, float flimit) {
   const auto c = LoadSample(d, centre), v = LoadSample(d, q);
@@ -165,6 +258,32 @@ void Limit(const T* q, const T* centre, T* out, int count, bool active, std::int
       LimitChunk(one, q + x, centre + x, out + x, maximum, limit, flimit);
   }
 }
+template <class T>
+void ComposePlane(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* b, span2d::Plane<T> out,
+                  std::int64_t maximum) {
+  // Choose short-row width once, outside all block/pixel loops.
+  switch (g.block_width) {
+    case 4:
+      return ComposeSampled<T, 4>(g, b, out, maximum);
+    case 8:
+      return ComposeSampled<T, 8>(g, b, out, maximum);
+    case 16:
+      return ComposeSampled<T, 16>(g, b, out, maximum);
+    case 32:
+      return ComposeSampled<T, 32>(g, b, out, maximum);
+    default:
+      return ComposeSampled<T>(g, b, out, maximum);
+  }
+}
+#define NEO_FUSED(T, S)                                                                                                \
+  void ComposeSampled##S(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* b, span2d::Plane<T> out,      \
+                         std::int64_t max) {                                                                           \
+    ComposePlane(g, b, out, max);                                                                                      \
+  }
+NEO_FUSED(std::uint8_t, U8)
+NEO_FUSED(std::uint16_t, U16)
+NEO_FUSED(float, F32)
+#undef NEO_FUSED
 #define NEO_IMPL(T, A, S)                                                                                              \
   void Weighted##S(const T* c, const T* const* r, const int* w, int cw, int nr, T* o, int n) {                         \
     Weighted(c, r, w, cw, nr, o, n);                                                                                   \
@@ -187,6 +306,16 @@ NEO_IMPL(float, float, F32)
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd::detail {
+#define NEO_FUSED_EXPORT(T, S)                                                                                         \
+  HWY_EXPORT(ComposeSampled##S);                                                                                       \
+  void compose_sampled(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* b, span2d::Plane<T> out,        \
+                       std::int64_t max) {                                                                             \
+    HWY_DYNAMIC_DISPATCH(ComposeSampled##S)(g, b, out, max);                                                           \
+  }
+NEO_FUSED_EXPORT(std::uint8_t, U8)
+NEO_FUSED_EXPORT(std::uint16_t, U16)
+NEO_FUSED_EXPORT(float, F32)
+#undef NEO_FUSED_EXPORT
 #define NEO_EXPORT(T, A, S)                                                                                            \
   HWY_EXPORT(Weighted##S);                                                                                             \
   HWY_EXPORT(Add##S);                                                                                                  \

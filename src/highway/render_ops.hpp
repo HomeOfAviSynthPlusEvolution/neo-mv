@@ -153,6 +153,37 @@ void sample_compensated_block(const CompensationRule& rule, const RenderPhaseGeo
 namespace neo_mv {
 template <class T>
 struct HighwayRenderKernels {
+  static constexpr bool fused_compensation = true;
+  using CompensationBlocks = std::vector<simd::detail::SampledRenderBlock<T>>;
+  static CompensationBlocks prepare_compensated(const OverlapCompositionPlan& plan, const CompensationRule& rule,
+                                                const RenderPhaseGeometry& geometry, const MotionGrid& field, int shift,
+                                                const SubpixelPhases<T>& current, const SubpixelPhases<T>& reference) {
+    const auto& g = plan.geometry();
+    CompensationBlocks blocks;
+    blocks.reserve(field.values.size());
+    for (int by = 0; by < g.blocks_y; ++by)
+      for (int bx = 0; bx < g.blocks_x; ++bx) {
+        const BlockRegion block{bx * (g.block_width - g.overlap_x) * geometry.ratio_x,
+                                by * (g.block_height - g.overlap_y) * geometry.ratio_y,
+                                g.block_width * geometry.ratio_x, g.block_height * geometry.ratio_y};
+        const auto v = field.values[std::size_t(by) * g.blocks_x + bx];
+        const auto selected = rule.select(v.vector, v.error, shift);
+        // Preflight the actual reference even when SAD selects current pixels.
+        const auto reference_footprint =
+            render_footprint(geometry, block, rule.reference_displacement(v.vector, shift));
+        const auto footprint =
+            selected.reference ? reference_footprint : render_footprint(geometry, block, selected.displacement);
+        const auto plane = (selected.reference ? reference : current).planes[footprint.phase];
+        blocks.push_back({plane.row(footprint.y).data() + footprint.x, plane.stride(),
+                          plan.has_overlap() ? plan.coefficient_row(bx, by, 0) : nullptr});
+      }
+    return blocks;
+  }
+  static void compose_compensated(const OverlapCompositionPlan& plan, const CompensationBlocks& blocks,
+                                  span2d::Plane<T> output, int bits) {
+    simd::detail::compose_sampled(plan.geometry(), blocks.data(), output, subpixel_detail::sample_max<T>(bits));
+  }
+
   // Internal validated calls require plan-admitted geometry and input views,
   // disjoint owned outputs, and (for weighting/composition) admitted samples.
   // Sample producers continue to check values read from borrowed images.

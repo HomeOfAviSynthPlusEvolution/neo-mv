@@ -1,6 +1,23 @@
 #pragma once
+#include "core/render/overlap.hpp"
 #include <cstdint>
 namespace neo_mv::simd::detail {
+// Internal borrowed blocks: full rectangles have admitted geometry, output is
+// disjoint, and coefficient pointers refer to immutable plan windows.
+template <class T>
+struct SampledRenderBlock {
+  const T* data;
+  std::ptrdiff_t stride;
+  const std::uint16_t* coefficients;
+};
+#define NEO_SAMPLED(T)                                                                                                 \
+  void compose_sampled(const BlockCompositionGeometry& geometry, const SampledRenderBlock<T>* blocks,                  \
+                       span2d::Plane<T> output, std::int64_t maximum);
+NEO_SAMPLED(std::uint8_t)
+NEO_SAMPLED(std::uint16_t)
+NEO_SAMPLED(float)
+#undef NEO_SAMPLED
+
 #define NEO_RENDER_ROWS(T, A)                                                                                          \
   void weighted(const T* centre, const T* const* refs, const int* weights, int centre_weight, int references, T* out,  \
                 int count);                                                                                            \

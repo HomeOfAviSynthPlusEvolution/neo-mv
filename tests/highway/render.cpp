@@ -1,4 +1,5 @@
 #include "highway/render.hpp"
+#include "highway/render_rows.hpp"
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -117,12 +118,61 @@ void run(int bits) {
         }
       }
 }
+template <class T>
+void fused_composition(int bits) {
+  for (int width : {1, 4, 7, 8, 16, 17, 32, 33})
+    for (bool overlap : {false, true}) {
+      const int ox = overlap ? width / 2 : 0, oy = overlap ? 2 : 0;
+      const int total_width = 2 * width - ox, total_height = 10 - oy;
+      neo_mv::OverlapCompositionPlan plan(
+          {width, 5, ox, oy, 2, 2, total_width - 1, total_height - 1, total_width, total_height});
+      std::vector<Buffer<T>> storage;
+      storage.reserve(4);
+      std::vector<span2d::Plane<const T>> views;
+      std::vector<neo_mv::simd::detail::SampledRenderBlock<T>> blocks;
+      for (int i = 0; i < 4; ++i) {
+        storage.emplace_back(width, 5, 3 + i);
+        auto v = storage.back().view();
+        for (int y = 0; y < 5; ++y)
+          for (int x = 0; x < width; ++x) {
+            if constexpr (std::is_same_v<T, float>)
+              v.row(y)[x] = float(x * 17 - y * 31 + i * 19) / 13;
+            else
+              v.row(y)[x] = T((x * 17 + y * 31 + i * 19) % (1u << bits));
+          }
+        views.push_back(v);
+        blocks.push_back({v.data(), v.stride(), plan.has_overlap() ? plan.coefficient_row(i % 2, i / 2, 0) : nullptr});
+      }
+      Buffer<T> expected(total_width - 1, total_height - 1), actual(total_width - 1, total_height - 1);
+      neo_mv::compose_render_blocks(plan, views, expected.view(), bits);
+      auto execute = [&] {
+        neo_mv::simd::detail::compose_sampled(plan.geometry(), blocks.data(), actual.view(),
+                                              neo_mv::subpixel_detail::sample_max<T>(bits));
+      };
+      execute();
+      check(std::memcmp(expected.samples.data(), actual.samples.data(), expected.samples.size() * sizeof(T)) == 0);
+      if constexpr (!std::is_same_v<T, std::uint8_t>) {
+        // Bottom-right sample is cropped out of output, but must still be admitted.
+        auto last = storage.back().view();
+        if constexpr (std::is_same_v<T, float>)
+          last.row(4)[width - 1] = std::numeric_limits<float>::quiet_NaN();
+        else if (bits < 16)
+          last.row(4)[width - 1] = T(1u << bits);
+        if (bits != 16)
+          rejected_without_write(actual, execute);
+      }
+    }
+}
 } // namespace
 int main() {
   try {
     run<std::uint8_t>(8);
     run<std::uint16_t>(10);
     run<float>(32);
+    fused_composition<std::uint8_t>(8);
+    fused_composition<std::uint16_t>(10);
+    fused_composition<std::uint16_t>(16);
+    fused_composition<float>(32);
     std::cout << "Highway target: " << neo_mv::simd::detail::target_name() << '\n';
     std::cout << "Phase2 render sampling typical-path checks passed\n";
   } catch (const std::exception& e) {

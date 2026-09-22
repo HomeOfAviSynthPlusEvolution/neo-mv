@@ -10,6 +10,7 @@ namespace neo_mv {
 // kernels can be selected independently of their shared orchestration.
 template <class T>
 struct ScalarRenderKernels {
+  static constexpr bool fused_compensation = false;
   // Internal validated calls require plan-admitted geometry and input views,
   // disjoint owned outputs, and (for weighting/composition) admitted samples.
   // Sample producers continue to check values read from borrowed images.

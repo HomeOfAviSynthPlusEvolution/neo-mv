@@ -158,17 +158,27 @@ public:
       throw std::invalid_argument("missing required compensation reference");
     grid_.validate_image(*reference_image);
     const int shift = rule_.field_shift(n, current_top, reference_top);
-    // All actual reference footprints are checked before generating ANY block,
-    // including cropped rectangles and blocks selecting current pixels by SAD.
-    grid_.each_block([&](BlockRegion b, CandidateDomain, std::size_t i) {
+    if constexpr (Kernels::fused_compensation) {
+      // Admit every plane's actual footprints before any plane samples pixels.
+      // Descriptors borrow the source; no temporary pixel blocks are produced.
+      std::array<typename Kernels::CompensationBlocks, 3> blocks;
       for (int k = 0; k < grid_.plane_count(); ++k)
-        validate_compensation_footprint(rule_, grid_.phase_geometry(k), b, field.grid.values[i].vector, shift);
-    });
-    for (int k = 0; k < grid_.plane_count(); ++k)
-      output[k] = grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t i, span2d::Plane<T> dst) {
-        Kernels::sample_compensated_block_validated(rule_, grid_.phase_geometry(k), b, field.grid.values[i], shift,
-                                                    current.planes[k], reference_image->planes[k], dst, grid_.bits());
+        blocks[k] = Kernels::prepare_compensated(grid_.composition(k), rule_, grid_.phase_geometry(k), field.grid,
+                                                 shift, current.planes[k], reference_image->planes[k]);
+      for (int k = 0; k < grid_.plane_count(); ++k)
+        Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
+    } else {
+      // The independent scalar composition keeps its original admission order.
+      grid_.each_block([&](BlockRegion b, CandidateDomain, std::size_t i) {
+        for (int k = 0; k < grid_.plane_count(); ++k)
+          validate_compensation_footprint(rule_, grid_.phase_geometry(k), b, field.grid.values[i].vector, shift);
       });
+      for (int k = 0; k < grid_.plane_count(); ++k)
+        output[k] = grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t i, span2d::Plane<T> dst) {
+          Kernels::sample_compensated_block_validated(rule_, grid_.phase_geometry(k), b, field.grid.values[i], shift,
+                                                      current.planes[k], reference_image->planes[k], dst, grid_.bits());
+        });
+    }
     return output;
   }
 };
