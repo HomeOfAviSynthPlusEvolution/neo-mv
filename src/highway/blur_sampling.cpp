@@ -9,10 +9,11 @@ namespace neo_mv::simd {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 template <std::size_t Bytes>
-void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t step_x,
-                 std::int64_t step_y, const FlowSampleStorage* storage) {
+void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t step_x, std::int64_t step_y,
+                 const FlowSampleStorage* storage) {
   const hn::ScalableTag<std::int64_t> d;
   const int lanes = static_cast<int>(hn::Lanes(d));
+  const hn::Rebind<std::int32_t, decltype(d)> d32;
   HWY_ALIGN std::int64_t widths[16]{}, heights[16]{};
   HWY_ALIGN std::int64_t columns[hn::MaxLanes(d)], rows[hn::MaxLanes(d)], phases[hn::MaxLanes(d)];
   for (int a = 0; a < g.pel * g.pel; ++a) {
@@ -23,9 +24,13 @@ void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int
   const auto fraction = hn::Set(d, g.pel - 1), zero = hn::Zero(d);
   for (int first = 1; first <= count;) {
     const int used = std::min(lanes, count - first + 1);
-    const auto sample = hn::Iota(d, first);
-    const auto dx = hn::ShiftRight<8>(hn::Mul(sample, hn::Set(d, step_x)));
-    const auto dy = hn::ShiftRight<8>(hn::Mul(sample, hn::Set(d, step_y)));
+    // direction() bounds count * abs(step) by 32768 * 256.
+    // Clamp inactive lanes as well, so every int32 product stays in range.
+    const auto sample = hn::Min(hn::Iota(d32, first), hn::Set(d32, count));
+    const auto dx =
+        hn::PromoteTo(d, hn::ShiftRight<8>(hn::Mul(sample, hn::Set(d32, static_cast<std::int32_t>(step_x)))));
+    const auto dy =
+        hn::PromoteTo(d, hn::ShiftRight<8>(hn::Mul(sample, hn::Set(d32, static_cast<std::int32_t>(step_y)))));
     const auto phase = hn::Add(hn::And(dx, fraction), hn::ShiftLeftSame(hn::And(dy, fraction), shift));
     const auto sx = hn::Add(hn::Set(d, std::int64_t(g.pad_x) + x), hn::ShiftRightSame(dx, shift));
     const auto sy = hn::Add(hn::Set(d, std::int64_t(g.pad_y) + y), hn::ShiftRightSame(dy, shift));
@@ -46,10 +51,10 @@ void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int
     first += used;
   }
 }
-#define NEO_BLUR_VARIANT(SUFFIX, BYTES) \
-  void BlurSamples##SUFFIX(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx, \
-                           std::int64_t sy, const FlowSampleStorage* storage) { \
-    BlurSamples<BYTES>(g, x, y, count, sx, sy, storage); \
+#define NEO_BLUR_VARIANT(SUFFIX, BYTES)                                                                                \
+  void BlurSamples##SUFFIX(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx, std::int64_t sy,    \
+                           const FlowSampleStorage* storage) {                                                         \
+    BlurSamples<BYTES>(g, x, y, count, sx, sy, storage);                                                               \
   }
 NEO_BLUR_VARIANT(8, 1)
 NEO_BLUR_VARIANT(16, 2)
@@ -63,8 +68,8 @@ namespace neo_mv::simd {
 HWY_EXPORT(BlurSamples8);
 HWY_EXPORT(BlurSamples16);
 HWY_EXPORT(BlurSamples32);
-void blur_samples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx,
-                  std::int64_t sy, const FlowSampleStorage* storage) {
+void blur_samples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx, std::int64_t sy,
+                  const FlowSampleStorage* storage) {
   if (!storage || storage->sample_bytes == 1)
     HWY_DYNAMIC_DISPATCH(BlurSamples8)(g, x, y, count, sx, sy, storage);
   else if (storage->sample_bytes == 2)
