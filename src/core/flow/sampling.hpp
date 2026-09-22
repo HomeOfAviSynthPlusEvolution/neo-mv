@@ -71,6 +71,13 @@ public:
           (void)location(x, y, field.x[i], field.y[i]);
       }
   }
+  void preflight_generated(const DenseFlowField& field) const {
+    validate_dense(field);
+    if (field.generated_bounds &&
+        flow_coordinates::CommonDomain(geometry_).covers_bounds(width_, height_, *field.generated_bounds, time_, 128))
+      return;
+    preflight(field);
+  }
 
 protected:
   // Shared storage checks; callers admit every coordinate before reading pixels.

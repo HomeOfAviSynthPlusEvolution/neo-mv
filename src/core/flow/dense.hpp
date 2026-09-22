@@ -4,6 +4,7 @@
 #include "core/motion/analysis_field.hpp"
 
 #include <vector>
+#include <optional>
 #include "core/base/overwrite.hpp"
 
 namespace neo_mv {
@@ -11,6 +12,12 @@ namespace neo_mv {
 struct DenseFlowField {
   int width = 0, height = 0;
   OverwriteVector<std::int16_t> x, y;
+  struct Bounds {
+    std::int16_t min_x, max_x, min_y, max_y;
+  };
+  // Only the frame path may use this certificate, immediately after generate.
+  // Public callers can mutate x/y and therefore always run full preflight.
+  std::optional<Bounds> generated_bounds;
   DenseFlowField() = default;
   DenseFlowField(int w, int h, const std::vector<std::int16_t>& horizontal, const std::vector<std::int16_t>& vertical)
       : width(w), height(h), x(horizontal.begin(), horizontal.end()), y(vertical.begin(), vertical.end()) {}
@@ -94,16 +101,22 @@ public:
     const auto small_count = dense_detail::count(m.blocks_x, m.blocks_y);
     const auto output_count = dense_detail::count(geometry_.width, geometry_.height);
     OverwriteVector<std::int16_t> small_x(small_count), small_y(small_count);
+    DenseFlowField::Bounds bounds{INT16_MAX, INT16_MIN, INT16_MAX, INT16_MIN};
     for (std::size_t i = 0; i < grid.values.size(); ++i) {
       const auto vector = grid.values[i].vector;
       small_x[i] = dense_detail::small_component(vector.x, ratio_x_);
       small_y[i] = dense_detail::small_component(std::int64_t(vector.y) + field_shift, ratio_y_);
+      bounds.min_x = (std::min)(bounds.min_x, small_x[i]);
+      bounds.max_x = (std::max)(bounds.max_x, small_x[i]);
+      bounds.min_y = (std::min)(bounds.min_y, small_y[i]);
+      bounds.max_y = (std::max)(bounds.max_y, small_y[i]);
     }
     DenseFlowField output;
     output.width = geometry_.width;
     output.height = geometry_.height;
     output.x.resize(output_count);
     output.y.resize(output_count);
+    output.generated_bounds = bounds;
     const auto x_input =
         dense_detail::plane(static_cast<const std::int16_t*>(small_x.data()), m.blocks_x, m.blocks_y, small_x.size());
     const auto y_input =

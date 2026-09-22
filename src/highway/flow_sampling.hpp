@@ -23,6 +23,14 @@ public:
     validate_dense(field);
     flow_sample(*this, field, nullptr);
   }
+  void preflight_generated(const DenseFlowField& field) const {
+    validate_dense(field);
+    if (field.generated_bounds &&
+        flow_coordinates::CommonDomain(geometry())
+            .covers_bounds(width(), height(), *field.generated_bounds, time_coefficient(), 128))
+      return;
+    preflight(field);
+  }
   template <class T, bool Preflighted = false, bool StorageValidated = false>
   void sample(const DenseFlowField& field, const SubpixelPhases<T>& source, span2d::Plane<T> output) const {
     if constexpr (!Preflighted)

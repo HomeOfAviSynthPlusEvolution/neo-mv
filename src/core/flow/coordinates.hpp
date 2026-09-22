@@ -38,5 +38,14 @@ public:
     const auto ay = (std::int64_t(pad_y_) + y) * pel_ * 256 + dy256;
     return ax >= 0 && ay >= 0 && ax < width_ * pel_ * 256 && ay < height_ * pel_ * 256;
   }
+  template <class Bounds>
+  bool covers_bounds(int width, int height, const Bounds& b, int time, int rounding) const {
+    // The fixed-point resampler is a convex combination with rounding, so
+    // every generated value remains within its small-grid component bounds.
+    // Image position and scaled displacement are monotone in each axis.
+    return contains_scaled(0, 0, std::int64_t(b.min_x) * time + rounding, std::int64_t(b.min_y) * time + rounding) &&
+           contains_scaled(width - 1, height - 1, std::int64_t(b.max_x) * time + rounding,
+                           std::int64_t(b.max_y) * time + rounding);
+  }
 };
 } // namespace neo_mv::flow_coordinates

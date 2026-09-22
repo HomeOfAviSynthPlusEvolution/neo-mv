@@ -28,6 +28,19 @@ public:
     validate_field(backward);
     blur_preflight(*this, forward, backward);
   }
+  void preflight_generated(const DenseFlowField& forward, const DenseFlowField& backward) const {
+    validate_field(forward);
+    validate_field(backward);
+    const flow_coordinates::CommonDomain domain(geometry());
+    const auto covered = [&](const DenseFlowField& field) {
+      return field.generated_bounds &&
+             domain.covers_bounds(width(), height(), *field.generated_bounds, time_coefficient(), 0) &&
+             domain.contains_scaled(0, 0, 0, 0) && domain.contains_scaled(width() - 1, height() - 1, 0, 0);
+    };
+    if (covered(forward) && covered(backward))
+      return;
+    preflight(forward, backward);
+  }
   template <class T, class Average = ScalarBlurAverage, bool Preflighted = false, bool StorageValidated = false>
   void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
               span2d::Plane<T> output, int bits, Average average = {}) const {

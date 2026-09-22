@@ -106,6 +106,18 @@ public:
         }
       }
   }
+  void preflight_generated(const DenseFlowField& B, const DenseFlowField& F, const DenseFlowField* BB = nullptr,
+                           const DenseFlowField* FF = nullptr) const {
+    validate_fields(B, F, BB, FF);
+    const flow_coordinates::CommonDomain left(left_.geometry()), right(right_.geometry());
+    const auto covered = [&](const auto& domain, const DenseFlowField& field, int time) {
+      return field.generated_bounds && domain.covers_bounds(width(), height(), *field.generated_bounds, time, 0);
+    };
+    if (covered(left, F, time_) && covered(right, B, 256 - time_) &&
+        (!BB || (covered(left, *FF, time_) && covered(right, *BB, 256 - time_))))
+      return;
+    preflight(B, F, BB, FF);
+  }
   // Frame-only fused entry: image storage, fields and all plane coordinates
   // were admitted; masks match the visible dimensions and output is independent.
   template <class T, class MaskAllocator>

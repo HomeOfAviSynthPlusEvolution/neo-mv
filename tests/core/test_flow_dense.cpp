@@ -130,6 +130,13 @@ void storage_and_reuse() {
   auto output = audited.generate(grid, 0);
   CHECK(AuditedResampler::calls == 2);
   rows(output, {0, 1, 2}, 1);
+  CHECK(output.generated_bounds.has_value());
+  CHECK(output.generated_bounds->min_x == 0 && output.generated_bounds->max_x == 2);
+  CHECK(output.generated_bounds->min_y == 1 && output.generated_bounds->max_y == 1);
+  for (std::size_t i = 0; i < output.x.size(); ++i) {
+    CHECK(output.generated_bounds->min_x <= output.x[i] && output.x[i] <= output.generated_bounds->max_x);
+    CHECK(output.generated_bounds->min_y <= output.y[i] && output.y[i] <= output.generated_bounds->max_y);
+  }
   CHECK(output.x.data() != output.y.data());
   output.x[0] = 123;
   output.y[0] = 456;

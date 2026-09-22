@@ -142,6 +142,18 @@ public:
         }
       }
   }
+  void preflight_generated(const DenseFlowField& forward, const DenseFlowField& backward) const {
+    validate_field(forward);
+    validate_field(backward);
+    const flow_coordinates::CommonDomain domain(geometry_);
+    const auto covered = [&](const DenseFlowField& field) {
+      return field.generated_bounds && domain.covers_bounds(width_, height_, *field.generated_bounds, time_, 0) &&
+             domain.contains_scaled(0, 0, 0, 0) && domain.contains_scaled(width_ - 1, height_ - 1, 0, 0);
+    };
+    if (covered(forward) && covered(backward))
+      return;
+    preflight(forward, backward);
+  }
 
 protected:
   template <class T>

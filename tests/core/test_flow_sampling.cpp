@@ -121,6 +121,28 @@ void wide_preflight() {
   f.y[0] = INT16_MIN;
   plan.preflight(f);
 }
+void generated_certificate() {
+  for (int pel : {1, 2, 4}) {
+    Image<std::uint8_t> image(3, 2, 3, pel, pel == 4);
+    TestPlan plan(image.geometry, 3, 2, 128);
+    auto field = dense(3, 2);
+    field.generated_bounds = DenseFlowField::Bounds{-2, 2, -2, 2};
+    const flow_coordinates::CommonDomain domain(image.geometry);
+    CHECK(domain.covers_bounds(3, 2, *field.generated_bounds, 128, 128));
+    for (int vx = -2; vx <= 2; ++vx)
+      for (int vy = -2; vy <= 2; ++vy) {
+        std::fill(field.x.begin(), field.x.end(), static_cast<std::int16_t>(vx));
+        std::fill(field.y.begin(), field.y.end(), static_cast<std::int16_t>(vy));
+        plan.preflight(field);
+        plan.preflight_generated(field);
+      }
+    // The public entry must not trust a certificate after mutable x/y change.
+    field.x[0] = INT16_MIN;
+    rejects([&] { plan.preflight(field); });
+    field.generated_bounds.reset();
+    rejects([&] { plan.preflight_generated(field); });
+  }
+}
 void admission_and_errors() {
   Image<std::uint8_t> image(3, 1, 1, 2);
   auto field = dense(3, 1);
@@ -260,6 +282,7 @@ int main() {
       rounding<float>();
       negative_rounding_boundaries();
       wide_preflight();
+      generated_certificate();
       admission_and_errors();
       float_representation();
       phase_extent_boundaries();

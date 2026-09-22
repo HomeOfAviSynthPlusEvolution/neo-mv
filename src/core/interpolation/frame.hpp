@@ -96,7 +96,7 @@ public:
       plans.emplace_back(g, g, this->video_.width / g.ratio_x, this->video_.height / g.ratio_y, time,
                          this->video_.bits);
       const auto& f = fields.back();
-      plans.back().preflight(f.B, f.F, f.BB ? &*f.BB : nullptr, f.FF ? &*f.FF : nullptr);
+      plans.back().preflight_generated(f.B, f.F, f.BB ? &*f.BB : nullptr, f.FF ? &*f.FF : nullptr);
     }
     // Every used plane has passed preflight before any reference pixel is read.
     auto result = this->allocate(destination);
@@ -141,7 +141,7 @@ public:
         backward.push_back(dense_[k].template generate<true>(B.grid, 0));
         forward.push_back(dense_[k].template generate<true>(F.grid, 0));
       }
-      plans_[k].preflight(forward.back(), backward.back());
+      plans_[k].preflight_generated(forward.back(), backward.back());
     }
     auto result = this->allocate(destination);
     for (int k = 0; k < this->input_.plane_count(); ++k)

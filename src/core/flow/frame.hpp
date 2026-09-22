@@ -122,7 +122,7 @@ public:
       fields.push_back(dense_[k].template generate<true>(field.grid, shift));
     // No reference sample is read until every plane's actual coordinates pass.
     for (int k = 0; k < plane_count(); ++k)
-      sampling_plans_[k].preflight(fields[(std::min)(k, 1)]);
+      sampling_plans_[k].preflight_generated(fields[(std::min)(k, 1)]);
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
       output.emplace_back(sampling_plans_[k].width(), sampling_plans_[k].height(), destination, k);
