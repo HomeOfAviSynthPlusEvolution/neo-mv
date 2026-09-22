@@ -122,8 +122,8 @@ void run(int bits) {
 template <class T>
 void fused_composition(int bits) {
   for (int width : {1, 4, 7, 8, 16, 17, 32, 33})
-    for (bool overlap : {false, true}) {
-      const int ox = overlap ? width / 2 : 0, oy = overlap ? 2 : 0;
+    for (int overlap : {0, 1, 2, 3}) {
+      const int ox = overlap & 1 ? width / 2 : 0, oy = overlap & 2 ? 2 : 0;
       const int total_width = 2 * width - ox, total_height = 10 - oy;
       neo_mv::OverlapCompositionPlan plan(
           {width, 5, ox, oy, 2, 2, total_width - 1, total_height - 1, total_width, total_height});

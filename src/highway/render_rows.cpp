@@ -123,23 +123,123 @@ HWY_INLINE void AddShort(const T* src, const std::uint16_t* coeff, Acc<T>* sum, 
   const hn::ScalableTag<Acc<T>> full;
   const int lanes = int(hn::Lanes(full));
   int x = 0;
-  for (; x + lanes <= count; x += lanes)
+  for (; x <= count - lanes; x += lanes)
     AddChunk(full, src + x, coeff + x, sum + x);
   const hn::CappedTag<Acc<T>, 8> eight;
   const int n8 = int(hn::Lanes(eight));
-  if (x + n8 <= count) {
+  if (x <= count - n8) {
     AddChunk(eight, src + x, coeff + x, sum + x);
     x += n8;
   }
   const hn::CappedTag<Acc<T>, 4> four;
   const int n4 = int(hn::Lanes(four));
-  if (x + n4 <= count) {
+  if (x <= count - n4) {
     AddChunk(four, src + x, coeff + x, sum + x);
     x += n4;
   }
   const hn::CappedTag<Acc<T>, 1> one;
   for (; x < count; ++x)
     AddChunk(one, src + x, coeff + x, sum + x);
+}
+
+template <class T>
+struct DirectInput {
+  const T* samples;
+  const std::uint16_t* coefficients;
+};
+template <class T>
+using DirectAcc = std::conditional_t<std::is_same_v<T, std::uint8_t>, std::uint16_t, Acc<T>>;
+
+template <int N, class D, class T>
+HWY_INLINE void ComposeDirectChunk(D d, const DirectInput<T>* inputs, int x, T* output, std::int64_t maximum) {
+  auto sum = hn::Zero(d);
+  for (int i = 0; i < N; ++i) {
+    if constexpr (std::is_same_v<T, std::uint8_t>) {
+      // The plan's coefficients are <= 2048. Four contributions plus the
+      // rounding bias fit uint16, and high-multiply keeps the exact >> 6.
+      const hn::Rebind<std::uint8_t, D> bytes;
+      const auto sample = hn::PromoteTo(d, hn::LoadU(bytes, inputs[i].samples + x));
+      const auto weight = hn::LoadU(d, inputs[i].coefficients + x);
+      sum = hn::Add(sum, hn::MulHigh(hn::ShiftLeft<8>(sample), hn::ShiftLeft<2>(weight)));
+    } else {
+      const auto sample = LoadSample(d, inputs[i].samples + x);
+      const hn::Rebind<std::uint16_t, D> narrow;
+      const hn::Rebind<std::int32_t, D> wide;
+      const auto weight = hn::PromoteTo(wide, hn::LoadU(narrow, inputs[i].coefficients + x));
+      sum = hn::Add(sum, hn::ShiftRight<6>(hn::Mul(sample, weight)));
+    }
+  }
+  const auto rounded = hn::ShiftRight<5>(hn::Add(sum, hn::Set(d, 16)));
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    const hn::Rebind<std::uint8_t, D> bytes;
+    hn::StoreU(hn::DemoteTo(bytes, hn::Min(rounded, hn::Set(d, std::uint16_t(maximum)))), bytes, output + x);
+  } else
+    StoreSample(d, hn::Min(rounded, hn::Set(d, std::int32_t(maximum))), output + x);
+}
+
+template <int N, class T>
+HWY_INLINE void ComposeDirectSegment(const DirectInput<T>* inputs, int count, T* output, std::int64_t maximum) {
+  const hn::ScalableTag<DirectAcc<T>> full;
+  const int lanes = int(hn::Lanes(full));
+  int x = 0;
+  for (; x <= count - lanes; x += lanes)
+    ComposeDirectChunk<N>(full, inputs, x, output, maximum);
+  const hn::CappedTag<DirectAcc<T>, 8> eight;
+  const int n8 = int(hn::Lanes(eight));
+  if (x <= count - n8) {
+    ComposeDirectChunk<N>(eight, inputs, x, output, maximum);
+    x += n8;
+  }
+  const hn::CappedTag<DirectAcc<T>, 4> four;
+  const int n4 = int(hn::Lanes(four));
+  if (x <= count - n4) {
+    ComposeDirectChunk<N>(four, inputs, x, output, maximum);
+    x += n4;
+  }
+  const hn::CappedTag<DirectAcc<T>, 1> one;
+  for (; x < count; ++x)
+    ComposeDirectChunk<N>(one, inputs, x, output, maximum);
+}
+
+template <class T>
+void ComposeDirectInteger(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
+                          span2d::Plane<T> output, std::int64_t maximum) {
+  const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
+  for (int y = 0; y < g.visible_height; ++y) {
+    const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
+    const int last = std::min(y / sy, g.blocks_y - 1);
+    auto* dst = output.row(y).data();
+    for (int bx = 0, ox = 0; bx < g.blocks_x && ox < g.visible_width; ++bx, ox += sx) {
+      const int stripe = std::min(bx == g.blocks_x - 1 ? g.block_width : sx, g.visible_width - ox);
+      const int left = bx ? std::min(g.overlap_x, stripe) : 0;
+      for (int segment = 0; segment < 2; ++segment) {
+        const int start = segment ? left : 0;
+        const int count = segment ? stripe - left : left;
+        if (!count)
+          continue;
+        const bool previous = segment == 0;
+        DirectInput<T> inputs[4];
+        int n = 0;
+        for (int by = first; by <= last; ++by) {
+          const int ly = y - by * sy;
+          const auto add = [&](int column, int local_x) {
+            const auto& b = blocks[std::size_t(by) * g.blocks_x + column];
+            inputs[n++] = {b.data + ly * b.stride + local_x,
+                           b.coefficients + std::size_t(ly) * g.block_width + local_x};
+          };
+          if (previous)
+            add(bx - 1, sx + start);
+          add(bx, start);
+        }
+        if (n == 1)
+          ComposeDirectSegment<1>(inputs, count, dst + ox + start, maximum);
+        else if (n == 2)
+          ComposeDirectSegment<2>(inputs, count, dst + ox + start, maximum);
+        else
+          ComposeDirectSegment<4>(inputs, count, dst + ox + start, maximum);
+      }
+    }
+  }
 }
 
 template <class T, int BlockWidth = 0>
@@ -169,6 +269,12 @@ void ComposeSampled(const BlockCompositionGeometry& g, const SampledRenderBlock<
   }
   const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
   const bool overlap = g.overlap_x || g.overlap_y;
+  if constexpr (!std::is_same_v<T, float>) {
+    if (overlap) {
+      ComposeDirectInteger(g, blocks, output, maximum);
+      return;
+    }
+  }
   std::vector<Acc<T>> sums(overlap ? g.visible_width : 0);
   for (int y = 0; y < g.visible_height; ++y) {
     auto* dst = output.row(y).data();
