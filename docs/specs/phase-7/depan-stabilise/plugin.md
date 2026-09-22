@@ -36,12 +36,12 @@ For output n, perform [interval selection](kernel-motion-interval.md) and [cumul
 
 Preserve clip's dimensions, format, frame count and frame rate. The base output copies all properties of clip[n], including Depan motion keys, scene tags, range/color metadata and any diagnostic keys. Only info=true replaces DepanStabilise_info and invokes the external renderer, whose output is final. There is no new exported correction-vector buffer or correction-motion property tuple. Pixels always pass through the specified renderer even for identity or invalid motion; no generic frame-copy shortcut bypasses border behavior.
 
-Malformed visited motion properties, invalid required transform arithmetic, divergent smoothing, zero adaptive normalization, unavailable required frames and allocation failure are controlled frame errors. Never skip a failing candidate, silently enlarge padding, interpolate missing properties or depend on the prior request. A parameter value accepted at construction can fail on a particular frame when its otherwise-unused arithmetic branch becomes necessary.
+Method-0 smoothing divergence uses the bounded [inertial numerical recovery](kernel-numerical-recovery.md) contract. It can produce a finite reset correction and a normally rendered frame; it is not a generic source-frame copy or a persistent scene change. Malformed visited motion properties, invalid required arithmetic outside that recovery boundary, zero adaptive normalization, unavailable required frames and allocation failure are controlled frame errors. Never skip a failing candidate, silently enlarge padding, interpolate missing properties or depend on the prior request. A parameter value accepted at construction can fail on a particular frame when its otherwise-unused arithmetic branch becomes necessary.
 
 ## Required behavioral cases
 
 - Synthetic frame-zero motion, scene cuts at both interval edges, asymmetric clip ends and symmetric interval shrinkage.
-- Inertial first frame after a cut, with both addzoom settings and initzoom!=1; finite divergence/error and negative hard-reset limits.
+- Inertial first frame after a cut, with both addzoom settings and initzoom!=1; numerical recovery, finite large-correction limits, negative hard-reset limits, and failures outside the recovery boundary.
 - Window radius one, fractional weights, separate diagonal averaging, adaptive radius zero and cumulative-map self-composition.
 - fitlast positive/zero/negative, limit equality, two-pass translation limit and one-pass scale/rotation limit.
 - Previous/next winning image different from the endpoint map; invalid next motion overriding the best index; malformed later next-range data.

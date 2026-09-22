@@ -1,6 +1,6 @@
 # End taper and correction limits
 
-Inputs are finite raw correction Q, n,F,b with b<n, z0, fitlast, dxmax,dymax,Lz,rotmax,aspect and center. Outputs are final Q and possibly updated b. This operator is used only for method=0 after smoothing. Convert Q to motion (dx,dy,r,z), forward=true, using the shared equations.
+Inputs are raw correction Q, n,F,b with b<n, z0, fitlast, dxmax,dymax,Lz,rotmax,aspect and center. Q is finite except for the explicitly admitted [inertial numerical recovery](kernel-numerical-recovery.md) case. Outputs are finite final Q and possibly updated b. This operator is used only for method=0 after smoothing. Convert Q to motion (dx,dy,r,z), forward=true, using the shared equations and that recovery boundary where applicable.
 
 ## End taper
 
@@ -12,7 +12,7 @@ Replace dx by dx*e, dy by dy*e, r by r*e, and z by z0+(z-z0)*e. Otherwise leave 
 
 ## Ordered limits
 
-Process dx, then dy, then z, then r. A hard reset replaces the entire tuple with (0,0,0,z0) and sets b=n; continue testing the remaining components after the reset. All required intermediates must be finite; numerical failure is a frame error rather than a hard reset. Let sign(v) be +1 for v>=0 and -1 otherwise.
+Process dx, then dy, then z, then r. At each step, first test the current component for finiteness. A non-finite component resets the entire tuple to (+0,+0,+0,z0) and sets b=n, regardless of the sign or value of its limit. Otherwise apply that component's magnitude rule below. A negative-limit hard reset has the same whole-tuple result. Continue testing the remaining components after either reset; do not restart earlier steps. Required arithmetic in a finite magnitude-limit expression must still be finite; its failure is a frame error. Let sign(v) be +1 for v>=0 and -1 otherwise.
 
 For a translation component v with limit L (dxmax or dymax), act only if |v|>|L|:
 
@@ -32,3 +32,4 @@ Rebuild Q=M(dx,dy,r,z), even if no limit changed the tuple. This retains M's non
 - dx=20,dxmax=-10 resets all motion and b=n. Later zoom and rotation checks still run on the reset tuple.
 - z=1.25,Lz=1.0625 becomes 1.125. r=4,rotmax=1 becomes 2. Neither is clamped to its nominal limit.
 - F=10,n=8,fitlast=4 gives e=0.25. Motion (dx=8,dy=-4,r=2,z=0.9),z0=0.8 becomes approximately (2,-1,0.5,0.825) before limits. At n=9 it becomes (0,0,0,0.8).
+- A non-finite incoming dx with z0=0.8 resets the motion to (0,0,0,0.8) and b=n for either dxmax=10 or dxmax=-10. Remaining scale and rotation checks still run. End taper does not run a second time on this recovered tuple.

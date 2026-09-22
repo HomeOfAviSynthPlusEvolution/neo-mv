@@ -18,7 +18,7 @@ $$t_x'=((-u')t_x)-(v't_y),\quad t_y'=((-w')t_x)-(u't_y).$$
 
 Require u!=0 even for an otherwise invertible quarter-turn. All required intermediates must be finite. A failure is a frame error.
 
-Given smoothed S, the raw correction is Q=S composed with Inv(Cn). Method 0 then performs the specified end taper and limits unless b=n. Method 1 converts Q to motion and back using M, with no taper or limits. Never replace this round trip by retaining Q: it can change coefficients and sampling class.
+Given smoothed S, the raw correction is Q=S composed with Inv(Cn). Method 0 then performs the specified end taper and limits unless b=n. Its S, raw Q and raw motion conversion can carry non-finite values under [inertial numerical recovery](kernel-numerical-recovery.md); this does not relax cumulative-map construction or Inv's checked domain above. The recovered final Q must be finite. Method 1 converts Q to motion and back using M, with no taper or limits. Never replace this round trip by retaining Q: it can change coefficients and sampling class.
 
 ## Examples
 

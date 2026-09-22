@@ -2,6 +2,8 @@
 
 Inputs are clip images, final current map Q and the optional neighbor pairs. Output is a fully initialized image with the same format and dimensions as clip[n]. Compose layers in this order: previous if prev>0; next if next>0; current always. Selected neighbors use nearest sampling regardless of subpixel. Current uses mode subpixel (0 nearest,1 bilinear,2 bicubic). A neighbor selected at n is still a separate first or second layer.
 
+A current map produced by [inertial numerical recovery](kernel-numerical-recovery.md) follows these same rules. Its updated b=n limits previous selection, but does not disable next selection or current interpolation. Recovery never bypasses this renderer with a generic frame copy.
+
 Reuse the Phase 5 [plane geometry and coordinate rules](../../phase-5/depan-compensate/kernel-sampling-coordinates.md), [border rules](../../phase-5/depan-compensate/kernel-border-sampling.md), [nearest](../../phase-5/depan-compensate/kernel-nearest.md), [bilinear](../../phase-5/depan-compensate/kernel-bilinear.md) and [bicubic](../../phase-5/depan-compensate/kernel-bicubic.md) equations. This includes per-plane conversion, translation clamps, T/Z/R classification, interpolation quantization, integer rounding and reflection order. Pass the requested blur to every layer, then perform its per-plane conversion.
 
 ## Explicit preserve result

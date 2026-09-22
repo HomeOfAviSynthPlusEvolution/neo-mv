@@ -20,7 +20,7 @@ If s*>Bprev, replace zf by zf*0.7 and recompute p,Ec,s* once using the original 
 
 This pass consumes the completed unzoomed R sequence; an earlier Sj is used only through the scalar s history, never as a replacement for R(j-1). The scale used for subsequent recurrence is sj itself, even if Z substituted unit scale for a nonpositive sj.
 
-All required arithmetic must be finite. With tzoom=0, failure occurs only when a j>=b+2 iteration is required. An empty recurrence at n=b+1 succeeds and returns Sn=I, even for z0!=1. The caller's b=n scene-start branch does not invoke this operator.
+Required arithmetic is finite except for values propagated under [inertial numerical recovery](kernel-numerical-recovery.md). That boundary also applies to this operator's geometric-bound evaluation and map compositions; it does not authorize replacing a failed adaptive result by a guessed scale. With tzoom=0, failure occurs only when a j>=b+2 iteration is required. An empty recurrence at n=b+1 succeeds and returns Sn=I, even for z0!=1. The caller's b=n scene-start branch does not invoke this operator.
 
 ## Examples
 

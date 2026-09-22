@@ -9,7 +9,7 @@ Implement DepanStabilise. It consumes the public Depan motion properties and res
 3. [Inertial smoothing](depan-stabilise/kernel-inertial-smoothing.md).
 4. [Geometric zoom bound](depan-stabilise/kernel-zoom-bound.md) and [inertial adaptive zoom](depan-stabilise/kernel-inertial-zoom.md).
 5. [Window smoothing](depan-stabilise/kernel-window-smoothing.md).
-6. [End taper and correction limits](depan-stabilise/kernel-correction-limits.md).
+6. [End taper and correction limits](depan-stabilise/kernel-correction-limits.md), including [inertial numerical recovery](depan-stabilise/kernel-numerical-recovery.md).
 7. [Neighbor selection](depan-stabilise/kernel-border-selection.md) and [layer composition](depan-stabilise/kernel-layer-composition.md).
 8. [Diagnostics](depan-stabilise/kernel-diagnostics.md) and the [plugin interface](depan-stabilise/plugin.md).
 
@@ -21,7 +21,7 @@ The [Phase 5 common contracts](../phase-5/README.md#common-contracts) apply to m
 
 Require natural sample alignment and positive byte strides divisible by sample size, with no SIMD alignment requirement. Source planes and output planes have independent strides. Do not read row gaps, mutate inputs, or return uninitialized samples. Output meaning must be independent of request order, parallelism, cache state and other filter instances.
 
-Required arithmetic intermediates must be finite, divisors nonzero and square-root arguments nonnegative, except the explicitly capped lookback intermediate. Parameter-only failures are creation errors; data-dependent failures are frame errors with no partial frame. The finite domain is enforced before motion-to-coordinate conversion and sampling; numerical divergence is an error, not a request to synthesize a scene cut or substitute an arbitrary correction. Unused branches are not evaluated. Allocation and required dependency failures are controlled errors.
+Required arithmetic intermediates must be finite, divisors nonzero and square-root arguments nonnegative, except the explicitly capped lookback intermediate and the bounded [inertial numerical recovery](depan-stabilise/kernel-numerical-recovery.md) contract. Parameter-only failures are creation errors; unrecovered data-dependent failures are frame errors with no partial frame. Only that recovery contract permits non-finite internal values on the way to a finite current correction; maps admitted to neighbor selection and sampling must be finite. Recovery does not synthesize motion properties or create persistent scene state. Unused branches are not evaluated. Allocation and required dependency failures are controlled errors.
 
 Use the [Phase 5 motion decoder](../phase-5/depan-analyse/kernel-motion-properties.md) with fixed, unprefixed property names. Frame zero is the explicit exception described in the interval kernel. `fields` changes the geometric aspect only: it creates no `_Field` dependency, parity alternation or half-line displacement.
 

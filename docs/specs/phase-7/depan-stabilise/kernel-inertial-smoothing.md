@@ -21,7 +21,7 @@ Complete each map with
 
 $$u_{R_j}=0.5(u_{C_j}+u_{R_{j-1}}),\quad h_{R_j}=u_{R_j},\quad w_{R_j}=((-v_{R_j})a)a.$$
 
-All required intermediates must be finite. A failure is a frame error before coordinate conversion or rendering.
+Finite inputs can cause the recurrence to overflow. Apply the [inertial numerical recovery arithmetic boundary](kernel-numerical-recovery.md): retain the specified binary32 expressions and propagate generated infinity/NaN toward the current correction rather than failing at the first non-finite intermediate. Recovery is decided by the ordered correction-limit contract. Arithmetic failures outside that boundary remain frame errors before rendering.
 
 When addzoom=false, output Sn=Z(z0) composed with Rn. When addzoom=true, pass the entire unzoomed R sequence to [adaptive zoom](kernel-inertial-zoom.md). Adaptive results must never feed back into the recurrence above. In particular, b+1 has R=I regardless of C(b+1).
 

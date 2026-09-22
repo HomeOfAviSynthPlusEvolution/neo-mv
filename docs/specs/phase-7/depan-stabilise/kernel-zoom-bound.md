@@ -7,7 +7,7 @@ $$1-(((t_x+u W)+v c_y)-W)/c_x,$$
 $$1+(t_y+w c_x)/c_y,$$
 $$1-(((t_y+w c_x)+h H)-H)/c_y.$$
 
-W,H convert to binary32 at their use sites. Use the full dimensions, not W-1 or H-1. This is a bound evaluated at four center-line intersections, not a search over image corners. Keep the first value on equal comparisons, including signed-zero ties. A non-finite required intermediate is an error. The output need not be positive; no lower clamp is applied here.
+W,H convert to binary32 at their use sites. Use the full dimensions, not W-1 or H-1. This is a bound evaluated at four center-line intersections, not a search over image corners. Keep the first value on equal comparisons, including signed-zero ties. A non-finite required intermediate is an error except when this operator is evaluated inside the [inertial numerical recovery boundary](kernel-numerical-recovery.md); there its input can also contain propagated non-finite coefficients and the same ordered comparisons apply. The output need not be positive; no lower clamp is applied here.
 
 ## Examples
 
