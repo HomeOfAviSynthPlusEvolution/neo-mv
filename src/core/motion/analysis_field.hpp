@@ -71,11 +71,13 @@ inline CandidateDomain bounds(const AnalysisMetadata& m, int bx, int by) {
           prediction_detail::weight(std::int64_t(m.width) + 2 * std::int64_t(m.pad_x) - x - m.block_width, m.pel),
           prediction_detail::weight(std::int64_t(m.height) + 2 * std::int64_t(m.pad_y) - y - m.block_height, m.pel)};
 }
-inline void vector(const AnalysisMetadata& m, MotionTriple v, int bx, int by) {
-  const auto domain = bounds(m, bx, by);
+inline void vector(CandidateDomain domain, MotionTriple v) {
   if (v.error < 0 || v.vector.x < domain.left || v.vector.x >= domain.right || v.vector.y < domain.top ||
       v.vector.y >= domain.bottom)
     throw std::invalid_argument("malformed analysis vector or error");
+}
+inline void vector(const AnalysisMetadata& m, MotionTriple v, int bx, int by) {
+  vector(bounds(m, bx, by), v);
 }
 } // namespace field_detail
 
@@ -136,10 +138,21 @@ AnalysisField read_analysis_field(PropertyReader&& property, bool read_vectors =
     throw std::overflow_error("analysis grid allocation size is unrepresentable");
   result.grid = {m.blocks_x, m.blocks_y, {}};
   result.grid.values.resize(static_cast<std::size_t>(count));
-  for (std::size_t i = 0; i < result.grid.values.size(); ++i) {
-    const MotionTriple value{unpack_vector(vectors.data[i]), errors.data[i]};
-    field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
-    result.grid.values[i] = value;
+  // Metadata admission proved both grid extremes. Bounds are affine in the
+  // block column, so advance them without rechecking four products per block.
+  const auto step = std::int64_t(m.block_width - m.overlap_x) * m.pel;
+  for (int by = 0; by < m.blocks_y; ++by) {
+    auto domain = field_detail::bounds(m, 0, by);
+    for (int bx = 0; bx < m.blocks_x; ++bx) {
+      const auto index = std::size_t(by) * m.blocks_x + bx;
+      const MotionTriple value{unpack_vector(vectors.data[index]), errors.data[index]};
+      field_detail::vector(domain, value);
+      result.grid.values[index] = value;
+      if (bx + 1 < m.blocks_x) {
+        domain.left -= step;
+        domain.right -= step;
+      }
+    }
   }
   result.state = FieldState::complete;
   return result;
@@ -164,11 +177,19 @@ inline AnalysisProperties encode_analysis_field(const AnalysisField& field, cons
   auto& errors = result[prefix + "AnalysisSAD"];
   vectors.reserve(field.grid.values.size());
   errors.reserve(field.grid.values.size());
-  for (std::size_t i = 0; i < field.grid.values.size(); ++i) {
-    const auto value = field.grid.values[i];
-    field_detail::vector(m, value, static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
-    vectors.push_back(pack_vector(value.vector));
-    errors.push_back(value.error);
+  const auto step = std::int64_t(m.block_width - m.overlap_x) * m.pel;
+  for (int by = 0; by < m.blocks_y; ++by) {
+    auto domain = field_detail::bounds(m, 0, by);
+    for (int bx = 0; bx < m.blocks_x; ++bx) {
+      const auto value = field.grid.values[std::size_t(by) * m.blocks_x + bx];
+      field_detail::vector(domain, value);
+      vectors.push_back(pack_vector(value.vector));
+      errors.push_back(value.error);
+      if (bx + 1 < m.blocks_x) {
+        domain.left -= step;
+        domain.right -= step;
+      }
+    }
   }
   return result;
 }

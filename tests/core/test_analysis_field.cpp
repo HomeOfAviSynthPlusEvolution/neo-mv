@@ -158,10 +158,24 @@ void external_geometry_and_overflow() {
   m.blocks_y = 3;
   m.levels = 5;
   scaled.grid = {7, 3, std::vector<MotionTriple>(21, {{-6, 4}, 28})};
+  for (int by = 0; by < m.blocks_y; ++by)
+    for (int bx = 0; bx < m.blocks_x; ++bx) {
+      const auto domain = field_detail::bounds(m, bx, by);
+      const auto index = std::size_t(by) * m.blocks_x + bx;
+      scaled.grid.values[index].vector = {static_cast<std::int32_t>(index % 2 ? domain.left : domain.right - 1),
+                                          static_cast<std::int32_t>(index % 2 ? domain.bottom - 1 : domain.top)};
+    }
   Properties p{encode_analysis_field(scaled), {}, {}};
-  CHECK(p.integers["MVUtensilsAnalysisVectors"][0] == 21474836474LL);
   const auto decoded = read_analysis_field(p);
   CHECK(decoded.state == FieldState::complete && decoded.grid.values.size() == 21 && decoded.metadata.width == 64);
+  for (std::size_t i = 0; i < scaled.grid.values.size(); ++i)
+    CHECK(decoded.grid.values[i].vector.x == scaled.grid.values[i].vector.x &&
+          decoded.grid.values[i].vector.y == scaled.grid.values[i].vector.y);
+  const auto outside = field_detail::bounds(m, 3, 1).right;
+  p.integers["MVUtensilsAnalysisVectors"][10] = pack_vector({static_cast<std::int32_t>(outside), 0});
+  rejects<std::invalid_argument>([&] { read_analysis_field(p); });
+  scaled.grid.values[10].vector.x = static_cast<std::int32_t>(outside);
+  rejects<std::invalid_argument>([&] { encode_analysis_field(scaled); });
   auto huge = metadata();
   huge.blocks_x = huge.block_width = INT32_MAX;
   huge.pel = 4;
