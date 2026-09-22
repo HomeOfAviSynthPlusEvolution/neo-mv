@@ -100,6 +100,26 @@ public:
       for (int x = 0; x < width(); ++x)
         (void)positions(x, y, B, F, BB, FF);
   }
+  // Frame-only fused entry: image storage, fields and all plane coordinates
+  // were admitted; masks match the visible dimensions and output is owned.
+  template <class T>
+  void render_preflighted(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
+                          const DenseFlowField& F, const DenseFlowField* BB, const DenseFlowField* FF,
+                          const std::vector<std::uint8_t>& mF, const std::vector<std::uint8_t>& mB,
+                          span2d::Plane<T> out) const {
+    for (int y = 0; y < height(); ++y)
+      for (int x = 0; x < width(); ++x) {
+        const auto at = positions<true>(x, y, B, F, BB, FF);
+        const auto i = std::size_t(y) * width() + x;
+        const T A = read(left, at.A), C = read(right, at.C);
+        if (BB)
+          out.row(y)[x] =
+              interpolation_extra<T, true>(A, C, read(left, at.E), read(right, at.K), mF[i], mB[i], time_, bits_);
+        else
+          out.row(y)[x] =
+              interpolation_basic<T, true>(A, C, read(left, at.A0), read(right, at.C0), mF[i], mB[i], time_, bits_);
+      }
+  }
   template <class T, bool Preflighted = false>
   std::vector<InterpolationSamples<T>>
   sample(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,

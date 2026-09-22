@@ -1,4 +1,6 @@
 #include "highway/render_ops.hpp"
+#include "kernels/render_scalar.hpp"
+#include "hwy/targets.h"
 #include <iostream>
 #include <cstring>
 #include <random>
@@ -223,9 +225,81 @@ void exceptional() {
   c.view().row(0)[0] = std::numeric_limits<float>::max();
   rejects<std::overflow_error>([&] { neo_mv::simd::compose_render_blocks(plan, blocks, out.view(), 32); });
 }
+template <class T>
+void fused_degrain(int bits) {
+  using namespace neo_mv;
+  std::mt19937 rng(12039);
+  for (int w : {1, 4, 7, 8, 16, 17, 32, 33})
+    for (int overlap : {0, 1, 2, 3})
+      for (int nr : {2, 6, 50}) {
+        const int ox = (overlap & 1) ? w / 2 : 0, oy = (overlap & 2) ? 2 : 0;
+        const int width = 2 * w - ox, height = 10 - oy;
+        OverlapCompositionPlan plan({w, 5, ox, oy, 2, 2, width - 1, height - 1, width, height});
+        DegrainPlane<T> p;
+        p.references = nr;
+        std::vector<Buffer<T>> inputs, generated;
+        inputs.reserve(8);
+        generated.reserve(4);
+        std::vector<span2d::Plane<const T>> views;
+        for (int i = 0; i < 4; ++i) {
+          inputs.emplace_back(w, 5);
+          inputs.back().random(rng, bits);
+          inputs.emplace_back(w, 5);
+          inputs.back().random(rng, bits);
+          auto c = inputs[2 * i].read(), r = inputs[2 * i + 1].read();
+          const auto* coeff = plan.has_overlap() ? plan.coefficient_row(i % 2, i / 2, 0) : nullptr;
+          p.sources.push_back({c.row(0).data(), c.stride(), coeff});
+          DegrainWeights weights{256, std::vector<int>(nr)};
+          std::vector<WeightedReferenceBlock<T>> refs(nr, {true, r});
+          refs.back() = {false, {}};
+          for (int j = 0; j < nr; ++j) {
+            weights.reference[j] = (j == 0 || j == nr - 1) ? 0 : 256 / nr;
+            weights.centre -= weights.reference[j];
+            p.sources.push_back({j == nr - 1 ? nullptr : r.row(0).data(), r.stride(), coeff});
+          }
+          p.weights.push_back(weights.centre);
+          p.weights.insert(p.weights.end(), weights.reference.begin(), weights.reference.end());
+          generated.emplace_back(w, 5);
+          weighted_render_block(c, refs, weights, generated.back().view(), bits);
+          views.push_back(generated.back().read());
+        }
+        Buffer<T> composed(width - 1, height - 1), centre(width - 1, height - 1), expected(width - 1, height - 1),
+            scalar(width - 1, height - 1), highway(width - 1, height - 1);
+        centre.random(rng, bits);
+        compose_render_blocks(plan, views, composed.view(), bits);
+        for (double amount : {2.2, std::numeric_limits<double>::infinity()}) {
+          ChangeLimit<T> limit(amount, bits);
+          limit_render_plane(limit, composed.read(), centre.read(), expected.view());
+          ScalarRenderKernels<T>::compose_degrain(plan, p, centre.read(), scalar.view(), limit);
+          HighwayRenderKernels<T>::compose_degrain(plan, p, centre.read(), highway.view(), limit);
+          equal(expected, scalar);
+          equal(expected, highway);
+        }
+        // Invalid cropped sample in an available reference with zero weight.
+        if constexpr (std::is_same_v<T, float> || std::is_same_v<T, std::uint16_t>) {
+          if (bits != 16) {
+            if constexpr (std::is_same_v<T, float>)
+              inputs.back().view().row(4)[w - 1] = std::numeric_limits<float>::quiet_NaN();
+            else
+              inputs.back().view().row(4)[w - 1] = T(1u << bits);
+            const ChangeLimit<T> limit(std::numeric_limits<double>::infinity(), bits);
+            rejects([&] { ScalarRenderKernels<T>::compose_degrain(plan, p, centre.read(), scalar.view(), limit); });
+            rejects([&] { HighwayRenderKernels<T>::compose_degrain(plan, p, centre.read(), highway.view(), limit); });
+          }
+        }
+      }
+}
 } // namespace
 int main() {
   try {
+    for (const auto target : hwy::SupportedAndGeneratedTargets()) {
+      hwy::SetSupportedTargetsForTest(target);
+      fused_degrain<std::uint8_t>(8);
+      fused_degrain<std::uint16_t>(10);
+      fused_degrain<std::uint16_t>(16);
+      fused_degrain<float>(32);
+    }
+    hwy::SetSupportedTargetsForTest(0);
     run<std::uint8_t>(8);
     run<std::uint16_t>(10);
     run<std::uint16_t>(16);

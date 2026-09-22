@@ -1,6 +1,7 @@
 #pragma once
 #include "core/interpolation/sampling.hpp"
 #include "highway/flow_sampling.hpp"
+#include "highway/interpolation_rows.hpp"
 
 namespace neo_mv::simd {
 class InterpolationSamplingPlan : public neo_mv::InterpolationSamplingPlan {
@@ -37,6 +38,17 @@ public:
       admit(right_, *BB, 256 - time_);
     }
     // Zero-displacement basic samples were admitted by construction.
+  }
+  // Frame-only entry: all planes passed preflight; output is newly owned.
+  template <class T>
+  void render_preflighted(const SubpixelPhases<T>& left, const SubpixelPhases<T>& right, const DenseFlowField& B,
+                          const DenseFlowField& F, const DenseFlowField* BB, const DenseFlowField* FF,
+                          const std::vector<std::uint8_t>& mF, const std::vector<std::uint8_t>& mB,
+                          span2d::Plane<T> out) const {
+    interpolation_rows::render(
+        interpolation_rows::SampledPlane<T>{
+            left_.geometry(), right_.geometry(), {left, right}, {&F, &B, FF, BB}, {mF.data(), mB.data()}, time_, bits_},
+        out);
   }
   template <class T, bool Preflighted = false>
   std::vector<InterpolationSamples<T>>

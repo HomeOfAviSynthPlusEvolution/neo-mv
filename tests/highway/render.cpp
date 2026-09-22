@@ -1,5 +1,6 @@
 #include "highway/render.hpp"
 #include "highway/render_rows.hpp"
+#include "kernels/render_scalar.hpp"
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -150,6 +151,9 @@ void fused_composition(int bits) {
                                               neo_mv::subpixel_detail::sample_max<T>(bits));
       };
       execute();
+      Buffer<T> scalar(total_width - 1, total_height - 1);
+      neo_mv::ScalarRenderKernels<T>::compose_compensated(plan, blocks, scalar.view(), bits);
+      check(std::memcmp(expected.samples.data(), scalar.samples.data(), expected.samples.size() * sizeof(T)) == 0);
       check(std::memcmp(expected.samples.data(), actual.samples.data(), expected.samples.size() * sizeof(T)) == 0);
       if constexpr (!std::is_same_v<T, std::uint8_t>) {
         // Bottom-right sample is cropped out of output, but must still be admitted.

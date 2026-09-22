@@ -2,7 +2,19 @@
 #include "core/interpolation/blur.hpp"
 #include "highway/flow_sampling.hpp"
 
+namespace neo_mv {
+struct HighwayBlurAverage;
+}
 namespace neo_mv::simd {
+class BlurSamplingPlan;
+void blur_preflight(const BlurSamplingPlan&, const DenseFlowField&, const DenseFlowField&);
+#define NEO_BLUR_PLANE(T)                                                                                              \
+  void blur_plane(const BlurSamplingPlan&, const DenseFlowField&, const DenseFlowField&, const SubpixelPhases<T>&,     \
+                  span2d::Plane<T>, int);
+NEO_BLUR_PLANE(std::uint8_t)
+NEO_BLUR_PLANE(std::uint16_t)
+NEO_BLUR_PLANE(float)
+#undef NEO_BLUR_PLANE
 // A single direction excludes the center and emits count samples in order.
 // count and steps come from the scalar, integer-only direction contract.
 void blur_samples(const RenderPhaseGeometry& geometry, int x, int y, int count, std::int64_t step_x,
@@ -10,18 +22,11 @@ void blur_samples(const RenderPhaseGeometry& geometry, int x, int y, int count, 
 class BlurSamplingPlan : public neo_mv::BlurSamplingPlan {
 public:
   using neo_mv::BlurSamplingPlan::BlurSamplingPlan;
+  using neo_mv::BlurSamplingPlan::direction;
   void preflight(const DenseFlowField& forward, const DenseFlowField& backward) const {
     validate_field(forward);
     validate_field(backward);
-    for (int y = 0; y < height(); ++y)
-      for (int x = 0; x < width(); ++x) {
-        const auto i = std::size_t(y) * width() + x;
-        for (const auto* field : {&forward, &backward}) {
-          const auto d = direction(field->x[i], field->y[i]);
-          if (d.count)
-            blur_samples(geometry(), x, y, d.count, d.x, d.y, nullptr);
-        }
-      }
+    blur_preflight(*this, forward, backward);
   }
   template <class T, class Average = ScalarBlurAverage, bool Preflighted = false>
   void sample(const DenseFlowField& forward, const DenseFlowField& backward, const SubpixelPhases<T>& source,
@@ -30,6 +35,11 @@ public:
     if constexpr (!Preflighted)
       preflight(forward, backward);
     validate_storage(forward, backward, source, output);
+    if constexpr (std::is_same_v<Average, ScalarBlurAverage> || std::is_same_v<Average, HighwayBlurAverage>) {
+      blur_plane(*this, forward, backward, source, output, bits);
+      return;
+    }
+
     FlowSampleStorage storage{};
     storage.coordinates_validated = true;
     for (int a = 0; a < geometry().pel * geometry().pel; ++a) {

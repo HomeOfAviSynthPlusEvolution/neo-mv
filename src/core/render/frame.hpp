@@ -85,7 +85,7 @@ public:
       }
     }
   }
-  RenderOutput<T> copy_clip(const RenderPixels<T>& pixels) const {
+  RenderOutput<T> make_output(const RenderPixels<T>& pixels, bool copy_processed) const {
     RenderOutput<T> output;
     for (int k = 0; k < plane_count(); ++k) {
       const int rx = k ? clip_.ratio_x : 1, ry = k ? clip_.ratio_y : 1;
@@ -94,29 +94,11 @@ public:
         throw std::invalid_argument("render clip storage geometry changed");
       output.emplace_back(pixels[k].width(), pixels[k].height());
       auto dst = output.back().view();
-      for (int y = 0; y < dst.height(); ++y)
-        std::memcpy(dst.row(y).data(), pixels[k].row(y).data(), std::size_t(dst.width()) * sizeof(T));
+      if (copy_processed || !processed_[k])
+        for (int y = 0; y < dst.height(); ++y)
+          std::memcpy(dst.row(y).data(), pixels[k].row(y).data(), std::size_t(dst.width()) * sizeof(T));
     }
     return output;
-  }
-  template <class Kernels = ScalarRenderKernels<T>, bool Validated = false, class Generate>
-  super_detail::PlaneBuffer<T> compose(int k, Generate&& generate) const {
-    const auto& plan = composition(k);
-    const auto& g = plan.geometry();
-    std::vector<super_detail::PlaneBuffer<T>> blocks;
-    each_block([&](BlockRegion b, CandidateDomain, std::size_t i) {
-      blocks.emplace_back(g.block_width, g.block_height);
-      generate(b, i, blocks.back().view());
-    });
-    std::vector<span2d::Plane<const T>> views;
-    for (const auto& b : blocks)
-      views.push_back(b.view());
-    super_detail::PlaneBuffer<T> result(g.visible_width, g.visible_height);
-    if constexpr (Validated)
-      Kernels::compose_render_blocks_validated(plan, views, result.view(), bits());
-    else
-      Kernels::compose_render_blocks(plan, views, result.view(), bits());
-    return result;
   }
 };
 
@@ -151,34 +133,21 @@ public:
                          std::optional<bool> current_top = {}, std::optional<bool> reference_top = {}) const {
     validate_current(current);
     const auto selected = reference(field, n);
-    auto output = grid_.copy_clip(clip);
+    auto output = grid_.make_output(clip, !selected);
     if (!selected)
       return output;
     if (!reference_image)
       throw std::invalid_argument("missing required compensation reference");
     grid_.validate_image(*reference_image);
     const int shift = rule_.field_shift(n, current_top, reference_top);
-    if constexpr (Kernels::fused_compensation) {
-      // Admit every plane's actual footprints before any plane samples pixels.
-      // Descriptors borrow the source; no temporary pixel blocks are produced.
-      std::array<typename Kernels::CompensationBlocks, 3> blocks;
-      for (int k = 0; k < grid_.plane_count(); ++k)
-        blocks[k] = Kernels::prepare_compensated(grid_.composition(k), rule_, grid_.phase_geometry(k), field.grid,
-                                                 shift, current.planes[k], reference_image->planes[k]);
-      for (int k = 0; k < grid_.plane_count(); ++k)
-        Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
-    } else {
-      // The independent scalar composition keeps its original admission order.
-      grid_.each_block([&](BlockRegion b, CandidateDomain, std::size_t i) {
-        for (int k = 0; k < grid_.plane_count(); ++k)
-          validate_compensation_footprint(rule_, grid_.phase_geometry(k), b, field.grid.values[i].vector, shift);
-      });
-      for (int k = 0; k < grid_.plane_count(); ++k)
-        output[k] = grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t i, span2d::Plane<T> dst) {
-          Kernels::sample_compensated_block_validated(rule_, grid_.phase_geometry(k), b, field.grid.values[i], shift,
-                                                      current.planes[k], reference_image->planes[k], dst, grid_.bits());
-        });
-    }
+    // Admit every plane's actual footprints before any plane samples pixels.
+    // Descriptors borrow the source; no temporary pixel blocks are produced.
+    std::array<typename Kernels::CompensationBlocks, 3> blocks;
+    for (int k = 0; k < grid_.plane_count(); ++k)
+      blocks[k] = Kernels::prepare_compensated(grid_.composition(k), rule_, grid_.phase_geometry(k), field.grid, shift,
+                                               current.planes[k], reference_image->planes[k]);
+    for (int k = 0; k < grid_.plane_count(); ++k)
+      Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
     return output;
   }
 };
@@ -244,36 +213,19 @@ public:
     for (std::size_t i = 0; i < selected.size(); ++i)
       if (selected[i])
         grid_.validate_image(images[i]); // Required even for zero user coefficients.
-    auto output = grid_.copy_clip(clip);
-    for (int k = 0; k < grid_.plane_count(); ++k) {
-      if (!grid_.processed(k))
-        continue;
-      const auto g = grid_.phase_geometry(k);
-      auto composed =
-          grid_.template compose<Kernels, true>(k, [&](BlockRegion b, std::size_t index, span2d::Plane<T> dst) {
-            super_detail::PlaneBuffer<T> centre(dst.width(), dst.height());
-            Kernels::sample_render_block_validated(g, b, {0, 0}, current.planes[k], centre.view(), grid_.bits());
-            std::vector<super_detail::PlaneBuffer<T>> sampled;
-            std::vector<WeightedReferenceBlock<T>> blocks(selected.size());
-            std::vector<ReferenceReliability> reliability;
-            sampled.reserve(selected.size());
-            for (std::size_t i = 0; i < selected.size(); ++i) {
-              reliability.push_back({bool(selected[i]), selected[i] ? fields[i].grid.values[index].error : 0});
-              if (!selected[i])
-                continue;
-              sampled.emplace_back(dst.width(), dst.height());
-              const auto v = fields[i].grid.values[index].vector;
-              Kernels::sample_render_block_validated(g, b, {v.x, v.y}, images[i].planes[k], sampled.back().view(),
-                                                     grid_.bits());
-              blocks[i] = {true, std::as_const(sampled.back()).view()};
-            }
-            Kernels::weighted_render_block_validated(std::as_const(centre).view(), blocks, weights_(reliability, k),
-                                                     dst, grid_.bits());
-          });
-      const auto centre =
-          current.planes[k].planes[0].subplane(g.pad_x, g.pad_y, output[k].view().width(), output[k].view().height());
-      Kernels::limit_render_plane(limits_[k ? 1 : 0], std::as_const(composed).view(), centre, output[k].view());
-    }
+    auto output = grid_.make_output(clip, false);
+    std::array<typename Kernels::DegrainPlane, 3> prepared;
+    for (int k = 0; k < grid_.plane_count(); ++k)
+      if (grid_.processed(k))
+        prepared[k] = Kernels::prepare_degrain(grid_.composition(k), grid_.phase_geometry(k), fields, selected,
+                                               current.planes[k], images, weights_, k);
+    for (int k = 0; k < grid_.plane_count(); ++k)
+      if (grid_.processed(k)) {
+        const auto g = grid_.phase_geometry(k);
+        const auto centre =
+            current.planes[k].planes[0].subplane(g.pad_x, g.pad_y, output[k].view().width(), output[k].view().height());
+        Kernels::compose_degrain(grid_.composition(k), prepared[k], centre, output[k].view(), limits_[k ? 1 : 0]);
+      }
     return output;
   }
 };

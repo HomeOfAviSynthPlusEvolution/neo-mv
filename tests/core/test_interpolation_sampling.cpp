@@ -84,8 +84,7 @@ void direction_and_extra() {
   // Coordinates are already in this plane's units. Ratios are not applied again.
   auto chroma = left.geometry;
   chroma.ratio_x = chroma.ratio_y = 2;
-  const auto mapped =
-      TestPlan(chroma, right.geometry, 2, 2, 128, 16).sample(left.view(), right.view(), B, F);
+  const auto mapped = TestPlan(chroma, right.geometry, 2, 2, 128, 16).sample(left.view(), right.view(), B, F);
   CHECK(mapped[0].A == basic[0].A && mapped[0].C == basic[0].C);
 }
 void displacement_boundaries() {
@@ -106,8 +105,8 @@ void displacement_boundaries() {
           while ((integer + 1) * pel <= displacement)
             ++integer;
           const int fraction = displacement - integer * pel;
-          const auto sampled = TestPlan(image.geometry, image.geometry, 1, 1, time, 16)
-                                   .sample(image.view(), image.view(), B, F);
+          const auto sampled =
+              TestPlan(image.geometry, image.geometry, 1, 1, time, 16).sample(image.view(), image.view(), B, F);
           CHECK(sampled[0].A == image.at(vertical ? fraction * pel : fraction, 5 + (vertical ? 0 : integer),
                                          5 + (vertical ? integer : 0)));
         }
@@ -116,8 +115,8 @@ void displacement_boundaries() {
   auto B = field(1, 1), F = B;
   F.x[0] = -3;
   rejects([&] { TestPlan(small.geometry, small.geometry, 1, 1, 256, 16).preflight(B, F); });
-  const auto valid = TestPlan(enough.geometry, enough.geometry, 1, 1, 256, 16)
-                         .sample(enough.view(), enough.view(), B, F);
+  const auto valid =
+      TestPlan(enough.geometry, enough.geometry, 1, 1, 256, 16).sample(enough.view(), enough.view(), B, F);
   CHECK(valid[0].A == enough.at(1, 0, 2));
 }
 void required_positions() {
@@ -147,8 +146,8 @@ void required_positions() {
   F = B;
   F.x[0] = 7;
   rejects([&] { TestPlan(quarter.geometry, quarter.geometry, 1, 1, 256, 16).preflight(B, F); });
-  const auto valid = TestPlan(external.geometry, external.geometry, 1, 1, 256, 16)
-                         .sample(external.view(), external.view(), B, F);
+  const auto valid =
+      TestPlan(external.geometry, external.geometry, 1, 1, 256, 16).sample(external.view(), external.view(), B, F);
   CHECK(valid[0].A == external.at(3, 2, 1));
 }
 void numeric_inputs_and_preflight() {
@@ -168,8 +167,7 @@ void numeric_inputs_and_preflight() {
   auto zero = field(1, 1);
   integer.storage[0].view().row(1)[1] = 1024;
   rejects([&] {
-    TestPlan(integer.geometry, integer.geometry, 1, 1, 0, 10)
-        .sample(integer.view(), integer.view(), zero, zero);
+    TestPlan(integer.geometry, integer.geometry, 1, 1, 0, 10).sample(integer.view(), integer.view(), zero, zero);
   });
 }
 #if NEO_MV_TEST_HIGHWAY
@@ -193,11 +191,31 @@ void vector_boundaries(int bits) {
                              .sample(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
           const auto b = TestPlan(left.geometry, right.geometry, width, 2, time, bits)
                              .sample(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
+          std::vector<std::uint8_t> mF(a.size()), mB(a.size());
+          for (std::size_t i = 0; i < a.size(); ++i) {
+            mF[i] = std::uint8_t(i * 37);
+            mB[i] = std::uint8_t(255 - i * 13);
+          }
+          super_detail::PlaneBuffer<T> scalar(width, 2), highway(width, 2);
+          const InterpolationSamplingPlan scalar_plan(left.geometry, right.geometry, width, 2, time, bits);
+          const TestPlan highway_plan(left.geometry, right.geometry, width, 2, time, bits);
+          scalar_plan.preflight(B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
+          highway_plan.preflight(B, F, extra ? &BB : nullptr, extra ? &FF : nullptr);
+          scalar_plan.render_preflighted(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr,
+                                         mF, mB, scalar.view());
+          highway_plan.render_preflighted(left.view(), right.view(), B, F, extra ? &BB : nullptr, extra ? &FF : nullptr,
+                                          mF, mB, highway.view());
+          for (std::size_t i = 0; i < a.size(); ++i) {
+            const auto& q = a[i];
+            const T expected = extra ? interpolation_extra(q.A, q.C, q.E, q.K, mF[i], mB[i], time, bits)
+                                     : interpolation_basic(q.A, q.C, q.A0, q.C0, mF[i], mB[i], time, bits);
+            CHECK(std::memcmp(&expected, scalar.view().row(int(i / width)).data() + i % width, sizeof(T)) == 0);
+            CHECK(std::memcmp(&expected, highway.view().row(int(i / width)).data() + i % width, sizeof(T)) == 0);
+          }
           CHECK(a.size() == b.size());
           for (std::size_t i = 0; i < a.size(); ++i)
-            for (auto member : {&InterpolationSamples<T>::A, &InterpolationSamples<T>::C,
-                                &InterpolationSamples<T>::A0, &InterpolationSamples<T>::C0,
-                                &InterpolationSamples<T>::E, &InterpolationSamples<T>::K})
+            for (auto member : {&InterpolationSamples<T>::A, &InterpolationSamples<T>::C, &InterpolationSamples<T>::A0,
+                                &InterpolationSamples<T>::C0, &InterpolationSamples<T>::E, &InterpolationSamples<T>::K})
               CHECK(std::memcmp(&(a[i].*member), &(b[i].*member), sizeof(T)) == 0);
         }
       BB.x.back() = INT16_MIN;
@@ -216,10 +234,10 @@ int main() {
       vector_boundaries<std::uint16_t>(16);
       vector_boundaries<float>(32);
 #endif
-    direction_and_extra();
-    displacement_boundaries();
-    required_positions();
-    numeric_inputs_and_preflight();
+      direction_and_extra();
+      displacement_boundaries();
+      required_positions();
+      numeric_inputs_and_preflight();
 #if NEO_MV_TEST_HIGHWAY
     }
     hwy::SetSupportedTargetsForTest(0);

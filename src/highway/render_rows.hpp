@@ -1,15 +1,20 @@
 #pragma once
-#include "core/render/overlap.hpp"
+#include "core/render/fused.hpp"
+#include "core/render/change_limit.hpp"
 #include <cstdint>
 namespace neo_mv::simd::detail {
-// Internal borrowed blocks: full rectangles have admitted geometry, output is
-// disjoint, and coefficient pointers refer to immutable plan windows.
 template <class T>
-struct SampledRenderBlock {
-  const T* data;
-  std::ptrdiff_t stride;
-  const std::uint16_t* coefficients;
-};
+using SampledRenderBlock = neo_mv::SampledRenderBlock<T>;
+template <class T>
+using DegrainPlane = neo_mv::DegrainPlane<T>;
+#define NEO_DEGRAIN(T)                                                                                                 \
+  void compose_degrain(const BlockCompositionGeometry&, const DegrainPlane<T>&, span2d::Plane<const T>,                \
+                       span2d::Plane<T>, const ChangeLimit<T>&);
+NEO_DEGRAIN(std::uint8_t)
+NEO_DEGRAIN(std::uint16_t)
+NEO_DEGRAIN(float)
+#undef NEO_DEGRAIN
+
 #define NEO_SAMPLED(T)                                                                                                 \
   void compose_sampled(const BlockCompositionGeometry& geometry, const SampledRenderBlock<T>* blocks,                  \
                        span2d::Plane<T> output, std::int64_t maximum);

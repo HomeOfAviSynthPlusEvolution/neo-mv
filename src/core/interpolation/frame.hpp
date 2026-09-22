@@ -95,9 +95,8 @@ public:
     auto result = this->allocate();
     for (int k = 0; k < this->input_.plane_count(); ++k) {
       const auto& f = fields[k];
-      const auto samples = plans[k].template sample<T, true>(left.planes[k], right.planes[k], f.B, f.F,
-                                                             f.BB ? &*f.BB : nullptr, f.FF ? &*f.FF : nullptr);
-      Kernels::template compose<true>(samples, f.mF, f.mB, BB != nullptr, time, this->video_.bits, result[k].view());
+      plans[k].render_preflighted(left.planes[k], right.planes[k], f.B, f.F, f.BB ? &*f.BB : nullptr,
+                                  f.FF ? &*f.FF : nullptr, f.mF, f.mB, result[k].view());
     }
     return result;
   }

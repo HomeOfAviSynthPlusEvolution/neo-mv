@@ -180,7 +180,8 @@ void vertical_sequences(int bits) {
         const auto e = g.phases[a];
         const int stride = e.width + 3 + a;
         storage[a].assign(std::size_t(stride) * e.height, T(19));
-        auto view = checked_plane(storage[a].data(), e.width, e.height, stride * sizeof(T), storage[a].size() * sizeof(T));
+        auto view =
+            checked_plane(storage[a].data(), e.width, e.height, stride * sizeof(T), storage[a].size() * sizeof(T));
         for (int y = 0; y < e.height; ++y)
           for (int x = 0; x < e.width; ++x)
             view.row(y)[x] = T((x * 11 + y * 17 + a * 29) % 251);
@@ -192,8 +193,12 @@ void vertical_sequences(int bits) {
         std::vector<T> a, b_samples;
         T output = 19;
         const auto out = checked_plane(&output, 1, 1, sizeof(T), sizeof(T));
-        auto save_a = [&](const T* values, std::size_t count, int, T*) { a.assign(values, values + count); };
-        auto save_b = [&](const T* values, std::size_t count, int, T*) { b_samples.assign(values, values + count); };
+        auto save_a = [&](const T* values, std::size_t count, int, T*) {
+          a.assign(values, values + count);
+        };
+        auto save_b = [&](const T* values, std::size_t count, int, T*) {
+          b_samples.assign(values, values + count);
+        };
         neo_mv::BlurSamplingPlan(g, 1, 1, 1, time).sample(f, b, source, out, bits, save_a);
         TestPlan(g, 1, 1, 1, time).sample(f, b, source, out, bits, save_b);
         CHECK(a.size() == b_samples.size());
@@ -224,10 +229,22 @@ void sampled_sequences(int bits) {
           std::vector<T> a, b_samples;
           T output[3] = {T(19), T(19), T(19)};
           const auto out = checked_plane(output + 1, 1, 1, sizeof(T), sizeof(T));
-          auto save_a = [&](const T* values, std::size_t count, int, T*) { a.assign(values, values + count); };
-          auto save_b = [&](const T* values, std::size_t count, int, T*) { b_samples.assign(values, values + count); };
+          auto save_a = [&](const T* values, std::size_t count, int, T*) {
+            a.assign(values, values + count);
+          };
+          auto save_b = [&](const T* values, std::size_t count, int, T*) {
+            b_samples.assign(values, values + count);
+          };
           neo_mv::BlurSamplingPlan(g, 1, 1, precision, time).sample(f, b, source, out, bits, save_a);
           TestPlan(g, 1, 1, precision, time).sample(f, b, source, out, bits, save_b);
+          T expected{}, scalar{}, highway{};
+          ordered_blur_average(a.data(), a.size(), bits, &expected);
+          neo_mv::BlurSamplingPlan(g, 1, 1, precision, time)
+              .sample(f, b, source, checked_plane(&scalar, 1, 1, sizeof(T), sizeof(T)), bits);
+          TestPlan(g, 1, 1, precision, time)
+              .sample(f, b, source, checked_plane(&highway, 1, 1, sizeof(T), sizeof(T)), bits);
+          CHECK(std::memcmp(&expected, &scalar, sizeof(T)) == 0);
+          CHECK(std::memcmp(&expected, &highway, sizeof(T)) == 0);
           CHECK(a.size() == b_samples.size());
           CHECK(std::memcmp(a.data(), b_samples.data(), a.size() * sizeof(T)) == 0);
           CHECK(output[0] == T(19) && output[2] == T(19));
@@ -249,13 +266,13 @@ int main() {
       sampled_sequences<std::uint16_t>(16);
       sampled_sequences<float>(32);
 #endif
-    trajectories();
-    averages();
-    sampling<std::uint8_t>(8);
-    sampling<std::uint16_t>(10);
-    sampling<std::uint16_t>(16);
-    sampling<float>(32);
-    domains_and_copy();
+      trajectories();
+      averages();
+      sampling<std::uint8_t>(8);
+      sampling<std::uint16_t>(10);
+      sampling<std::uint16_t>(16);
+      sampling<float>(32);
+      domains_and_copy();
 #if NEO_MV_TEST_HIGHWAY
     }
     hwy::SetSupportedTargetsForTest(0);

@@ -1,4 +1,5 @@
 #include "highway/interpolation_rows.hpp"
+#include "highway/flow_sampling.hpp"
 #include <stdexcept>
 #include <type_traits>
 #undef HWY_TARGET_INCLUDE
@@ -10,6 +11,7 @@ HWY_BEFORE_NAMESPACE();
 namespace neo_mv::simd::interpolation_rows {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
+#include "highway/flow_sampling-inl.hpp"
 template <class D, class V>
 auto Checked(D d, V value) {
   if constexpr (std::is_same_v<hn::TFromD<D>, float>)
@@ -41,11 +43,10 @@ auto MaxFirst(V a, V b) {
   return hn::IfThenElse(hn::Lt(a, b), b, a);
 }
 
-template <class D, class T>
-void ComposeChunk(D d, const T* a, const T* c, const T* x, const T* y, const T* mf, const T* mb, bool extra, int time,
-                  T* output) {
-  const auto A = hn::LoadU(d, a), C = hn::LoadU(d, c), X = hn::LoadU(d, x), Y = hn::LoadU(d, y);
-  const auto F = hn::LoadU(d, mf), B = hn::LoadU(d, mb), full = hn::Set(d, T(256));
+template <class D, class Vec>
+HWY_INLINE auto ComposeValue(D d, Vec A, Vec C, Vec X, Vec Y, Vec F, Vec B, bool extra, int time) {
+  using T = hn::TFromD<D>;
+  const auto full = hn::Set(d, T(256));
   const auto f = hn::Sub(full, F), b = hn::Sub(full, B);
   auto U = hn::Zero(d), V = hn::Zero(d);
   if (extra) {
@@ -67,8 +68,16 @@ void ComposeChunk(D d, const T* a, const T* c, const T* x, const T* y, const T* 
     value = H(d, sum);
   else
     value = hn::Sub(hn::ShiftRight<8>(sum), hn::Set(d, 1));
-  hn::StoreU(value, d, output);
+  return value;
 }
+template <class D, class T>
+void ComposeChunk(D d, const T* a, const T* c, const T* x, const T* y, const T* mf, const T* mb, bool extra, int time,
+                  T* output) {
+  hn::StoreU(ComposeValue(d, hn::LoadU(d, a), hn::LoadU(d, c), hn::LoadU(d, x), hn::LoadU(d, y), hn::LoadU(d, mf),
+                          hn::LoadU(d, mb), extra, time),
+             d, output);
+}
+
 template <class T>
 void Compose(const T* a, const T* c, const T* x, const T* y, const T* mf, const T* mb, int width, bool extra, int time,
              T* out) {
@@ -115,6 +124,92 @@ std::uint32_t Sum(const T* samples, std::size_t count) {
     total += samples[i];
   return total; // At most 65537*65535 == UINT32_MAX, without modular overflow.
 }
+template <class D, class T>
+HWY_INLINE auto LoadTyped(D d, const T* p, int bits) {
+  const hn::Rebind<T, D> narrow;
+  if constexpr (std::is_same_v<T, float>) {
+    return Checked(d, hn::LoadU(d, p));
+  } else {
+    const auto v = hn::PromoteTo(d, hn::LoadU(narrow, p));
+    if (bits < int(sizeof(T) * 8) && !hn::AllTrue(d, hn::Le(v, hn::Set(d, (1u << bits) - 1))))
+      throw std::invalid_argument("interpolation sample exceeds bit depth");
+    return v;
+  }
+}
+template <class D>
+HWY_INLINE auto LoadMask(D d, const std::uint8_t* p) {
+  const hn::Rebind<std::uint8_t, D> bytes;
+  const hn::Rebind<std::uint32_t, D> integers;
+  const auto v = hn::PromoteTo(integers, hn::LoadU(bytes, p));
+  if constexpr (std::is_same_v<hn::TFromD<D>, float>)
+    return hn::ConvertTo(d, v);
+  else
+    return v;
+}
+template <class D, class T, class V>
+HWY_INLINE void StoreTyped(D d, V v, T* out) {
+  if constexpr (std::is_same_v<T, float>)
+    hn::StoreU(v, d, out);
+  else {
+    const hn::Rebind<T, D> narrow;
+    // Match scalar conversion, including modular narrowing at integer endpoints.
+    hn::StoreU(hn::TruncateTo(narrow, v), narrow, out);
+  }
+}
+template <class T>
+void RenderSampled(const SampledPlane<T>& p, span2d::Plane<T> out) {
+  using Lane = std::conditional_t<std::is_same_v<T, float>, float, std::uint32_t>;
+  const hn::ScalableTag<Lane> d;
+  const int lanes = int(hn::Lanes(d));
+  const hn::CappedTag<Lane, 1> one;
+  const bool extra = p.fields[2] != nullptr;
+  const int width = out.width(), height = out.height();
+  const neo_mv::FlowSamplingPlan plans[]{{p.left, width, height, p.time}, {p.right, width, height, 256 - p.time}};
+  std::array<std::vector<T>, 4> rows;
+  for (auto& row : rows)
+    row.resize(width);
+  FlowSampleStorage storage[2]{};
+  for (int k = 0; k < 2; ++k) {
+    storage[k].coordinates_validated = true;
+    storage[k].output_pixel_stride = sizeof(T);
+    storage[k].output_stride = std::ptrdiff_t(width) * sizeof(T);
+    for (int a = 0; a < p.images[k].pel * p.images[k].pel; ++a) {
+      storage[k].planes[a] = reinterpret_cast<const std::byte*>(p.images[k].planes[a].row(0).data());
+      storage[k].strides[a] = p.images[k].planes[a].stride_bytes();
+    }
+  }
+  for (int y = 0; y < height; ++y) {
+    for (int k = 0; k < (extra ? 4 : 2); ++k) {
+      auto& st = storage[k % 2];
+      st.output = reinterpret_cast<std::byte*>(rows[k].data());
+      FlowSample<sizeof(T)>(plans[k % 2], *p.fields[k], &st, PhaseRounding::floor, y, 1);
+    }
+    const T* x = extra ? rows[2].data() : p.images[0].planes[0].row(y + p.left.pad_y).data() + p.left.pad_x;
+    const T* z = extra ? rows[3].data() : p.images[1].planes[0].row(y + p.right.pad_y).data() + p.right.pad_x;
+    const auto compose = [&](auto tag, int i) HWY_ATTR {
+      const auto offset = std::size_t(y) * width + i;
+      const auto v =
+          ComposeValue(tag, LoadTyped(tag, rows[0].data() + i, p.bits), LoadTyped(tag, rows[1].data() + i, p.bits),
+                       LoadTyped(tag, x + i, p.bits), LoadTyped(tag, z + i, p.bits), LoadMask(tag, p.masks[0] + offset),
+                       LoadMask(tag, p.masks[1] + offset), extra, p.time);
+      StoreTyped(tag, v, out.row(y).data() + i);
+    };
+    int i = 0;
+    for (; i + lanes <= width; i += lanes)
+      compose(d, i);
+    for (; i < width; ++i)
+      compose(one, i);
+  }
+}
+#define NEO_SAMPLED_IMPL(T, S)                                                                                         \
+  void Render##S(const SampledPlane<T>& p, span2d::Plane<T> out) {                                                     \
+    RenderSampled(p, out);                                                                                             \
+  }
+NEO_SAMPLED_IMPL(std::uint8_t, U8)
+NEO_SAMPLED_IMPL(std::uint16_t, U16)
+NEO_SAMPLED_IMPL(float, F32)
+#undef NEO_SAMPLED_IMPL
+
 #define NEO_TEMPORAL_IMPL(T, S)                                                                                        \
   void Compose##S(const T* a, const T* c, const T* x, const T* y, const T* mf, const T* mb, int w, bool e, int t,      \
                   T* out) {                                                                                            \
@@ -138,6 +233,15 @@ HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
 namespace neo_mv::simd::interpolation_rows {
+#define NEO_SAMPLED_EXPORT(T, S)                                                                                       \
+  HWY_EXPORT(Render##S);                                                                                               \
+  void render(const SampledPlane<T>& p, span2d::Plane<T> out) {                                                        \
+    HWY_DYNAMIC_DISPATCH(Render##S)(p, out);                                                                           \
+  }
+NEO_SAMPLED_EXPORT(std::uint8_t, U8)
+NEO_SAMPLED_EXPORT(std::uint16_t, U16)
+NEO_SAMPLED_EXPORT(float, F32)
+#undef NEO_SAMPLED_EXPORT
 #define NEO_TEMPORAL_EXPORT(T, S)                                                                                      \
   HWY_EXPORT(Compose##S);                                                                                              \
   HWY_EXPORT(Blend##S);                                                                                                \

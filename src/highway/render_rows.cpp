@@ -66,21 +66,26 @@ void Weighted(const T* centre, const T* const* refs, const int* weights, int cw,
   for (; x < count; ++x)
     WeightedChunk(one, centre, refs, weights, cw, nr, out, x);
 }
-template <class D, class T>
-void AddChunk(D d, const T* src, const std::uint16_t* coeff, Acc<T>* sum) {
+template <class D, class V>
+HWY_INLINE void AddValue(D d, V sample, const std::uint16_t* coeff, hn::TFromD<D>* sum) {
   const hn::Rebind<std::uint16_t, D> dw;
   const hn::Rebind<std::int32_t, D> di;
   auto wi = hn::PromoteTo(di, hn::LoadU(dw, coeff));
   auto old = hn::LoadU(d, sum);
-  if constexpr (std::is_same_v<T, float>) {
-    auto product = hn::Mul(LoadSample(d, src), hn::ConvertTo(d, wi));
+  if constexpr (std::is_same_v<hn::TFromD<D>, float>) {
+    auto product = hn::Mul(sample, hn::ConvertTo(d, wi));
     CheckFinite(d, product);
     auto value = hn::Add(old, hn::Mul(product, hn::Set(d, 1.0f / 64)));
     CheckFinite(d, value);
     hn::StoreU(value, d, sum);
   } else
-    hn::StoreU(hn::Add(old, hn::ShiftRight<6>(hn::Mul(LoadSample(d, src), wi))), d, sum);
+    hn::StoreU(hn::Add(old, hn::ShiftRight<6>(hn::Mul(sample, wi))), d, sum);
 }
+template <class D, class T>
+void AddChunk(D d, const T* src, const std::uint16_t* coeff, Acc<T>* sum) {
+  AddValue(d, LoadSample(d, src), coeff, sum);
+}
+
 template <class T>
 void Add(const T* src, const std::uint16_t* coeff, Acc<T>* sum, int count) {
   const hn::ScalableTag<Acc<T>> d;
@@ -258,6 +263,122 @@ void Limit(const T* q, const T* centre, T* out, int count, bool active, std::int
       LimitChunk(one, q + x, centre + x, out + x, maximum, limit, flimit);
   }
 }
+template <class D, class V>
+HWY_INLINE void AdmitSample(D d, V value, std::int64_t maximum) {
+  if constexpr (std::is_same_v<hn::TFromD<D>, float>) {
+    if (!hn::AllTrue(d, hn::IsFinite(value)))
+      throw std::invalid_argument("non-finite Degrain sample");
+  } else if (!hn::AllTrue(d, hn::Le(value, hn::Set(d, std::int32_t(maximum)))))
+    throw std::invalid_argument("Degrain sample exceeds bit depth");
+}
+
+template <class D, class T>
+HWY_INLINE auto DegrainValue(D d, const SampledRenderBlock<T>* sources, const int* weights, int nr, int row, int x,
+                             std::int64_t maximum) {
+  const auto c = LoadSample(d, sources[0].data + row * sources[0].stride + x);
+  // Full-width integer samples are admitted by their storage representation.
+  if constexpr (std::is_same_v<T, float>)
+    AdmitSample(d, c, maximum);
+  else if (maximum != std::numeric_limits<T>::max())
+    AdmitSample(d, c, maximum);
+  auto sum = hn::Mul(c, hn::Set(d, Acc<T>(weights[0])));
+  CheckFinite(d, sum);
+  if constexpr (!std::is_same_v<T, float>)
+    sum = hn::Add(sum, hn::Set(d, 128));
+  for (int r = 1; r <= nr; ++r) {
+    const auto sample = sources[r].data ? LoadSample(d, sources[r].data + row * sources[r].stride + x) : c;
+    if constexpr (std::is_same_v<T, float>)
+      AdmitSample(d, sample, maximum);
+    else if (maximum != std::numeric_limits<T>::max())
+      AdmitSample(d, sample, maximum);
+    const auto product = hn::Mul(sample, hn::Set(d, Acc<T>(weights[r])));
+    CheckFinite(d, product);
+    sum = hn::Add(sum, product);
+    CheckFinite(d, sum);
+  }
+  if constexpr (std::is_same_v<T, float>)
+    return hn::Mul(sum, hn::Set(d, 1.0f / 256));
+  else
+    return hn::ShiftRight<8>(sum);
+}
+
+template <class T, int Width>
+void DegrainPlaneRun(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
+                     span2d::Plane<T> out, const ChangeLimit<T>& limit) {
+  const int sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
+  const bool overlap = g.overlap_x || g.overlap_y;
+  std::vector<Acc<T>> sums(overlap ? g.visible_width : 0);
+  const int height = (g.blocks_y - 1) * sy + g.block_height;
+  const hn::CappedTag<Acc<T>, Width> d;
+  const int lanes = int(hn::Lanes(d));
+  const hn::CappedTag<Acc<T>, 1> one;
+  for (int y = 0; y < height; ++y) {
+    std::fill(sums.begin(), sums.end(), Acc<T>(0));
+    const int first = y < g.block_height ? 0 : (y - g.block_height) / sy + 1;
+    const int last = std::min(y / sy, g.blocks_y - 1);
+    for (int by = first; by <= last; ++by) {
+      const int ly = y - by * sy;
+      for (int bx = 0; bx < g.blocks_x; ++bx) {
+        const auto index = (std::size_t(by) * g.blocks_x + bx) * (p.references + 1);
+        const auto* sources = p.sources.data() + index;
+        const auto* weights = p.weights.data() + index;
+        const int ox = bx * sx;
+        const int visible = y < g.visible_height ? std::clamp(g.visible_width - ox, 0, g.block_width) : 0;
+        const auto consume = [&](auto tag, int x, bool write) HWY_ATTR {
+          const auto value = DegrainValue(tag, sources, weights, p.references, ly, x, limit.maximum());
+          if (write) {
+            if (overlap)
+              AddValue(tag, value, sources[0].coefficients + std::size_t(ly) * g.block_width + x, sums.data() + ox + x);
+            else
+              StoreSample(tag, value, out.row(y).data() + ox + x);
+          }
+        };
+        int x = 0;
+        for (; x + lanes <= visible; x += lanes)
+          consume(d, x, true);
+        for (; x < visible; ++x)
+          consume(one, x, true);
+        // Cropping does not remove numeric admission or weighted overflow checks.
+        for (; x + lanes <= g.block_width; x += lanes)
+          consume(d, x, false);
+        for (; x < g.block_width; ++x)
+          consume(one, x, false);
+      }
+    }
+    if (y < g.visible_height) {
+      auto* dst = out.row(y).data();
+      if (overlap)
+        Finish(sums.data(), dst, g.visible_width, limit.maximum());
+      if (limit.active())
+        Limit(dst, centre.row(y).data(), dst, g.visible_width, true, limit.maximum(), limit.integer_limit(),
+              limit.float_limit());
+    }
+  }
+}
+template <class T>
+void DegrainDispatch(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> centre,
+                     span2d::Plane<T> out, const ChangeLimit<T>& limit) {
+  switch (g.block_width) {
+    case 4:
+      return DegrainPlaneRun<T, 4>(g, p, centre, out, limit);
+    case 8:
+      return DegrainPlaneRun<T, 8>(g, p, centre, out, limit);
+    case 16:
+      return DegrainPlaneRun<T, 16>(g, p, centre, out, limit);
+    default:
+      return DegrainPlaneRun<T, 32>(g, p, centre, out, limit);
+  }
+}
+#define NEO_DEGRAIN_IMPL(T, S)                                                                                         \
+  void Degrain##S(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> c,               \
+                  span2d::Plane<T> o, const ChangeLimit<T>& l) {                                                       \
+    DegrainDispatch(g, p, c, o, l);                                                                                    \
+  }
+NEO_DEGRAIN_IMPL(std::uint8_t, U8)
+NEO_DEGRAIN_IMPL(std::uint16_t, U16)
+NEO_DEGRAIN_IMPL(float, F32)
+#undef NEO_DEGRAIN_IMPL
+
 template <class T>
 void ComposePlane(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* b, span2d::Plane<T> out,
                   std::int64_t maximum) {
@@ -306,6 +427,16 @@ NEO_IMPL(float, float, F32)
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd::detail {
+#define NEO_DEGRAIN_EXPORT(T, S)                                                                                       \
+  HWY_EXPORT(Degrain##S);                                                                                              \
+  void compose_degrain(const BlockCompositionGeometry& g, const DegrainPlane<T>& p, span2d::Plane<const T> c,          \
+                       span2d::Plane<T> o, const ChangeLimit<T>& l) {                                                  \
+    HWY_DYNAMIC_DISPATCH(Degrain##S)(g, p, c, o, l);                                                                   \
+  }
+NEO_DEGRAIN_EXPORT(std::uint8_t, U8)
+NEO_DEGRAIN_EXPORT(std::uint16_t, U16)
+NEO_DEGRAIN_EXPORT(float, F32)
+#undef NEO_DEGRAIN_EXPORT
 #define NEO_FUSED_EXPORT(T, S)                                                                                         \
   HWY_EXPORT(ComposeSampled##S);                                                                                       \
   void compose_sampled(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* b, span2d::Plane<T> out,        \

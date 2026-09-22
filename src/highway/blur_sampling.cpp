@@ -8,9 +8,9 @@ HWY_BEFORE_NAMESPACE();
 namespace neo_mv::simd {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
-template <std::size_t Bytes>
-void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t step_x, std::int64_t step_y,
-                 const FlowSampleStorage* storage) {
+template <std::size_t Bytes, class Consume>
+void BlurVisit(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t step_x, std::int64_t step_y,
+               const FlowSampleStorage* storage, Consume&& consume) {
   const hn::ScalableTag<std::int64_t> d;
   const int lanes = static_cast<int>(hn::Lanes(d));
   const hn::Rebind<std::int32_t, decltype(d)> d32;
@@ -47,12 +47,83 @@ void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int
       for (int i = 0; i < used; ++i) {
         const auto a = static_cast<std::size_t>(phases[i]);
         const auto* input = storage->planes[a] + rows[i] * storage->strides[a] + columns[i] * Bytes;
-        std::memcpy(storage->output + std::size_t(first - 1 + i) * Bytes, input, Bytes);
+        consume(first - 1 + i, input);
       }
     }
     first += used;
   }
 }
+template <std::size_t Bytes>
+void BlurSamples(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx, std::int64_t sy,
+                 const FlowSampleStorage* storage) {
+  BlurVisit<Bytes>(g, x, y, count, sx, sy, storage, [&](int i, const std::byte* input) {
+    std::memcpy(storage->output + std::size_t(i) * Bytes, input, Bytes);
+  });
+}
+void BlurPreflight(const BlurSamplingPlan& plan, const DenseFlowField& f, const DenseFlowField& b) {
+  for (int y = 0; y < plan.height(); ++y)
+    for (int x = 0; x < plan.width(); ++x) {
+      const auto i = std::size_t(y) * plan.width() + x;
+      for (const auto* field : {&f, &b}) {
+        const auto d = plan.direction(field->x[i], field->y[i]);
+        if (d.count)
+          BlurSamples<1>(plan.geometry(), x, y, d.count, d.x, d.y, nullptr);
+      }
+    }
+}
+template <class T>
+void BlurPlane(const BlurSamplingPlan& plan, const DenseFlowField& forward, const DenseFlowField& backward,
+               const SubpixelPhases<T>& source, span2d::Plane<T> output, int bits) {
+  const auto& g = plan.geometry();
+  FlowSampleStorage storage{};
+  storage.coordinates_validated = true;
+  for (int a = 0; a < g.pel * g.pel; ++a) {
+    storage.planes[a] = reinterpret_cast<const std::byte*>(source.planes[a].row(0).data());
+    storage.strides[a] = source.planes[a].stride_bytes();
+  }
+  const auto maximum = subpixel_detail::sample_max<T>(bits);
+  for (int y = 0; y < plan.height(); ++y)
+    for (int x = 0; x < plan.width(); ++x) {
+      const auto i = std::size_t(y) * plan.width() + x;
+      const auto f = plan.direction(forward.x[i], forward.y[i]), b = plan.direction(backward.x[i], backward.y[i]);
+      const int count = 1 + f.count + b.count;
+      const T* centre = source.planes[0].row(y + g.pad_y).data() + x + g.pad_x;
+      T* out = output.row(y).data() + x;
+      if (count == 1) {
+        std::memcpy(out, centre, sizeof(T)); // Preserve all representations for copy-only trajectories.
+        continue;
+      }
+      subpixel_detail::valid_sample(*centre, maximum);
+      using Sum = std::conditional_t<std::is_same_v<T, float>, double, std::uint32_t>;
+      Sum sum = *centre;
+      for (const auto d : {f, b}) {
+        if (!d.count)
+          continue;
+        BlurVisit<sizeof(T)>(g, x, y, d.count, d.x, d.y, &storage, [&](int, const std::byte* input) {
+          T sample;
+          std::memcpy(&sample, input, sizeof(T));
+          subpixel_detail::valid_sample(sample, maximum);
+          sum = sum + Sum(sample); // Centre, forward, backward; binary64 order is contractual.
+          if constexpr (std::is_same_v<T, float>)
+            if (!std::isfinite(sum))
+              throw std::overflow_error("non-finite blur accumulation");
+        });
+      }
+      if constexpr (std::is_same_v<T, float>)
+        *out = mask_detail::binary32(sum / double(count));
+      else
+        *out = static_cast<T>(sum / std::uint32_t(count));
+    }
+}
+#define NEO_BLUR_PLANE_IMPL(T, S)                                                                                      \
+  void BlurPlane##S(const BlurSamplingPlan& p, const DenseFlowField& f, const DenseFlowField& b,                       \
+                    const SubpixelPhases<T>& s, span2d::Plane<T> o, int bits) {                                        \
+    BlurPlane(p, f, b, s, o, bits);                                                                                    \
+  }
+NEO_BLUR_PLANE_IMPL(std::uint8_t, U8)
+NEO_BLUR_PLANE_IMPL(std::uint16_t, U16)
+NEO_BLUR_PLANE_IMPL(float, F32)
+#undef NEO_BLUR_PLANE_IMPL
 #define NEO_BLUR_VARIANT(SUFFIX, BYTES)                                                                                \
   void BlurSamples##SUFFIX(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t sx, std::int64_t sy,    \
                            const FlowSampleStorage* storage) {                                                         \
@@ -67,6 +138,20 @@ NEO_BLUR_VARIANT(32, 4)
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd {
+HWY_EXPORT(BlurPreflight);
+void blur_preflight(const BlurSamplingPlan& p, const DenseFlowField& f, const DenseFlowField& b) {
+  HWY_DYNAMIC_DISPATCH(BlurPreflight)(p, f, b);
+}
+#define NEO_BLUR_PLANE_EXPORT(T, S)                                                                                    \
+  HWY_EXPORT(BlurPlane##S);                                                                                            \
+  void blur_plane(const BlurSamplingPlan& p, const DenseFlowField& f, const DenseFlowField& b,                         \
+                  const SubpixelPhases<T>& s, span2d::Plane<T> o, int bits) {                                          \
+    HWY_DYNAMIC_DISPATCH(BlurPlane##S)(p, f, b, s, o, bits);                                                           \
+  }
+NEO_BLUR_PLANE_EXPORT(std::uint8_t, U8)
+NEO_BLUR_PLANE_EXPORT(std::uint16_t, U16)
+NEO_BLUR_PLANE_EXPORT(float, F32)
+#undef NEO_BLUR_PLANE_EXPORT
 HWY_EXPORT(BlurSamples8);
 HWY_EXPORT(BlurSamples16);
 HWY_EXPORT(BlurSamples32);

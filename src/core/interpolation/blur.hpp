@@ -158,6 +158,39 @@ public:
     if constexpr (!Preflighted)
       preflight(forward, backward);
     validate_storage(forward, backward, source, output);
+    if constexpr (std::is_same_v<Average, ScalarBlurAverage>) {
+      const auto maximum = subpixel_detail::sample_max<T>(bits);
+      for (int y = 0; y < height_; ++y)
+        for (int x = 0; x < width_; ++x) {
+          const auto i = std::size_t(y) * width_ + x;
+          const auto f = direction(forward.x[i], forward.y[i]), b = direction(backward.x[i], backward.y[i]);
+          const int count = 1 + f.count + b.count;
+          if (count == 1) {
+            std::memcpy(output.row(y).data() + x,
+                        source.planes[0].row(y + geometry_.pad_y).data() + x + geometry_.pad_x, sizeof(T));
+            continue;
+          }
+          using Sum = std::conditional_t<std::is_same_v<T, float>, double, std::uint32_t>;
+          Sum sum = 0;
+          bool first = true;
+          trajectory(x, y, forward.x[i], forward.y[i], backward.x[i], backward.y[i],
+                     [&](std::int64_t ax, std::int64_t ay) {
+                       const auto at = location<true>(ax, ay);
+                       const T q = source.planes[at.phase].row(at.y)[at.x];
+                       subpixel_detail::valid_sample(q, maximum);
+                       sum = first ? Sum(q) : sum + Sum(q);
+                       first = false;
+                       if constexpr (std::is_same_v<T, float>)
+                         if (!std::isfinite(sum))
+                           throw std::overflow_error("non-finite blur accumulation");
+                     });
+          if constexpr (std::is_same_v<T, float>)
+            output.row(y)[x] = mask_detail::binary32(sum / double(count));
+          else
+            output.row(y)[x] = T(sum / std::uint32_t(count));
+        }
+      return;
+    }
     std::vector<T> samples;
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
