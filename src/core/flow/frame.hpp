@@ -72,7 +72,7 @@ public:
   const AnalysisMetadata& metadata() const { return availability_.metadata(); }
   bool field_correction_active() const { return fields_ && sampling_.pel > 1 && metadata().delta % 2 != 0; }
   std::optional<std::int64_t> reference(const AnalysisField& field, std::int64_t n) const {
-    return availability_(field, n);
+    return availability_(field, n, Kernels::scene_count);
   }
 
   // Also usable by the host for the current Super needed only to read parity.

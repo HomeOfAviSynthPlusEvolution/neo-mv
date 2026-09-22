@@ -65,7 +65,7 @@ public:
   T fallback() const { return fallback_; }
   int bits() const { return metadata_.bits; }
 
-  bool eligible(const AnalysisField& field) const {
+  bool eligible(const AnalysisField& field, SceneClassifier::Counter count = scalar_scene_count) const {
     if (field.state == FieldState::invalid_metadata)
       return false;
     if (!valid_analysis_metadata(field.metadata))
@@ -77,7 +77,7 @@ public:
     if (metadata_.chroma != field.metadata.chroma)
       throw std::invalid_argument("mask analysis chroma changed");
     // The classifier checks every entry even after a scene cut is known.
-    return scene_(field) == 0;
+    return scene_(field, count) == 0;
   }
 };
 

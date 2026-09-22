@@ -70,7 +70,7 @@ public:
     if (mask_frame_detail::overlaps(output, &field, sizeof(field)) ||
         mask_frame_detail::overlaps(output, field.grid.values.data(), field.grid.values.size() * sizeof(MotionTriple)))
       throw std::invalid_argument("mask output aliases analysis input");
-    if (!input_.eligible(field)) {
+    if (!input_.eligible(field, Kernels::scene_count)) {
       for (int y = 0; y < output.height(); ++y)
         std::fill_n(output.row(y).data(), output.width(), input_.fallback());
       return;
