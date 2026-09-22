@@ -179,12 +179,16 @@ HWY_INLINE void ComposeDirectChunk(D d, const DirectInput<T>* inputs, int x, T* 
 
 template <int N, class T>
 HWY_INLINE void ComposeDirectSegment(const DirectInput<T>* inputs, int count, T* output, std::int64_t maximum) {
+  const hn::CappedTag<DirectAcc<T>, 8> eight;
+  if (count == 8 && hn::Lanes(eight) == 8) {
+    ComposeDirectChunk<N>(eight, inputs, 0, output, maximum);
+    return;
+  }
   const hn::ScalableTag<DirectAcc<T>> full;
   const int lanes = int(hn::Lanes(full));
   int x = 0;
   for (; x <= count - lanes; x += lanes)
     ComposeDirectChunk<N>(full, inputs, x, output, maximum);
-  const hn::CappedTag<DirectAcc<T>, 8> eight;
   const int n8 = int(hn::Lanes(eight));
   if (x <= count - n8) {
     ComposeDirectChunk<N>(eight, inputs, x, output, maximum);
