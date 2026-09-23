@@ -4,6 +4,9 @@
 #include "core/depan/estimate_geometry.hpp"
 #include "core/depan/estimate_image.hpp"
 #include "core/depan/estimate_motion.hpp"
+#include <array>
+#include <cstring>
+#include <mutex>
 #if NEO_MV_ENABLE_HIGHWAY
 #include "highway/depan_estimate.hpp"
 #include "highway/estimate_image.hpp"
@@ -22,10 +25,22 @@ struct DepanEstimateFilter {
   struct RequestState {
     bool requested = false;
   };
+  struct CachedWindow {
+    int frame, left;
+    bool top;
+    std::vector<float> current, previous;
+    depan::estimate::WindowMotion motion;
+  };
+  struct WindowCache {
+    std::mutex mutex;
+    std::array<std::optional<CachedWindow>, 4> entries;
+    std::size_t next = 0;
+  };
   struct State {
     ds::VideoInputInfo clip;
     depan::estimate::WindowGeometry geometry;
     std::shared_ptr<const depan::estimate::FftPlan> fft;
+    std::shared_ptr<WindowCache> cache;
     float trust, zoommax, stab, aspect;
     bool info, show, fields;
     std::optional<bool> tff;
@@ -59,6 +74,7 @@ struct DepanEstimateFilter {
         clip,
         geometry,
         std::make_shared<const depan::estimate::FftPlan>(geometry.width, geometry.height, estimate_fft_profile()),
+        std::make_shared<WindowCache>(),
         trust,
         zoommax,
         stab,
@@ -111,6 +127,20 @@ struct DepanEstimateFilter {
         };
         auto a = extract(current);
         auto b = extract(previous);
+        const bool needs_display = s.show && n == ctx.output_frame;
+        // A frame index alone is insufficient: an upstream clip may return
+        // different samples for the same request. Compare the admitted inputs.
+        const bool cacheable = a.size() <= (32u * 1024u * 1024u) / (8u * s.cache->entries.size());
+        if (cacheable && !needs_display) {
+          std::lock_guard<std::mutex> lock(s.cache->mutex);
+          for (const auto& entry : s.cache->entries) {
+            if (entry && entry->frame == n && entry->left == left && entry->top == top &&
+                entry->current.size() == a.size() && entry->previous.size() == b.size() &&
+                std::memcmp(entry->current.data(), a.data(), a.size() * sizeof(float)) == 0 &&
+                std::memcmp(entry->previous.data(), b.data(), b.size() * sizeof(float)) == 0)
+              return entry->motion;
+          }
+        }
         std::vector<float> correlation;
 #if NEO_MV_ENABLE_HIGHWAY
         if (selected_backend() == KernelBackend::highway)
@@ -132,8 +162,13 @@ struct DepanEstimateFilter {
           return est::refine_motion(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
         };
         const auto motion = compute_motion();
-        if (s.show && n == ctx.output_frame)
+        if (needs_display)
           display[slot] = std::move(correlation);
+        if (cacheable) {
+          std::lock_guard<std::mutex> lock(s.cache->mutex);
+          s.cache->entries[s.cache->next].emplace(CachedWindow{n, left, top, std::move(a), std::move(b), motion});
+          s.cache->next = (s.cache->next + 1) % s.cache->entries.size();
+        }
         return motion;
       };
       const auto first = window(g.left, 0);
