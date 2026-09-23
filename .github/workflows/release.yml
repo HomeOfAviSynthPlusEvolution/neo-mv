@@ -113,7 +113,7 @@ jobs:
         shell: pwsh
         run: >-
           cmake -S source -B build -G "Visual Studio 17 2022" -A ${{ matrix.vs_arch }}
-          -DBUILD_TESTING=ON -DNEO_MV_ENABLE_SIMD=ON -DNEO_MV_BUILD_VAPOURSYNTH=ON
+          -DBUILD_TESTING=ON -DNEO_MV_ENABLE_SIMD=ON -DNEO_MV_BUILD_VAPOURSYNTH=ON -DNEO_MV_BUILD_AVISYNTH=ON
           -DNEO_MV_TEST_VAPOURSYNTH=${{ matrix.host_tests }} -DNEO_MV_TEST_BLACKBOX=OFF
           -DNEO_MV_BUILD_BENCHMARKS=OFF
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DDS_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -127,7 +127,7 @@ jobs:
             export CC=/usr/bin/clang CXX=/usr/bin/clang++
           fi
           cmake -S source -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON -DNEO_MV_ENABLE_SIMD=ON -DNEO_MV_BUILD_VAPOURSYNTH=ON \
+            -DBUILD_TESTING=ON -DNEO_MV_ENABLE_SIMD=ON -DNEO_MV_BUILD_VAPOURSYNTH=ON -DNEO_MV_BUILD_AVISYNTH=ON \
             -DNEO_MV_TEST_VAPOURSYNTH=OFF -DNEO_MV_TEST_BLACKBOX=OFF \
             -DNEO_MV_BUILD_BENCHMARKS=OFF
       - name: Build

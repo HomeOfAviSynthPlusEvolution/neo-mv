@@ -104,7 +104,7 @@ struct Bridge {
                                               : Op == Operation::Analyse     ? analyse_signature
                                               : Op == Operation::Recalculate ? recalculate_signature
                                                                              : scene_signature;
-  // Complete DS2's bridge concept, but no AVS entry point is built or registered.
+  // The AviSynth adapter supplies its own enabled descriptor and registration names.
   static constexpr const char* avs_name = "";
   static constexpr const char* avs_signature = "";
   static constexpr const char* missing_input_error = "neo-mv: missing required video node";

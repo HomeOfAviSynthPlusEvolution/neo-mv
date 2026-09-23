@@ -55,7 +55,7 @@ struct DepanEstimateFilter {
     std::optional<bool> tff;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params, "VS services required");
+    require(ctx.params, "host services required");
     selected_backend();
     require(ctx.inputs.size() == 1, "DepanEstimate requires one clip");
     const auto clip = ctx.inputs[0];

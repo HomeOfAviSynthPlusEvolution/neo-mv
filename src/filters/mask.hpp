@@ -56,8 +56,8 @@ struct MaskFilter {
     return std::make_shared<MaskRuntime<T, ScalarMaskKernels<T>>>(ctx, Kind, metadata);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
-            "VS frame services required");
+    require(ctx.params && ctx.frames && ctx.frame_factory,
+            "host frame services required");
     require(ctx.inputs.size() == 1, "mask requires one vectors node");
     selected_backend();
     const auto first = read_field(frame(*ctx.frames, 0, 0), Params{*ctx.params}.prefix(), false);

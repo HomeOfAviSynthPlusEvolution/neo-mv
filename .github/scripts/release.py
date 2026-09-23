@@ -102,7 +102,8 @@ def package(args):
     (stage / 'README.txt').write_text(
         f"neo-mv {manifest['version']} ({commit})\nPlatform: {manifest['platform']}\n\n"
         "Install the plugin in your matching VapourSynth plugin directory, or load it explicitly.\n"
-        "This archive does not include the VapourSynth host.\n"
+        "For AviSynth interface 11 or later, load this same plugin with LoadCPlugin; functions use neo_mv_.\n"
+        "This archive does not include either host runtime. AviSynth host tests are not run by this workflow.\n"
         "Linux binaries are built on Ubuntu 24.04; other distributions require compatible runtime libraries.\n"
         "macOS binaries are built on macOS 15 and are not signed or notarized.\n\n"
         f"Spec/SIMD tests passed: {len(tests)}. VapourSynth host tests: "

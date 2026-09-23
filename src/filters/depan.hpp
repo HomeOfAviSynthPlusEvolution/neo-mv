@@ -58,7 +58,7 @@ struct DepanAnalysisFilter {
     std::optional<bool> tff;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames, "VS frame services required");
+    require(ctx.params && ctx.frames, "host frame services required");
     selected_backend();
     require(ctx.inputs.size() == 2 || ctx.inputs.size() == 3, "DepanAnalyse requires clip, vectors and optional mask");
     for (const auto& group : ctx.input_groups)
@@ -173,7 +173,7 @@ struct DepanCompensationFilter {
     std::optional<bool> tff;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params, "VS services required");
+    require(ctx.params, "host services required");
     selected_backend();
     require(ctx.inputs.size() == 2, "DepanCompensate requires clip and data");
     const auto clip = ctx.inputs[0];

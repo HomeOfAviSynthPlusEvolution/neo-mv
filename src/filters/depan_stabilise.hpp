@@ -23,7 +23,7 @@ struct DepanStabiliseFilter {
     depan::stabilise::Layers layers{};
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params, "VS services required");
+    require(ctx.params, "host services required");
     selected_backend();
     require(ctx.inputs.size() == 2, "DepanStabilise requires clip and data");
     const auto clip = ctx.inputs[0];

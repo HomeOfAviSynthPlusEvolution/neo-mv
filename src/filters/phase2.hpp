@@ -202,8 +202,8 @@ struct RenderFilter {
     return std::make_shared<TypedRenderRuntime<T, Degrain, ScalarRenderKernels<T>>>(ctx, super);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
-            "VS frame services required");
+    require(ctx.params && ctx.frames && ctx.frame_factory,
+            "host frame services required");
     selected_backend();
     const auto count = ctx.inputs.size();
     require(Degrain ? count >= 4 && count <= 52 && count % 2 == 0 : count == 3, "invalid render node count");

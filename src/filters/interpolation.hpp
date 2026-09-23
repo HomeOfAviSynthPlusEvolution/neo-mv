@@ -211,8 +211,8 @@ struct TemporalFilter {
     return std::make_shared<TypedTemporalRuntime<T, Kind>>(ctx, super);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
-            "VS frame services required");
+    require(ctx.params && ctx.frames && ctx.frame_factory,
+            "host frame services required");
     selected_backend();
     require(ctx.inputs.size() == 4, "temporal filter requires clip, super and exactly [bw,fw]");
     validate_format(ctx.inputs[0]);

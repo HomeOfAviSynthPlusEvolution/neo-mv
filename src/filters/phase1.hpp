@@ -294,8 +294,8 @@ struct Filter {
     return make_with_kernels<T, ScalarKernels<T>>(ctx);
   }
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
-    require(ctx.host == ds::HostKind::VapourSynth && ctx.params && ctx.frames && ctx.frame_factory,
-            "VS frame services required");
+    require(ctx.params && ctx.frames && ctx.frame_factory,
+            "host frame services required");
     selected_backend(); // Freeze selection for every graph, including SCDetection.
     const auto count = ctx.inputs.size();
     require(Op == Operation::Super     ? (count == 1 || count == 2)
