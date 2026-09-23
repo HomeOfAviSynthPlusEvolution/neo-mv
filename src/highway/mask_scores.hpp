@@ -21,6 +21,7 @@ public:
     const auto& m = grid_.metadata();
     std::vector<T> output(grid.values.size());
     std::array<double, 256> xs, ys, scores;
+    const bool nearest = std::is_same_v<T, float> && mask_detail::nearest_rounding();
     for (std::size_t first = 0; first < grid.values.size(); first += xs.size()) {
       const auto count = (std::min)(xs.size(), grid.values.size() - first);
       for (std::size_t i = 0; i < count; ++i) {
@@ -28,8 +29,16 @@ public:
         ys[i] = grid.values[first + i].vector.y;
       }
       mask_rows::magnitude(xs.data(), ys.data(), count, m.pel, f2_, g2_, maximum_, scores.data());
-      for (std::size_t i = 0; i < count; ++i)
-        output[first + i] = mask_detail::quantize<T>(scores[i], m.bits);
+      // Storage is admitted by the constructor; magnitude returns only finite,
+      // nonnegative scores. Clamp before the conversion without revalidating
+      // those invariants for every block.
+      for (std::size_t i = 0; i < count; ++i) {
+        const double score = (std::min)(scores[i], double(maximum_));
+        if constexpr (std::is_same_v<T, float>)
+          output[first + i] = mask_detail::binary32(score, nearest);
+        else
+          output[first + i] = static_cast<T>(score);
+      }
     }
     return output;
   }
