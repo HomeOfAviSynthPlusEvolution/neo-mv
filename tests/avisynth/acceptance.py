@@ -10,7 +10,7 @@ a = parser.parse_args()
 work = pathlib.Path(a.work).resolve()
 work.mkdir(parents=True, exist_ok=True)
 plugin = pathlib.Path(a.plugin).resolve().as_posix()
-header = f'LoadCPlugin("{plugin}")\n'
+header = f'LoadPlugin("{plugin}")\n'
 fixture = """
 c = BlankClip(width=64,height=48,length=12,fps=24,pixel_type="YV12",color_yuv=$204080)
 s = neo_mv_Super(c,blksize=8,overlap=4,pad=32,pel=2)

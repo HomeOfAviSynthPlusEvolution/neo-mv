@@ -52,10 +52,10 @@ output.set_output()
 
 这个最小示例使用合成剪辑展示调用关系。`Super` 必须显式指定块大小和重叠量。正 `delta` 引用后面的帧，负 `delta` 引用前面的帧。完整参数和计算过程见对应函数文章。
 
-同一个插件文件也提供 AviSynth C 接口。使用 AviSynth+ 3.7.4 或更新版本（接口 11），或兼容的 AviSynthMinus 运行时，通过 `LoadCPlugin` 加载：
+同一个插件文件也提供 AviSynth C 接口。使用 AviSynth+ 3.7.4 或更新版本（接口 11），或兼容的 AviSynthMinus 运行时，通过 `LoadPlugin` 加载：
 
 ```avs
-LoadCPlugin("/path/to/neo-mv.dll")
+LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=640, height=360, length=24, pixel_type="YV12")
 super_clip = neo_mv_Super(clip, blksize=16, overlap=8, pad=32, pel=2)
 vectors = neo_mv_AnalyseMany(super_clip, radius=1)

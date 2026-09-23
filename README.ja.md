@@ -52,10 +52,10 @@ output.set_output()
 
 この最小例は合成クリップで呼び出しの流れを示します。`Super` ではブロックサイズとオーバーラップを明示する必要があります。正の `delta` は後のフレーム、負の `delta` は前のフレームを参照します。パラメーターと計算の詳細は各関数の記事を参照してください。
 
-同じプラグインファイルに AviSynth C インターフェースも含まれます。AviSynth+ 3.7.4 以降（インターフェース 11）、または互換性のある AviSynthMinus ランタイムで `LoadCPlugin` を使用してください。
+同じプラグインファイルに AviSynth C インターフェースも含まれます。AviSynth+ 3.7.4 以降（インターフェース 11）、または互換性のある AviSynthMinus ランタイムで `LoadPlugin` を使用してください。
 
 ```avs
-LoadCPlugin("/path/to/neo-mv.dll")
+LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=640, height=360, length=24, pixel_type="YV12")
 super_clip = neo_mv_Super(clip, blksize=16, overlap=8, pad=32, pel=2)
 vectors = neo_mv_AnalyseMany(super_clip, radius=1)

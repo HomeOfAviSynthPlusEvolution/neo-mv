@@ -52,10 +52,10 @@ output.set_output()
 
 This minimal example uses a synthetic clip to show the calling sequence. `Super` requires explicit block size and overlap. Positive `delta` refers to a later frame; negative `delta` refers to an earlier frame. See the function articles for full parameter and calculation details.
 
-The same plugin also provides an AviSynth C interface. Use `LoadCPlugin` with AviSynth+ 3.7.4 or later (interface 11), or a compatible AviSynthMinus runtime:
+The same plugin also provides an AviSynth C interface. Use `LoadPlugin` with AviSynth+ 3.7.4 or later (interface 11), or a compatible AviSynthMinus runtime:
 
 ```avs
-LoadCPlugin("/path/to/neo-mv.dll")
+LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=640, height=360, length=24, pixel_type="YV12")
 super_clip = neo_mv_Super(clip, blksize=16, overlap=8, pad=32, pel=2)
 vectors = neo_mv_AnalyseMany(super_clip, radius=1)
