@@ -1,6 +1,7 @@
 #include "core/depan/estimate_fft_backend.hpp"
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <vector>
 
 // Built multiple times with separate dependency namespaces. No shared
@@ -52,12 +53,14 @@ void inverse(int width, int height, const std::complex<float>* input, float* out
     const auto limit = (std::min)(std::vector<float>{}.max_size(),
         std::size_t(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(float));
     if (pitch <= limit / std::size_t(height)) {
-      std::vector<float> temporary(pitch * std::size_t(height));
+      // The inverse transform writes every active sample before the copy.
+      // Padding is never read, so initializing the scratch buffer is redundant.
+      std::unique_ptr<float[]> temporary(new float[pitch * std::size_t(height)]);
       const pf::stride_t padded{std::ptrdiff_t(pitch) * std::ptrdiff_t(sizeof(float)),
                                  std::ptrdiff_t(sizeof(float))};
-      pf::c2r(shape, complex, padded, axes, pf::BACKWARD, input, temporary.data(), 1.0f, 1);
+      pf::c2r(shape, complex, padded, axes, pf::BACKWARD, input, temporary.get(), 1.0f, 1);
       for (int y = 0; y < height; ++y)
-        std::copy_n(temporary.data() + std::size_t(y) * pitch, width, output + std::size_t(y) * width);
+        std::copy_n(temporary.get() + std::size_t(y) * pitch, width, output + std::size_t(y) * width);
       return;
     }
   }
