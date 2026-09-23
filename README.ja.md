@@ -137,7 +137,19 @@ CI は Windows x64、Linux x64、macOS ARM64、Linux ASan/UBSan の検査を設�
 
 ## 謝辞とライセンス
 
-動き処理に取り組んできた MVTools、MVUtensils の作者と貢献者、そしてテスト、報告、改善に協力する開発者とユーザーの皆様に感謝します。neo-mv はホスト接続に DualSynth2、SIMD に Google Highway、FFT 計算に PocketFFT を使用します。
+neo-mv のインターフェースと動き処理機能の基礎を築いた、以下の上流プロジェクトの作者と貢献者の皆様に感謝します。
+
+- [MVUtensils](https://github.com/myrsloik/mvutensils)：neo-mv の API と動作の参照元であり、性能比較の対象でもあります。
+- [VapourSynth-MVTools](https://github.com/dubhatervapoursynth/vapoursynth-mvtools)：MVUtensils の前身で、AviSynth MVTools を VapourSynth に移植したプロジェクトです。
+- [MVTools / MVTools2](https://github.com/pinterf/mvtools)：ブロック単位の動き推定、動き補償、および関連フィルターの歴史的な源流です。
+- [DePan / DePanEstimate](https://github.com/pinterf/mvtools)：グローバルな動き推定、補償、手ぶれ補正機能の歴史的な源流です。
+
+neo-mv は以下の計算ライブラリも使用しています。
+
+- [Google Highway](https://github.com/google/highway)：クロスプラットフォームの SIMD を提供します。
+- [PocketFFT](https://github.com/mreineck/pocketfft)：FFT 計算を行います。
+
+テスト、問題報告、改善に協力する開発者とユーザーの皆様に感謝します。
 
 開発に使用する LLM サブスクリプションをご支援いただいた [SB.SB](https://sb.sb) に感謝します。
 

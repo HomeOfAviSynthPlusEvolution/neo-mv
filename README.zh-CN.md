@@ -137,7 +137,19 @@ CI 配置包含 Windows x64、Linux x64、macOS ARM64 及 Linux ASan/UBSan 检�
 
 ## 致谢与许可证
 
-感谢 MVTools、MVUtensils 的作者及贡献者在运动处理方面的工作，以及参与测试、报告问题和改进的开发者与用户。neo-mv 使用 DualSynth2 连接宿主，使用 Google Highway 提供 SIMD，使用 PocketFFT 完成 FFT 计算。
+感谢以下上游项目的作者与贡献者，他们的工作为 neo-mv 的接口与运动处理功能提供了基础：
+
+- [MVUtensils](https://github.com/myrsloik/mvutensils)：neo-mv 的 API 与行为参考，也是性能对比对象。
+- [VapourSynth-MVTools](https://github.com/dubhatervapoursynth/vapoursynth-mvtools)：MVUtensils 的前身，将 AviSynth MVTools 移植到 VapourSynth。
+- [MVTools / MVTools2](https://github.com/pinterf/mvtools)：块运动估计、运动补偿及相关滤镜的历史来源。
+- [DePan / DePanEstimate](https://github.com/pinterf/mvtools)：全局运动估计、补偿与稳定功能的历史来源。
+
+neo-mv 还使用了以下计算库：
+
+- [Google Highway](https://github.com/google/highway)：提供跨平台 SIMD 支持。
+- [PocketFFT](https://github.com/mreineck/pocketfft)：完成 FFT 计算。
+
+感谢参与测试、报告问题和改进的开发者与用户。
 
 感谢 [烧饼论坛](https://sb.sb) 赞助本项目开发使用的 LLM 订阅。
 

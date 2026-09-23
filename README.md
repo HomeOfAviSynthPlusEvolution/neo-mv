@@ -137,7 +137,19 @@ This project uses AI-assisted implementation, tests, and review. Contributions s
 
 ## Acknowledgments and license
 
-Thanks to the authors and contributors of MVTools and MVUtensils for their work on motion processing, and to the developers and users who contribute tests, reports, and improvements. neo-mv uses DualSynth2 for host integration, Google Highway for SIMD, and PocketFFT for FFT computation.
+Thanks to the authors and contributors of the following upstream projects, whose work provided the foundation for neo-mv's interface and motion-processing features:
+
+- [MVUtensils](https://github.com/myrsloik/mvutensils): the API and behavior reference for neo-mv, and the baseline for performance comparisons.
+- [VapourSynth-MVTools](https://github.com/dubhatervapoursynth/vapoursynth-mvtools): the predecessor of MVUtensils, porting AviSynth MVTools to VapourSynth.
+- [MVTools / MVTools2](https://github.com/pinterf/mvtools): the historical source of block motion estimation, motion compensation, and related filters.
+- [DePan / DePanEstimate](https://github.com/pinterf/mvtools): the historical source of global motion estimation, compensation, and stabilization.
+
+neo-mv also uses the following computation libraries:
+
+- [Google Highway](https://github.com/google/highway): cross-platform SIMD support.
+- [PocketFFT](https://github.com/mreineck/pocketfft): FFT computation.
+
+Thanks to the developers and users who contribute tests, reports, and improvements.
 
 Thanks to [SB.SB](https://sb.sb) for sponsoring the LLM subscription used in this project's development.
 
