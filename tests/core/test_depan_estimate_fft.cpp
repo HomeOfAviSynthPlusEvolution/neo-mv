@@ -45,6 +45,8 @@ void transforms(int width, int height, FftProfile profile) {
   }
   const auto saved_a = a, saved_b = b;
   const auto spectrum = plan.forward(a);
+  const auto admitted = plan.forward_admitted(a);
+  CHECK(std::memcmp(spectrum.data(), admitted.data(), spectrum.size() * sizeof(spectrum[0])) == 0);
   long double scale = 0;
   for (float value : a) scale += std::abs(value);
   const long double pi = std::acos(-1.0L);
@@ -64,6 +66,8 @@ void transforms(int width, int height, FftProfile profile) {
     }
   const auto before = spectrum;
   const auto back = plan.inverse(spectrum);
+  const auto admitted_back = plan.inverse_admitted(spectrum);
+  CHECK(std::memcmp(back.data(), admitted_back.data(), back.size() * sizeof(float)) == 0);
   for (std::size_t i = 0; i < count; ++i)
     close(back[i], a[i] * static_cast<long double>(count), scale * count);
   CHECK(std::memcmp(spectrum.data(), before.data(), spectrum.size() * sizeof(spectrum[0])) == 0);
@@ -138,6 +142,8 @@ void errors(FftProfile profile) {
   FftPlan plan(4, 3, profile);
   rejects([&] { plan.forward({}); });
   rejects([&] { plan.inverse({}); });
+  rejects([&] { plan.forward_admitted({}); });
+  rejects([&] { plan.inverse_admitted({}); });
   std::vector<float> input(12, 0);
   input.back() = std::numeric_limits<float>::quiet_NaN();
   rejects([&] { plan.forward(input); });
@@ -146,6 +152,9 @@ void errors(FftProfile profile) {
   rejects([&] { plan.inverse(spectrum); });
   input.assign(12, std::numeric_limits<float>::max());
   rejects([&] { plan.forward(input); });
+  rejects([&] { plan.forward_admitted(input); });
+  spectrum.assign(9, {std::numeric_limits<float>::max(), 0});
+  rejects([&] { plan.inverse_admitted(spectrum); });
   input.assign(12, 0); input[0] = 1e30f;
   rejects([&] { plan.correlate(input, input); });
 }

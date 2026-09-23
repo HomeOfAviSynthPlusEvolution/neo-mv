@@ -180,7 +180,7 @@ struct DepanEstimateFilter {
                   return entry->spectrum;
             }
             auto result = std::make_shared<const std::vector<std::complex<float>>>(
-                s.fft->forward(*input, simd::estimate::samples_finite));
+                s.fft->forward_admitted(*input, simd::estimate::samples_finite));
             if (cacheable) {
               std::lock_guard<std::mutex> lock(s.cache->mutex);
               s.cache->spectra[s.cache->next_spectrum].emplace(CachedSpectrum{frame_index, left, input, result});
@@ -188,10 +188,10 @@ struct DepanEstimateFilter {
             }
             return result;
           };
-          auto current_spectrum = cacheable ? *forward(n, a) : s.fft->forward(*a, simd::estimate::samples_finite);
+          auto current_spectrum = cacheable ? *forward(n, a) : s.fft->forward_admitted(*a, simd::estimate::samples_finite);
           const auto previous_spectrum = forward((std::max)(0, n - 1), b);
           simd::estimate::product(current_spectrum.data(), previous_spectrum->data(), current_spectrum.size());
-          correlation = s.fft->inverse(current_spectrum, simd::estimate::samples_finite);
+          correlation = s.fft->inverse_admitted(current_spectrum, simd::estimate::samples_finite);
         } else
 #endif
           correlation = s.fft->correlate(*a, *b);
@@ -201,12 +201,12 @@ struct DepanEstimateFilter {
         auto compute_motion = [&] {
 #if NEO_MV_ENABLE_HIGHWAY
           if (selected_backend() == KernelBackend::highway) {
-            const auto peak = est::find_peak<simd::estimate::MotionScan>(surface, g.mx, g.my, s.stab, s.trust);
-            return est::refine_motion<simd::estimate::MotionScan>(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
+            const auto peak = est::find_peak<simd::estimate::MotionScan, true>(surface, g.mx, g.my, s.stab, s.trust);
+            return est::refine_motion<simd::estimate::MotionScan, true>(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
           }
 #endif
-          const auto peak = est::find_peak(surface, g.mx, g.my, s.stab, s.trust);
-          return est::refine_motion(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
+          const auto peak = est::find_peak<est::motion_detail::ScalarScan, true>(surface, g.mx, g.my, s.stab, s.trust);
+          return est::refine_motion<est::motion_detail::ScalarScan, true>(surface, peak, g.mx, g.my, s.aspect, s.fields, top);
         };
         const auto motion = compute_motion();
         if (needs_display)

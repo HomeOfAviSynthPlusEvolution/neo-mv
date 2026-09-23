@@ -97,18 +97,32 @@ FftPlan::FftPlan(int width, int height, FftProfile profile) : width_(width), hei
   complex_count_ = checked_count<std::complex<float>>(width / 2 + 1, height);
 }
 std::vector<std::complex<float>> FftPlan::forward(const std::vector<float>& input, SampleValidator validator) const {
+  return forward_impl(input, validator, false);
+}
+std::vector<std::complex<float>> FftPlan::forward_admitted(const std::vector<float>& input, SampleValidator validator) const {
+  return forward_impl(input, validator, true);
+}
+std::vector<std::complex<float>> FftPlan::forward_impl(const std::vector<float>& input, SampleValidator validator, bool admitted) const {
   if (input.size() != real_count_)
     throw std::invalid_argument("incorrect DepanEstimate real input size");
-  validate(input, validator);
+  if (!admitted)
+    validate(input, validator);
   std::vector<std::complex<float>> output(complex_count_);
   backend(profile_).forward(width_, height_, input.data(), output.data());
   validate(output, validator);
   return output;
 }
 std::vector<float> FftPlan::inverse(const std::vector<std::complex<float>>& input, SampleValidator validator) const {
+  return inverse_impl(input, validator, false);
+}
+std::vector<float> FftPlan::inverse_admitted(const std::vector<std::complex<float>>& input, SampleValidator validator) const {
+  return inverse_impl(input, validator, true);
+}
+std::vector<float> FftPlan::inverse_impl(const std::vector<std::complex<float>>& input, SampleValidator validator, bool admitted) const {
   if (input.size() != complex_count_)
     throw std::invalid_argument("incorrect DepanEstimate half-spectrum size");
-  validate(input, validator);
+  if (!admitted)
+    validate(input, validator);
   std::vector<float> output(real_count_);
   backend(profile_).inverse(width_, height_, input.data(), output.data());
   validate(output, validator);
@@ -121,6 +135,6 @@ std::vector<float> FftPlan::correlate(const std::vector<float>& current, const s
     const float ar = a[i].real(), ai = a[i].imag(), br = b[i].real(), bi = b[i].imag();
     a[i] = {add(mul(ar, br), mul(ai, bi)), sub(mul(ar, bi), mul(ai, br))};
   }
-  return inverse(a);
+  return inverse_admitted(a);
 }
 } // namespace neo_mv::depan::estimate

@@ -55,13 +55,14 @@ inline float count32(std::uint64_t n) {
     ++significand;
   return f32(std::ldexp(static_cast<double>(significand), shift));
 }
-template <class Scan = ScalarScan>
+template <class Scan = ScalarScan, bool SamplesValidated = false>
 inline void surface_valid(span2d::Plane<const float> surface, int mx, int my) {
   validate_plane(surface);
   if (surface.width() % 2 || mx < 0 || my < 0 || mx >= surface.width() / 2 || my >= surface.height() / 2)
     throw std::invalid_argument("invalid DepanEstimate search geometry");
-  for (int y = 0; y < surface.height(); ++y)
-    Scan::validate(surface.row(y).data(), static_cast<std::size_t>(surface.width()));
+  if constexpr (!SamplesValidated)
+    for (int y = 0; y < surface.height(); ++y)
+      Scan::validate(surface.row(y).data(), static_cast<std::size_t>(surface.width()));
 }
 inline void trust_valid(float trust) {
   if (finite(trust) < 0 || trust > 100)
@@ -86,9 +87,10 @@ inline void index_valid(int n, int frames) {
 }
 } // namespace motion_detail
 
-template <class Scan = motion_detail::ScalarScan>
+// SamplesValidated is reserved for immutable output of a checked inverse FFT.
+template <class Scan = motion_detail::ScalarScan, bool SamplesValidated = false>
 inline Peak find_peak(span2d::Plane<const float> surface, int mx, int my, float stab, float trust) {
-  motion_detail::surface_valid<Scan>(surface, mx, my);
+  motion_detail::surface_valid<Scan, SamplesValidated>(surface, mx, my);
   motion_detail::trust_valid(trust);
   finite(stab);
   Peak result;
@@ -122,10 +124,10 @@ inline Peak find_peak(span2d::Plane<const float> surface, int mx, int my, float 
   return result;
 }
 
-template <class Scan = motion_detail::ScalarScan>
+template <class Scan = motion_detail::ScalarScan, bool SamplesValidated = false>
 inline WindowMotion refine_motion(span2d::Plane<const float> surface, Peak peak, int mx, int my, float aspect,
                                   bool fields, bool top) {
-  motion_detail::surface_valid<Scan>(surface, mx, my);
+  motion_detail::surface_valid<Scan, SamplesValidated>(surface, mx, my);
   if (finite(aspect) <= 0)
     throw std::invalid_argument("invalid DepanEstimate aspect");
   finite(peak.confidence);

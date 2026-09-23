@@ -17,6 +17,8 @@ class FftPlan {
   int width_, height_;
   std::size_t real_count_, complex_count_;
   FftProfile profile_;
+  std::vector<std::complex<float>> forward_impl(const std::vector<float>&, SampleValidator, bool) const;
+  std::vector<float> inverse_impl(const std::vector<std::complex<float>>&, SampleValidator, bool) const;
 
 public:
   FftPlan(int width, int height, FftProfile profile = FftProfile::scalar);
@@ -26,6 +28,10 @@ public:
   std::size_t complex_count() const { return complex_count_; }
   std::vector<std::complex<float>> forward(const std::vector<float>& input, SampleValidator validator = nullptr) const;
   std::vector<float> inverse(const std::vector<std::complex<float>>& input, SampleValidator validator = nullptr) const;
+  // Internal pipelines may reuse admission of immutable finite inputs. Size
+  // checks and output finite validation remain mandatory in both entry points.
+  std::vector<std::complex<float>> forward_admitted(const std::vector<float>& input, SampleValidator validator = nullptr) const;
+  std::vector<float> inverse_admitted(const std::vector<std::complex<float>>& input, SampleValidator validator = nullptr) const;
   std::vector<float> correlate(const std::vector<float>& current, const std::vector<float>& previous) const;
 };
 } // namespace neo_mv::depan::estimate
