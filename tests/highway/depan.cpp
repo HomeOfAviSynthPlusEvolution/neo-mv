@@ -496,6 +496,23 @@ void guarded_linear() {
       simd::depan_rows::linear_row(plan, input, output.data, coords.data, preserve);
       CHECK(std::equal(expected.begin(), expected.end(), output.data));
     }
+    EndRow<T> fused(width * 2);
+    auto destination =
+        checked_plane(fused.data, width, 2, std::ptrdiff_t(width) * sizeof(T), std::size_t(width) * 2 * sizeof(T));
+    for (const auto map : {Transform{0.25f, 0.03125f, 1, 0.125f, -0.03125f, 1},
+                           Transform{-1.5f, -0.96875f, 0.75f, 0.25f, 0.03125f, 0.75f}}) {
+      const SamplingPlan reference(width, 2, sizeof(T) * 8, 1, 0, 0, 7, map);
+      for (bool preserve : {false, true}) {
+        std::fill_n(fused.data, width * 2, T(173));
+        std::vector<T> expected(width * 2, T(173));
+        for (int y = 0; y < 2; ++y)
+          reference.row_coordinates(y, [&](int x, SamplingCoordinates q) {
+            reference.write_sample(input, expected[std::size_t(y) * width + x], q, preserve);
+          });
+        simd::depan_rows::linear_render(reference, input, destination, preserve);
+        CHECK(std::equal(expected.begin(), expected.end(), fused.data));
+      }
+    }
   }
 }
 void guarded_residuals() {

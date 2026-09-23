@@ -134,6 +134,93 @@ void LinearRow(const depan::SamplingPlan& plan, span2d::Plane<const T> source, T
     x += used;
   }
 }
+template <class T>
+void LinearRender(const depan::SamplingPlan& plan, span2d::Plane<const T> source, span2d::Plane<T> output,
+                  bool preserve) {
+  if (plan.sampling_class() != depan::SamplingClass::affine) {
+    std::vector<depan::SamplingCoordinates> coordinates(plan.width());
+    for (int y = 0; y < plan.height(); ++y) {
+      Coordinates(plan, y, coordinates.data());
+      LinearRow(plan, source, output.row(y).data(), coordinates.data(), preserve);
+    }
+    return;
+  }
+  const hn::ScalableTag<float> df;
+  const hn::Rebind<std::uint32_t, decltype(df)> d;
+  const hn::Rebind<std::int32_t, decltype(df)> di;
+  const int lanes = static_cast<int>(hn::Lanes(d));
+  HWY_ALIGN float px[hn::MaxLanes(df)]{}, py[hn::MaxLanes(df)]{};
+  HWY_ALIGN float ix[hn::MaxLanes(df)], iy[hn::MaxLanes(df)], fx[hn::MaxLanes(df)], fy[hn::MaxLanes(df)];
+  HWY_ALIGN std::uint32_t a[hn::MaxLanes(d)], b[hn::MaxLanes(d)], c[hn::MaxLanes(d)], e[hn::MaxLanes(d)];
+  HWY_ALIGN std::uint32_t result[hn::MaxLanes(d)];
+  bool interior[hn::MaxLanes(d)];
+  const auto scale = hn::Set(d, 32);
+  const auto m = plan.map();
+  const depan::ArithmeticContext arithmetic;
+  for (int y = 0; y < plan.height(); ++y) {
+    const float row = depan::f32(y);
+    float next_x = arithmetic.add(m.tx, arithmetic.mul(m.v, row));
+    float next_y = arithmetic.add(m.ty, arithmetic.mul(m.h, row));
+    auto* out = output.row(y).data();
+    for (int x = 0; x < plan.width();) {
+      const int used = (std::min)(lanes, plan.width() - x);
+      for (int i = 0; i < used; ++i) {
+        px[i] = next_x;
+        py[i] = next_y;
+        if (x + i + 1 < plan.width()) {
+          next_x = arithmetic.add(next_x, m.u);
+          next_y = arithmetic.add(next_y, m.w);
+        }
+      }
+      const auto X = hn::Load(df, px), Y = hn::Load(df, py);
+      const auto I = hn::Floor(X), J = hn::Floor(Y);
+      const auto FX = hn::Sub(X, I), FY = hn::Sub(Y, J);
+      hn::Store(I, df, ix);
+      hn::Store(J, df, iy);
+      hn::Store(FX, df, fx);
+      hn::Store(FY, df, fy);
+      // Fractions are nonnegative and at most one; scaling is exact and the
+      // resulting weights fit in [0,32]. No coordinate narrowing precedes the
+      // complete-footprint check, including for very large finite transforms.
+      const auto ax = hn::BitCast(d, hn::ConvertTo(di, hn::Mul(FX, hn::Set(df, 32))));
+      const auto ay = hn::BitCast(d, hn::ConvertTo(di, hn::Mul(FY, hn::Set(df, 32))));
+      for (int i = 0; i < lanes; ++i) {
+        a[i] = b[i] = c[i] = e[i] = 0;
+        interior[i] = false;
+        if (i >= used)
+          continue;
+        if (!(double(ix[i]) >= 0 && double(ix[i]) < plan.width() - 1 && double(iy[i]) >= 0 &&
+              double(iy[i]) < plan.height() - 1)) {
+          plan.write_sample(source, out[x + i], {double(ix[i]), double(iy[i]), fx[i], fy[i]}, preserve);
+          continue;
+        }
+        interior[i] = true;
+        const int sx = static_cast<int>(ix[i]), sy = static_cast<int>(iy[i]);
+        const auto top = source.row(sy), bottom = source.row(sy + 1);
+        a[i] = top[sx];
+        b[i] = top[sx + 1];
+        c[i] = bottom[sx];
+        e[i] = bottom[sx + 1];
+      }
+      const auto inverse_x = hn::Sub(scale, ax), inverse_y = hn::Sub(scale, ay);
+      const auto top = hn::Add(hn::Mul(hn::Load(d, a), inverse_x), hn::Mul(hn::Load(d, b), ax));
+      const auto bottom = hn::Add(hn::Mul(hn::Load(d, c), inverse_x), hn::Mul(hn::Load(d, e), ax));
+      hn::Store(hn::ShiftRight<10>(hn::Add(hn::Mul(top, inverse_y), hn::Mul(bottom, ay))), d, result);
+      for (int i = 0; i < used; ++i)
+        if (interior[i])
+          out[x + i] = static_cast<T>(result[i]);
+      x += used;
+    }
+  }
+}
+void RenderLinear8(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, span2d::Plane<std::uint8_t> o,
+                   bool preserve) {
+  LinearRender(p, s, o, preserve);
+}
+void RenderLinear16(const depan::SamplingPlan& p, span2d::Plane<const std::uint16_t> s, span2d::Plane<std::uint16_t> o,
+                    bool preserve) {
+  LinearRender(p, s, o, preserve);
+}
 void Linear8(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, std::uint8_t* o,
              const depan::SamplingCoordinates* q, bool preserve) {
   LinearRow(p, s, o, q, preserve);
@@ -150,6 +237,16 @@ namespace neo_mv::simd::depan_rows {
 HWY_EXPORT(Coordinates);
 HWY_EXPORT(Linear8);
 HWY_EXPORT(Linear16);
+HWY_EXPORT(RenderLinear8);
+HWY_EXPORT(RenderLinear16);
+void linear_render(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, span2d::Plane<std::uint8_t> o,
+                   bool preserve) {
+  HWY_DYNAMIC_DISPATCH(RenderLinear8)(p, s, o, preserve);
+}
+void linear_render(const depan::SamplingPlan& p, span2d::Plane<const std::uint16_t> s, span2d::Plane<std::uint16_t> o,
+                   bool preserve) {
+  HWY_DYNAMIC_DISPATCH(RenderLinear16)(p, s, o, preserve);
+}
 void linear_row(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, std::uint8_t* o,
                 const depan::SamplingCoordinates* q, bool preserve) {
   HWY_DYNAMIC_DISPATCH(Linear8)(p, s, o, q, preserve);

@@ -78,14 +78,11 @@ public:
   template <class T>
   void render(span2d::Plane<const T> source, span2d::Plane<T> output, bool preserve = false) const {
     validate(source, output);
-    std::vector<SamplingCoordinates> coordinates(width());
     if (mode() == 1) {
-      for (int y = 0; y < height(); ++y) {
-        simd::depan_rows::coordinates(*this, y, coordinates.data());
-        simd::depan_rows::linear_row(*this, source, output.row(y).data(), coordinates.data(), preserve);
-      }
+      simd::depan_rows::linear_render(*this, source, output, preserve);
       return;
     }
+    std::vector<SamplingCoordinates> coordinates(width());
     if (mode() == 0) {
       for (int y = 0; y < height(); ++y) {
         simd::depan_rows::coordinates(*this, y, coordinates.data());
