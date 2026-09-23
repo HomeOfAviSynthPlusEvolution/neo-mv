@@ -4,7 +4,7 @@ Resample the timeline at a target frame rate using motion interpolation.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.FlowFPS`. AviSynth: `neo_mv_FlowFPS`. Parameter order:
+VapourSynth: `core.neo_mv.FlowFPS`. AviSynth: `neo_mv_FlowFPS`. Parameter order:
 
 ```text
 FlowFPS(clip, super, vectors [, num, den, extramask, ml, blend, thscd1, thscd2, prefix])
@@ -50,9 +50,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.FlowFPS(clip, s, v, num=30, den=1)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.FlowFPS(clip, s, v, num=30, den=1)
 result.set_output()
 ```
 

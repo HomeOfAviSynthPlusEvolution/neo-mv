@@ -4,7 +4,7 @@ Estimate adjacent-frame translation and optional zoom from first-plane FFT corre
 
 ## Calling the function
 
-VapourSynth: `core.neomv.DepanEstimate`. AviSynth: `neo_mv_DepanEstimate`. Parameter order:
+VapourSynth: `core.neo_mv.DepanEstimate`. AviSynth: `neo_mv_DepanEstimate`. Parameter order:
 
 ```text
 DepanEstimate(clip [, trust, winx, winy, wleft, wtop, dxmax, dymax, zoommax, stab, pixaspect, info, show, fields, tff])
@@ -58,7 +58,7 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-result = core.neomv.DepanEstimate(clip, winx=32, winy=32)
+result = core.neo_mv.DepanEstimate(clip, winx=32, winy=32)
 result.set_output()
 ```
 

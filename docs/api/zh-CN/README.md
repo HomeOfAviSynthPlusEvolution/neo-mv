@@ -2,7 +2,7 @@
 
 这里收录全部 44 个公开入口的签名、默认值、参数范围、输入输出要求和可运行的 VapourSynth/AviSynth 示例。25 个编号 Degrain 变体与 Degrain 共用一页。
 
-VapourSynth 使用 `core.neomv.Name`，AviSynth 使用 `neo_mv_Name`；分别通过 `core.std.LoadPlugin` 或 `LoadPlugin` 加载插件。示例使用空白源和占位插件路径，运行前请替换路径。
+VapourSynth 使用 `core.neo_mv.Name`，AviSynth 使用 `neo_mv_Name`；分别通过 `core.std.LoadPlugin` 或 `LoadPlugin` 加载插件。示例使用空白源和占位插件路径，运行前请替换路径。
 
 数组参数允许用单值简写一个元素；Python 使用 `[16, 8]` 这样的列表，AviSynth 使用同样写法的原生数组。省略参数与显式空数组并不总是等价，具体规则见各页。`AnalyseMany` 和 `Recalculate` 返回剪辑数组，Recalculate 只有一个输入时也如此。
 

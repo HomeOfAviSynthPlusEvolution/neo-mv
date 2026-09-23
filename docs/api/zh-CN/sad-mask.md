@@ -4,7 +4,7 @@
 
 ## 调用方式
 
-VapourSynth：`core.neomv.SADMask`；AviSynth：`neo_mv_SADMask`。参数顺序：
+VapourSynth：`core.neo_mv.SADMask`；AviSynth：`neo_mv_SADMask`。参数顺序：
 
 ```text
 SADMask(vectors [, ml, gamma, time, scval, thscd1, thscd2, prefix])
@@ -45,9 +45,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.SADMask(v[0])
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.SADMask(v[0])
 result.set_output()
 ```
 

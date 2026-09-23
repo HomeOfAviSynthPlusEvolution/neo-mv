@@ -5,7 +5,7 @@ Query the selected general-kernel and FFT configuration. This function takes no 
 ## Calling the function
 
 ```text
-core.neomv.KernelInfo()
+core.neo_mv.KernelInfo()
 neo_mv_KernelInfo()
 ```
 
@@ -43,7 +43,7 @@ import vapoursynth as vs
 
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
-print(core.neomv.KernelInfo())
+print(core.neo_mv.KernelInfo())
 core.std.BlankClip(width=64, height=48, length=12, format=vs.YUV420P8).set_output()
 ```
 

@@ -4,7 +4,7 @@
 
 ## 调用方式
 
-VapourSynth 使用 `core.neomv.Super`，AviSynth 使用 `neo_mv_Super`。两个接口的参数顺序相同：
+VapourSynth 使用 `core.neo_mv.Super`，AviSynth 使用 `neo_mv_Super`。两个接口的参数顺序相同：
 
 ```text
 Super(clip, blksize, overlap [, pad, onelevel, sharp, rfilter, pel, pelclip, prefix])
@@ -88,7 +88,7 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, format=vs.YUV420P8)
-super_clip = core.neomv.Super(clip, blksize=[8, 8], overlap=[4, 4])
+super_clip = core.neo_mv.Super(clip, blksize=[8, 8], overlap=[4, 4])
 super_clip.set_output()
 ```
 

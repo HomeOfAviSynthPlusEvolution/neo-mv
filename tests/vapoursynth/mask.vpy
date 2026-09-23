@@ -7,7 +7,7 @@ import vapoursynth as vs
 core = vs.core
 core.num_threads = 4
 core.std.LoadPlugin(path=plugin)
-mv = core.neomv
+mv = core.neo_mv
 P = "MVUtensils"
 
 

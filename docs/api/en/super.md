@@ -4,7 +4,7 @@ Builds image pyramids, extended borders, and subpixel sampling data for motion a
 
 ## Calling the function
 
-Use `core.neomv.Super` in VapourSynth and `neo_mv_Super` in AviSynth. Both interfaces use the same parameter order:
+Use `core.neo_mv.Super` in VapourSynth and `neo_mv_Super` in AviSynth. Both interfaces use the same parameter order:
 
 ```text
 Super(clip, blksize, overlap [, pad, onelevel, sharp, rfilter, pel, pelclip, prefix])
@@ -88,7 +88,7 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, format=vs.YUV420P8)
-super_clip = core.neomv.Super(clip, blksize=[8, 8], overlap=[4, 4])
+super_clip = core.neo_mv.Super(clip, blksize=[8, 8], overlap=[4, 4])
 super_clip.set_output()
 ```
 

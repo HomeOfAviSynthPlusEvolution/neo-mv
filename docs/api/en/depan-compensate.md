@@ -4,7 +4,7 @@ Apply global-motion compensation at an integer or fractional frame offset.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.DepanCompensate`. AviSynth: `neo_mv_DepanCompensate`. Parameter order:
+VapourSynth: `core.neo_mv.DepanCompensate`. AviSynth: `neo_mv_DepanCompensate`. Parameter order:
 
 ```text
 DepanCompensate(clip, data [, offset, subpixel, pixaspect, matchfields, mirror, blur, info, fields, tff])
@@ -50,8 +50,8 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-data = core.neomv.DepanEstimate(clip, winx=32, winy=32)
-result = core.neomv.DepanCompensate(clip, data, offset=1)
+data = core.neo_mv.DepanEstimate(clip, winx=32, winy=32)
+result = core.neo_mv.DepanCompensate(clip, data, offset=1)
 result.set_output()
 ```
 

@@ -9,7 +9,7 @@ import vapoursynth as vs
 core = vs.core
 core.num_threads = 4
 core.std.LoadPlugin(path=plugin)
-mv = core.neomv
+mv = core.neo_mv
 selected = mv.KernelInfo()
 expected_kernel = globals().get("kernel", "scalar")
 assert selected["backend"] == expected_kernel, selected

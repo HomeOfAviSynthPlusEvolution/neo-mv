@@ -4,7 +4,7 @@ Smooth global motion and render the corrected image, optionally filling borders 
 
 ## Calling the function
 
-VapourSynth: `core.neomv.DepanStabilise`. AviSynth: `neo_mv_DepanStabilise`. Parameter order:
+VapourSynth: `core.neo_mv.DepanStabilise`. AviSynth: `neo_mv_DepanStabilise`. Parameter order:
 
 ```text
 DepanStabilise(clip, data [, cutoff, damping, initzoom, addzoom, prev, next, mirror, blur, dxmax, dymax, zoommax, rotmax, subpixel, pixaspect, fitlast, tzoom, info, method, fields])
@@ -60,8 +60,8 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-data = core.neomv.DepanEstimate(clip, winx=32, winy=32)
-result = core.neomv.DepanStabilise(clip, data)
+data = core.neo_mv.DepanEstimate(clip, winx=32, winy=32)
+result = core.neo_mv.DepanStabilise(clip, data)
 result.set_output()
 ```
 

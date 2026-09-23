@@ -6,7 +6,7 @@
 
 ## 2. 计算对象与记号
 
-VapourSynth 调用 `core.neomv.KernelInfo()`，返回四个字段：
+VapourSynth 调用 `core.neo_mv.KernelInfo()`，返回四个字段：
 
 | 字段 | 含义 |
 | --- | --- |

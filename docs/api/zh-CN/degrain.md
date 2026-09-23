@@ -4,7 +4,7 @@
 
 ## 调用方式
 
-VapourSynth：`core.neomv.Degrain`；AviSynth：`neo_mv_Degrain`。参数顺序：
+VapourSynth：`core.neo_mv.Degrain`；AviSynth：`neo_mv_Degrain`。参数顺序：
 
 ```text
 Degrain(clip, super, vectors [, thsad, thsad2, planes, limit, thscd1, thscd2, weights, prefix])
@@ -88,9 +88,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=2, badrange=0)
-result = core.neomv.Degrain2(clip, s, v)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=2, badrange=0)
+result = core.neo_mv.Degrain2(clip, s, v)
 result.set_output()
 ```
 

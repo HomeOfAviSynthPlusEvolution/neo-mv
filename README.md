@@ -4,7 +4,7 @@
 
 neo-mv is a motion-processing plugin for VapourSynth and AviSynth. It provides block motion estimation, motion compensation, temporal blending, motion masks, frame interpolation, and global motion estimation and stabilization, with an API based on MVUtensils.
 
-The implementation uses C++17, with scalar kernels, cross-platform SIMD through Google Highway, and PocketFFT for frequency-domain motion estimation. DualSynth2 connects the computation core to both hosts. VapourSynth uses `core.neomv`; AviSynth uses functions prefixed with `neo_mv_`.
+The implementation uses C++17, with scalar kernels, cross-platform SIMD through Google Highway, and PocketFFT for frequency-domain motion estimation. DualSynth2 connects the computation core to both hosts. VapourSynth uses `core.neo_mv`; AviSynth uses functions prefixed with `neo_mv_`.
 
 ## Design
 
@@ -26,7 +26,7 @@ The implementation was developed from behavioral specifications, with explicit r
 
 Block-motion and Flow operations support planar GRAY/YUV with 8–16-bit integer or 32-bit floating-point samples. Format and subsampling restrictions vary by function. `DepanAnalyse`, `DepanCompensate`, and `DepanStabilise` use integer images; `DepanEstimate` also accepts float32. RGB is not supported.
 
-Motion data is carried in frame properties. The default property prefix is `MVUtensils`, independently of the `neomv` plugin namespace. Super's auxiliary images belong to the implementation that created them; generate Super with neo-mv for use by neo-mv consumers.
+Motion data is carried in frame properties. The default property prefix is `MVUtensils`, independently of the `neo_mv` plugin namespace. Super's auxiliary images belong to the implementation that created them; generate Super with neo-mv for use by neo-mv consumers.
 
 ## Documentation and use
 
@@ -43,11 +43,11 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 
-print(core.neomv.KernelInfo())
+print(core.neo_mv.KernelInfo())
 clip = core.std.BlankClip(width=640, height=360, format=vs.YUV420P8, length=24)
-super_clip = core.neomv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
-vectors = core.neomv.Analyse(super_clip, delta=1)
-output = core.neomv.Compensate(clip, super_clip, vectors)
+super_clip = core.neo_mv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
+vectors = core.neo_mv.Analyse(super_clip, delta=1)
+output = core.neo_mv.Compensate(clip, super_clip, vectors)
 output.set_output()
 ```
 
@@ -69,7 +69,7 @@ Function names and parameter order follow the API reference, with the `neo_mv_` 
 
 SIMD builds select a compiled Highway target supported by the running CPU. Scalar fallback remains available. Set `NEO_MV_KERNEL=scalar` before the first backend initialization to use scalar kernels and scalar FFT; `NEO_MV_KERNEL=highway` explicitly requires a SIMD-enabled build. With the variable unset, the build selects its default backend.
 
-Selection is cached after the first successful initialization. Changing the environment afterward does not switch existing or new filter instances to another backend. `core.neomv.KernelInfo()` reports `backend`, `target`, `fft`, and `fft_lanes`; the FFT target can differ from the general-kernel target. Lane count is not a thread count or a speedup estimate.
+Selection is cached after the first successful initialization. Changing the environment afterward does not switch existing or new filter instances to another backend. `core.neo_mv.KernelInfo()` reports `backend`, `target`, `fft`, and `fft_lanes`; the FFT target can differ from the general-kernel target. Lane count is not a thread count or a speedup estimate.
 
 FFT profiles and permitted floating-point differences can affect results. Wider SIMD does not guarantee higher throughput. See [KernelInfo](docs/knowledge/en/kernel-info.md) and each function's precision section.
 

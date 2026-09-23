@@ -4,7 +4,7 @@ Average samples along motion trajectories around the current frame.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.FlowBlur`. AviSynth: `neo_mv_FlowBlur`. Parameter order:
+VapourSynth: `core.neo_mv.FlowBlur`. AviSynth: `neo_mv_FlowBlur`. Parameter order:
 
 ```text
 FlowBlur(clip, super, vectors [, blur, prec, thscd1, thscd2, prefix])
@@ -47,9 +47,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.FlowBlur(clip, s, v)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.FlowBlur(clip, s, v)
 result.set_output()
 ```
 

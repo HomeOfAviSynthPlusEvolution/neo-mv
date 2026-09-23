@@ -4,7 +4,7 @@ Build an occlusion mask from differences between neighboring block vectors.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.OcclusionMask`. AviSynth: `neo_mv_OcclusionMask`. Parameter order:
+VapourSynth: `core.neo_mv.OcclusionMask`. AviSynth: `neo_mv_OcclusionMask`. Parameter order:
 
 ```text
 OcclusionMask(vectors [, ml, gamma, time, scval, thscd1, thscd2, prefix])
@@ -45,9 +45,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.OcclusionMask(v[0])
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.OcclusionMask(v[0])
 result.set_output()
 ```
 

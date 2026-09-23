@@ -6,7 +6,7 @@
 
 ## 2. Objects and notation
 
-In VapourSynth, `core.neomv.KernelInfo()` returns four fields:
+In VapourSynth, `core.neo_mv.KernelInfo()` returns four fields:
 
 | Field | Meaning |
 | --- | --- |

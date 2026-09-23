@@ -4,7 +4,7 @@
 
 ## 调用方式
 
-VapourSynth：`core.neomv.Recalculate`；AviSynth：`neo_mv_Recalculate`。参数顺序：
+VapourSynth：`core.neo_mv.Recalculate`；AviSynth：`neo_mv_Recalculate`。参数顺序：
 
 ```text
 Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, satd, prefix])
@@ -68,9 +68,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.Recalculate(s, v, blksize=8, overlap=4)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.Recalculate(s, v, blksize=8, overlap=4)
 result[0].set_output()
 ```
 

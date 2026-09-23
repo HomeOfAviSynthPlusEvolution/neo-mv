@@ -2,7 +2,7 @@
 
 These articles explain how each public neo-mv function turns inputs into outputs: data representations, operation order, formulas, where parameters enter the calculation, and how boundaries and rounding affect results. Each function includes a numerical example; shared operations have separate articles.
 
-Function names in these articles omit the host prefix. Use `core.neomv.Super(...)` in VapourSynth and `neo_mv_Super(...)` in AviSynth; the same rule applies to the other functions. Computations and parameter names are shared. AviSynth accepts native arrays such as `[8, 8]`; `AnalyseMany` and `Recalculate` return arrays of clips, including when `Recalculate` produces one clip. `KernelInfo` returns an array in the order `[backend, target, fft, fft_lanes]`.
+Function names in these articles omit the host prefix. Use `core.neo_mv.Super(...)` in VapourSynth and `neo_mv_Super(...)` in AviSynth; the same rule applies to the other functions. Computations and parameter names are shared. AviSynth accepts native arrays such as `[8, 8]`; `AnalyseMany` and `Recalculate` return arrays of clips, including when `Recalculate` produces one clip. `KernelInfo` returns an array in the order `[backend, target, fft, fft_lanes]`.
 
 ## Image levels and block motion
 

@@ -4,7 +4,7 @@
 
 neo-mv は VapourSynth と AviSynth 用の動き処理プラグインです。ブロック動き推定、動き補償、時間方向の混合、動きマスク、フレーム補間、グローバル動き推定と手ぶれ補正を提供します。API は MVUtensils を基にしています。
 
-実装は C++17 を使用し、スカラー計算、Google Highway によるクロスプラットフォーム SIMD、周波数領域での動き推定に使う PocketFFT を備えています。DualSynth2 が計算コアを両ホストに接続します。VapourSynth では `core.neomv`、AviSynth では `neo_mv_` 接頭辞の関数を使用します。
+実装は C++17 を使用し、スカラー計算、Google Highway によるクロスプラットフォーム SIMD、周波数領域での動き推定に使う PocketFFT を備えています。DualSynth2 が計算コアを両ホストに接続します。VapourSynth では `core.neo_mv`、AviSynth では `neo_mv_` 接頭辞の関数を使用します。
 
 ## 設計
 
@@ -26,7 +26,7 @@ neo-mv は動きの計算とホストのフレーム管理を分離していま�
 
 ブロック動きと Flow 系の処理は、プレーナー GRAY/YUV の 8–16 ビット整数および 32 ビット浮動小数点サンプルに対応します。形式とサブサンプリングの制約は関数によって異なります。`DepanAnalyse`、`DepanCompensate`、`DepanStabilise` は整数画像を使用し、`DepanEstimate` は float32 にも対応します。RGB には対応していません。
 
-動きデータはフレームプロパティに格納されます。既定のプロパティ接頭辞は `MVUtensils` で、プラグインの名前空間 `neomv` とは独立しています。Super の補助画像は生成した実装に属するため、neo-mv の関数で使用する Super は neo-mv で生成してください。
+動きデータはフレームプロパティに格納されます。既定のプロパティ接頭辞は `MVUtensils` で、プラグインの名前空間 `neo_mv` とは独立しています。Super の補助画像は生成した実装に属するため、neo-mv の関数で使用する Super は neo-mv で生成してください。
 
 ## ドキュメントと使用方法
 
@@ -43,11 +43,11 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 
-print(core.neomv.KernelInfo())
+print(core.neo_mv.KernelInfo())
 clip = core.std.BlankClip(width=640, height=360, format=vs.YUV420P8, length=24)
-super_clip = core.neomv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
-vectors = core.neomv.Analyse(super_clip, delta=1)
-output = core.neomv.Compensate(clip, super_clip, vectors)
+super_clip = core.neo_mv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
+vectors = core.neo_mv.Analyse(super_clip, delta=1)
+output = core.neo_mv.Compensate(clip, super_clip, vectors)
 output.set_output()
 ```
 
@@ -69,7 +69,7 @@ return neo_mv_Degrain1(clip, super_clip, vectors)
 
 SIMD を有効にしたビルドは、実行中の CPU が対応し、かつビルドに含まれる Highway ターゲットを選択します。スカラーへのフォールバックも利用できます。最初のバックエンド初期化より前に `NEO_MV_KERNEL=scalar` を設定すると、スカラーカーネルとスカラー FFT を使用します。`NEO_MV_KERNEL=highway` は SIMD 有効ビルドを明示的に要求します。未設定の場合はビルドの既定バックエンドを選択します。
 
-最初に成功した初期化の結果はキャッシュされます。その後に環境変数を変更しても、既存または新規のフィルターのバックエンドは切り替わりません。`core.neomv.KernelInfo()` は `backend`、`target`、`fft`、`fft_lanes` を返します。FFT ターゲットは一般カーネルのターゲットと異なる場合があります。レーン数はスレッド数や高速化率ではありません。
+最初に成功した初期化の結果はキャッシュされます。その後に環境変数を変更しても、既存または新規のフィルターのバックエンドは切り替わりません。`core.neo_mv.KernelInfo()` は `backend`、`target`、`fft`、`fft_lanes` を返します。FFT ターゲットは一般カーネルのターゲットと異なる場合があります。レーン数はスレッド数や高速化率ではありません。
 
 FFT の設定と許容される浮動小数点差分は結果に影響することがあります。広い SIMD が常に高いスループットを保証するわけではありません。[KernelInfo](docs/knowledge/en/kernel-info.md) と各関数の精度の節を参照してください。
 

@@ -4,7 +4,7 @@ Create an ordered array of forward/backward analysis clips.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.AnalyseMany`. AviSynth: `neo_mv_AnalyseMany`. Parameter order:
+VapourSynth: `core.neo_mv.AnalyseMany`. AviSynth: `neo_mv_AnalyseMany`. Parameter order:
 
 ```text
 AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, radius, prefix])
@@ -77,8 +77,8 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neomv.AnalyseMany(s, radius=2, badrange=0)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+result = core.neo_mv.AnalyseMany(s, radius=2, badrange=0)
 result[0].set_output()
 ```
 

@@ -4,7 +4,7 @@ Estimate block motion from each frame to a reference at n+delta.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.Analyse`. AviSynth: `neo_mv_Analyse`. Parameter order:
+VapourSynth: `core.neo_mv.Analyse`. AviSynth: `neo_mv_Analyse`. Parameter order:
 
 ```text
 Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, prefix])
@@ -76,8 +76,8 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neomv.Analyse(s, delta=1, badrange=0)
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+result = core.neo_mv.Analyse(s, delta=1, badrange=0)
 result.set_output()
 ```
 

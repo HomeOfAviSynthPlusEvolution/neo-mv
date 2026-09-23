@@ -4,7 +4,7 @@ Fit adjacent-frame global motion from existing block vectors.
 
 ## Calling the function
 
-VapourSynth: `core.neomv.DepanAnalyse`. AviSynth: `neo_mv_DepanAnalyse`. Parameter order:
+VapourSynth: `core.neo_mv.DepanAnalyse`. AviSynth: `neo_mv_DepanAnalyse`. Parameter order:
 
 ```text
 DepanAnalyse(clip, vectors [, mask, zoom, rot, pixaspect, error, info, wrong, zerow, thscd1, thscd2, fields, tff])
@@ -53,9 +53,9 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
-s = core.neomv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neomv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neomv.DepanAnalyse(clip, v[0])
+s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
+result = core.neo_mv.DepanAnalyse(clip, v[0])
 result.set_output()
 ```
 

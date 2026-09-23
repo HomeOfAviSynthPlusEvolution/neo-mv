@@ -173,7 +173,7 @@ def main():
             if os.environ.get("NEO_MV_KERNEL") != args.kernel:
                 raise ValueError("worker must start with NEO_MV_KERNEL matching --kernel")
             core.std.LoadPlugin(path=str(args.plugin.resolve()))
-            plugin = core.neomv
+            plugin = core.neo_mv
         else:
             if explicit_reference:
                 if not args.mvu_plugin_sha256:

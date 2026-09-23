@@ -2,7 +2,7 @@
 
 Signatures, defaults, parameter ranges, input/output requirements and runnable VapourSynth/AviSynth examples for all 44 public entries. The 25 numbered Degrain variants share one page with Degrain.
 
-Use `core.neomv.Name` in VapourSynth and `neo_mv_Name` in AviSynth. Load the plugin with `core.std.LoadPlugin` or `LoadPlugin`, respectively. Examples use a blank source and a placeholder plugin path; replace that path before running.
+Use `core.neo_mv.Name` in VapourSynth and `neo_mv_Name` in AviSynth. Load the plugin with `core.std.LoadPlugin` or `LoadPlugin`, respectively. Examples use a blank source and a placeholder plugin path; replace that path before running.
 
 Array parameters accept one scalar as a one-element array. In Python, use lists such as `[16, 8]`; AviSynth also uses native arrays such as `[16, 8]`. A missing argument and an explicit empty array are not always equivalent; each page documents this. `AnalyseMany` and `Recalculate` return arrays of clips, even when Recalculate has one input.
 

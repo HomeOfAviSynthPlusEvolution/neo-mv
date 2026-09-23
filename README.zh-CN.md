@@ -4,7 +4,7 @@
 
 neo-mv 是 VapourSynth 和 AviSynth 的运动处理插件，提供块运动估计、运动补偿、时域混合、运动遮罩、帧插值，以及全局运动估计与稳像，接口以 MVUtensils 为基础。
 
-内部使用 C++17，提供标量内核、基于 Google Highway 的跨平台 SIMD，以及用于频域运动估计的 PocketFFT。DualSynth2 将计算核心连接到两个宿主。VapourSynth 使用 `core.neomv`，AviSynth 使用带有 `neo_mv_` 前缀的函数。
+内部使用 C++17，提供标量内核、基于 Google Highway 的跨平台 SIMD，以及用于频域运动估计的 PocketFFT。DualSynth2 将计算核心连接到两个宿主。VapourSynth 使用 `core.neo_mv`，AviSynth 使用带有 `neo_mv_` 前缀的函数。
 
 ## 设计
 
@@ -26,7 +26,7 @@ neo-mv 将运动计算与宿主帧管理分离。核心处理图像平面、运�
 
 块运动和 Flow 系列支持平面 GRAY/YUV 的 8–16 位整数及 32 位浮点样本，具体格式和子采样限制因函数而异。`DepanAnalyse`、`DepanCompensate` 和 `DepanStabilise` 使用整数图像；`DepanEstimate` 也接受 float32。不支持 RGB。
 
-运动数据保存在帧属性中。默认属性前缀为 `MVUtensils`，与插件命名空间 `neomv` 相互独立。Super 的辅助图像属于生成它的实现，供 neo-mv 使用的 Super 应由 neo-mv 生成。
+运动数据保存在帧属性中。默认属性前缀为 `MVUtensils`，与插件命名空间 `neo_mv` 相互独立。Super 的辅助图像属于生成它的实现，供 neo-mv 使用的 Super 应由 neo-mv 生成。
 
 ## 文档与使用
 
@@ -43,11 +43,11 @@ import vapoursynth as vs
 core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 
-print(core.neomv.KernelInfo())
+print(core.neo_mv.KernelInfo())
 clip = core.std.BlankClip(width=640, height=360, format=vs.YUV420P8, length=24)
-super_clip = core.neomv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
-vectors = core.neomv.Analyse(super_clip, delta=1)
-output = core.neomv.Compensate(clip, super_clip, vectors)
+super_clip = core.neo_mv.Super(clip, blksize=16, overlap=8, pad=32, pel=2)
+vectors = core.neo_mv.Analyse(super_clip, delta=1)
+output = core.neo_mv.Compensate(clip, super_clip, vectors)
 output.set_output()
 ```
 
@@ -69,7 +69,7 @@ return neo_mv_Degrain1(clip, super_clip, vectors)
 
 启用 SIMD 的构建会选择当前 CPU 支持且已编译的 Highway 目标，并保留标量回退。在首次初始化后端之前设置 `NEO_MV_KERNEL=scalar`，可使用标量内核和标量 FFT；`NEO_MV_KERNEL=highway` 显式要求启用 SIMD 的构建。不设置该变量时使用构建的默认后端。
 
-首次成功初始化后会缓存选择结果，此后修改环境变量不会为已有或新建滤镜切换后端。`core.neomv.KernelInfo()` 返回 `backend`、`target`、`fft` 和 `fft_lanes`；FFT 目标可能与通用内核目标不同。通道数不是线程数，也不是加速倍数。
+首次成功初始化后会缓存选择结果，此后修改环境变量不会为已有或新建滤镜切换后端。`core.neo_mv.KernelInfo()` 返回 `backend`、`target`、`fft` 和 `fft_lanes`；FFT 目标可能与通用内核目标不同。通道数不是线程数，也不是加速倍数。
 
 FFT 配置和允许的浮点差异可能影响结果，更宽的 SIMD 不保证吞吐量更高。详见 [KernelInfo](docs/knowledge/zh-CN/kernel-info.md) 及各函数的精度章节。
 
