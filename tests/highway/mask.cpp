@@ -271,6 +271,25 @@ void guarded_rows(int bits) {
     check(std::memcmp(expected.view().row(0).data(), out.data, std::size_t(width) * sizeof(T)) == 0);
   }
 }
+template <class T>
+void guarded_vertical() {
+  for (int width : {1, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 129}) {
+    EndRow<std::uint16_t> top(width), bottom(width);
+    EndRow<T> out(width);
+    const unsigned maximum = std::is_same_v<T, std::uint8_t> ? 255 : 65535;
+    for (int x = 0; x < width; ++x) {
+      top.data[x] = std::uint16_t(x % 3 ? maximum : 0);
+      bottom.data[x] = std::uint16_t((x * 197u) & maximum);
+    }
+    for (int weight : {0, 1, 8191, 8192, 16383, 16384}) {
+      neo_mv::simd::mask_rows::resize_vertical(top.data, bottom.data, width, weight, out.data);
+      for (int x = 0; x < width; ++x) {
+        const auto value = ((16384u - weight) * top.data[x] + weight * bottom.data[x] + 8192u) >> 14;
+        check(out.data[x] == static_cast<T>(int(value) - (std::is_same_v<T, std::int16_t> ? 32768 : 0)));
+      }
+    }
+  }
+}
 } // namespace
 int main() {
   try {
@@ -298,6 +317,9 @@ int main() {
       guarded_rows<float>(32);
       zero_and_subnormal();
       repeated_powers();
+      guarded_vertical<std::uint8_t>();
+      guarded_vertical<std::uint16_t>();
+      guarded_vertical<std::int16_t>();
     }
     hwy::SetSupportedTargetsForTest(0);
     std::cout << "Phase3 exact differentials passed\n";

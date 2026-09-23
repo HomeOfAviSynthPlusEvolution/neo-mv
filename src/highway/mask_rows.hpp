@@ -12,6 +12,12 @@ NEO_MASK_PASS(std::int16_t)
 NEO_MASK_PASS(std::uint16_t)
 NEO_MASK_PASS(std::uint8_t)
 #undef NEO_MASK_PASS
+#define NEO_MASK_VERTICAL(T) \
+  void resize_vertical(const std::uint16_t* top, const std::uint16_t* bottom, int width, std::int32_t weight, T* output);
+NEO_MASK_VERTICAL(std::int16_t)
+NEO_MASK_VERTICAL(std::uint16_t)
+NEO_MASK_VERTICAL(std::uint8_t)
+#undef NEO_MASK_VERTICAL
 void resize_float_vertical(const double* top, const double* bottom, int width, double coefficient, float* output);
 void magnitude(const double* x, const double* y, std::size_t count, int pel, float f2, float exponent, float maximum,
                double* scores);

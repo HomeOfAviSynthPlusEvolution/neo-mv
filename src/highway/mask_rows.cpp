@@ -201,6 +201,62 @@ NEO_PASS(std::int16_t, I16)
 NEO_PASS(std::uint16_t, U16)
 NEO_PASS(std::uint8_t, U8)
 #undef NEO_PASS
+
+template <class T>
+void ResizeVertical(const std::uint16_t* top, const std::uint16_t* bottom, int width, std::int32_t weight, T* output) {
+  int x = 0;
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  const hn::ScalableTag<std::int16_t> d16;
+  const hn::RebindToUnsigned<decltype(d16)> du16;
+  const hn::Repartition<std::int32_t, decltype(d16)> d32;
+  const int lanes = int(hn::Lanes(d16));
+  const auto bias = hn::Set(du16, 32768);
+  const auto coefficients = hn::BitCast(d16, hn::Set(d32, (weight << 16) | (16384 - weight)));
+  for (; x <= width - lanes; x += lanes) {
+    const auto a = hn::BitCast(d16, hn::Xor(hn::LoadU(du16, top + x), bias));
+    const auto b = hn::BitCast(d16, hn::Xor(hn::LoadU(du16, bottom + x), bias));
+    const auto lo = hn::WidenMulPairwiseAdd(d32, hn::InterleaveLower(d16, a, b), coefficients);
+    const auto hi = hn::WidenMulPairwiseAdd(d32, hn::InterleaveUpper(d16, a, b), coefficients);
+    // x86 pack restores the same 128-bit block order as these interleaves.
+    const auto value = hn::ReorderDemote2To(d16, hn::ShiftRight<14>(hn::Add(lo, hn::Set(d32, 8192))),
+                                          hn::ShiftRight<14>(hn::Add(hi, hn::Set(d32, 8192))));
+    if constexpr (std::is_same_v<T, std::int16_t>)
+      hn::StoreU(value, d16, output + x);
+    else {
+      const auto unsigned_value = hn::Xor(hn::BitCast(du16, value), bias);
+      if constexpr (std::is_same_v<T, std::uint16_t>)
+        hn::StoreU(unsigned_value, du16, output + x);
+      else {
+        const hn::Rebind<std::uint8_t, decltype(d16)> d8;
+        hn::StoreU(hn::DemoteTo(d8, unsigned_value), d8, output + x);
+      }
+    }
+  }
+#endif
+  const hn::ScalableTag<std::int32_t> d;
+  const hn::Rebind<std::uint16_t, decltype(d)> narrow;
+  const int n = int(hn::Lanes(d));
+  for (; x <= width - n; x += n) {
+    auto value = Interpolate(d, hn::PromoteTo(d, hn::LoadU(narrow, top + x)),
+                             hn::PromoteTo(d, hn::LoadU(narrow, bottom + x)), hn::Set(d, weight));
+    if constexpr (std::is_same_v<T, std::int16_t>)
+      value = hn::Sub(value, hn::Set(d, 32768));
+    const hn::Rebind<T, decltype(d)> output_tag;
+    hn::StoreU(hn::DemoteTo(output_tag, value), output_tag, output + x);
+  }
+  for (; x < width; ++x) {
+    const auto value = ((16384u - std::uint32_t(weight)) * top[x] + std::uint32_t(weight) * bottom[x] + 8192u) >> 14;
+    output[x] = static_cast<T>(std::int32_t(value) - (std::is_same_v<T, std::int16_t> ? 32768 : 0));
+  }
+}
+#define NEO_VERTICAL(T, S) \
+  void ResizeVertical##S(const std::uint16_t* a, const std::uint16_t* b, int n, std::int32_t w, T* out) { \
+    ResizeVertical(a, b, n, w, out); \
+  }
+NEO_VERTICAL(std::int16_t, I16)
+NEO_VERTICAL(std::uint16_t, U16)
+NEO_VERTICAL(std::uint8_t, U8)
+#undef NEO_VERTICAL
 template <class T>
 void Max(T* samples, std::size_t count, T value) {
   const hn::ScalableTag<T> d;
@@ -239,6 +295,15 @@ NEO_PASS_EXPORT(std::int16_t, I16)
 NEO_PASS_EXPORT(std::uint16_t, U16)
 NEO_PASS_EXPORT(std::uint8_t, U8)
 #undef NEO_PASS_EXPORT
+#define NEO_VERTICAL_EXPORT(T, S) \
+  HWY_EXPORT(ResizeVertical##S); \
+  void resize_vertical(const std::uint16_t* a, const std::uint16_t* b, int n, std::int32_t w, T* out) { \
+    HWY_DYNAMIC_DISPATCH(ResizeVertical##S)(a, b, n, w, out); \
+  }
+NEO_VERTICAL_EXPORT(std::int16_t, I16)
+NEO_VERTICAL_EXPORT(std::uint16_t, U16)
+NEO_VERTICAL_EXPORT(std::uint8_t, U8)
+#undef NEO_VERTICAL_EXPORT
 HWY_EXPORT(Magnitude);
 HWY_EXPORT(Sad);
 HWY_EXPORT(MaxU8);

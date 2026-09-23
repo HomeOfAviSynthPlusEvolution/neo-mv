@@ -78,47 +78,55 @@ public:
     }
     if constexpr (!std::is_same_v<T, float>) {
       constexpr int bias = std::is_same_v<T, std::int16_t> ? 32768 : 0;
-      OverwriteVector<std::int32_t> small(g.blocks_x), top(horizontal_first_ ? g.width : g.blocks_x),
-          bottom(top.size());
-      const auto load = [&](int y, auto& row) {
-        for (int x = 0; x < g.blocks_x; ++x)
-          row[x] = int(input.row(y)[x]) + bias;
-      };
-      const auto expand = [&](int y, auto& row) {
-        load(y, small);
-        mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
-                               row.data());
-      };
-      int first = -1, second = -1;
-      for (int y = 0; y < g.height; ++y) {
-        const auto& a = vertical_[y];
-        if (first != a.first && second == a.first) {
-          top.swap(bottom);
-          std::swap(first, second);
-        }
-        if (first != a.first) {
-          if (horizontal_first_)
-            expand(a.first, top);
-          else
-            load(a.first, top);
-          first = a.first;
-        }
-        if (second != a.second) {
-          if (horizontal_first_)
-            expand(a.second, bottom);
-          else
-            load(a.second, bottom);
-          second = a.second;
-        }
-        if (horizontal_first_)
-          mask_rows::resize_pass(top.data(), bottom.data(), nullptr, nullptr, nullptr, g.width, vertical_weights_[y],
-                                 output.row(y).data());
-        else {
-          mask_rows::resize_pass(top.data(), bottom.data(), nullptr, nullptr, nullptr, g.blocks_x, vertical_weights_[y],
-                                 small.data());
+      OverwriteVector<std::int32_t> small(g.blocks_x);
+      const auto run = [&](auto& top, auto& bottom) {
+        constexpr bool horizontal = std::is_same_v<typename std::decay_t<decltype(top)>::value_type, std::uint16_t>;
+        const auto load = [&](int y, auto& row) {
+          for (int x = 0; x < g.blocks_x; ++x)
+            row[x] = int(input.row(y)[x]) + bias;
+        };
+        const auto expand = [&](int y, auto& row) {
+          load(y, small);
           mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
-                                 output.row(y).data());
+                                 row.data());
+        };
+        int first = -1, second = -1;
+        for (int y = 0; y < g.height; ++y) {
+          const auto& a = vertical_[y];
+          if (first != a.first && second == a.first) {
+            top.swap(bottom);
+            std::swap(first, second);
+          }
+          if (first != a.first) {
+            if constexpr (horizontal)
+              expand(a.first, top);
+            else
+              load(a.first, top);
+            first = a.first;
+          }
+          if (second != a.second) {
+            if constexpr (horizontal)
+              expand(a.second, bottom);
+            else
+              load(a.second, bottom);
+            second = a.second;
+          }
+          if constexpr (horizontal)
+            mask_rows::resize_vertical(top.data(), bottom.data(), g.width, vertical_weights_[y], output.row(y).data());
+          else {
+            mask_rows::resize_pass(top.data(), bottom.data(), nullptr, nullptr, nullptr, g.blocks_x, vertical_weights_[y],
+                                   small.data());
+            mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
+                                   output.row(y).data());
+          }
         }
+      };
+      if (horizontal_first_) {
+        OverwriteVector<std::uint16_t> top(g.width), bottom(g.width);
+        run(top, bottom);
+      } else {
+        OverwriteVector<std::int32_t> top(g.blocks_x), bottom(g.blocks_x);
+        run(top, bottom);
       }
       return;
     }
