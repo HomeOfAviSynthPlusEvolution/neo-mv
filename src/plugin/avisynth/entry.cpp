@@ -1,17 +1,18 @@
 #include "plugin/bridges.hpp"
-// Declare the C API before DS2 enables AVSC_NO_DECLSPEC; DS2 uses decltype
-// on these declarations while resolving every entry point dynamically.
-#include <avisynth_c.h>
-#include <dualsynth/avisynth/c/video_bridge.hpp>
+#include <avisynth.h>
+#include <dualsynth/avisynth/video_bridge.hpp>
+
+const AVS_Linkage* AVS_linkage = nullptr;
 
 namespace neo_mv::ds2::avs {
-namespace ac = ds::avisynth::c;
+namespace av = ds::avisynth;
 
 // Native AviSynth arrays keep the same parameter positions as VapourSynth.
 // The common descriptors remain unchanged for existing VS callers.
 template <class Base>
 struct Adapter : Base {
   static constexpr bool forward_audio = true;
+  static constexpr av::MtMode avs_mt_mode = av::MtMode::NiceFilter;
   static ds::FilterDescriptor descriptor() {
     auto d = Base::descriptor();
     for (auto& p : d.params) {
@@ -30,47 +31,49 @@ std::size_t index(const ds::FilterDescriptor& d, const char* name) {
   throw std::logic_error("unknown AviSynth parameter");
 }
 
-// All AVS_Value objects here borrow from the live callback arguments. Separate
-// scalar storage keeps singleton-array pointers valid until bridge creation ends.
+// Normalize scalar shorthand to native arrays before passing arguments to DS2.
 struct Call {
-  std::vector<AVS_Value> scalars, values;
-  Call(AVS_Value args, const ds::FilterDescriptor& d) : scalars(d.params.size(), avs_void), values(scalars) {
+  std::vector<AVSValue> values;
+  Call(const AVSValue& args, const ds::FilterDescriptor& d) : values(d.params.size()) {
     for (std::size_t i = 0; i < values.size(); ++i) {
-      scalars[i] = avs_is_array(args) ? (i < std::size_t(avs_array_size(args)) ? args.d.array[i] : avs_void)
-                                      : (i == 0 ? args : avs_void);
-      values[i] = scalars[i];
-      if (d.params[i].is_array && avs_defined(values[i]) && !avs_is_array(values[i]))
-        values[i] = avs_new_value_array(&scalars[i], 1);
+      values[i] = args.IsArray() ? (i < std::size_t(args.ArraySize()) ? args[int(i)] : AVSValue())
+                                 : (i == 0 ? args : AVSValue());
+      if (d.params[i].is_array && values[i].Defined() && !values[i].IsArray()) {
+        const AVSValue scalar = values[i];
+        values[i] = AVSValue(&scalar, 1);
+      }
     }
   }
-  AVS_Value arguments() { return avs_new_value_array(values.data(), static_cast<int>(values.size())); }
+  AVSValue arguments() const { return AVSValue(values.data(), static_cast<int>(values.size())); }
 };
 
 template <class Function>
-AVS_Value guarded(AVS_ScriptEnvironment* env, Function&& function) {
+AVSValue guarded(IScriptEnvironment* env, Function&& function) {
   try {
-    auto& api = ac::CApi::instance();
-    require(api.check_version && !api.check_version(env, 11), "neo-mv requires AviSynth interface 11 or later");
+    env->CheckVersion(11);
     return function();
+  } catch (const AvisynthError&) {
+    throw;
   } catch (const std::exception& e) {
-    return ac::avs_new_value_error(ac::save_error(env, e.what()));
+    env->ThrowError("neo-mv: %s", e.what());
   } catch (...) {
-    return ac::avs_new_value_error("neo-mv: AviSynth creation failed");
+    env->ThrowError("neo-mv: AviSynth creation failed");
   }
+  return {};
 }
 
 template <class Base>
-AVS_Value AVSC_CC create(AVS_ScriptEnvironment* env, AVS_Value args, void* user_data) {
+AVSValue __cdecl create(AVSValue args, void* user_data, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = Adapter<Base>::descriptor();
     Call call(args, d);
     if constexpr (std::is_same_v<Base, RenderBridge<true>>) {
       const auto radius = reinterpret_cast<std::intptr_t>(user_data);
       const auto vectors = call.values[index(d, "vectors")];
-      require(radius == 0 || (avs_is_array(vectors) && avs_array_size(vectors) == 2 * radius),
+      require(radius == 0 || (vectors.IsArray() && vectors.ArraySize() == 2 * radius),
               "named Degrain requires exactly 2R vector members");
     }
-    return ac::create_video_filter_bridge<Adapter<Base>>(env, call.arguments(), nullptr);
+    return av::create_video_filter_bridge<Adapter<Base>>(call.arguments(), env);
   });
 }
 
@@ -80,27 +83,27 @@ ds::FilterDescriptor many_descriptor() {
   return d;
 }
 
-AVS_Value AVSC_CC many(AVS_ScriptEnvironment* env, AVS_Value args, void*) {
+AVSValue __cdecl many(AVSValue args, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = many_descriptor();
     Call call(args, d);
-    const auto parsed = unwrap(ac::read_params(call.arguments(), d));
+    const auto parsed = unwrap(av::read_params(call.arguments(), d));
     const Params params{parsed};
     const int radius = params.integer("radius", 1), step = params.integer("delta", 1);
     require(radius > 0 && step > 0 && radius <= SHRT_MAX / 2 && std::int64_t(radius) * step <= INT32_MAX,
             "invalid AnalyseMany radius or delta product");
     call.values.erase(call.values.begin() + index(d, "radius"));
-    std::vector<std::vector<AVS_Value>> members;
-    std::vector<AVS_Value> calls;
+    std::vector<std::vector<AVSValue>> members;
+    std::vector<AVSValue> calls;
     members.reserve(std::size_t(radius) * 2);
     calls.reserve(std::size_t(radius) * 2);
     for (int r = 1; r <= radius; ++r)
       for (int sign : {1, -1}) {
         members.push_back(call.values);
-        members.back()[index(d, "delta")] = avs_new_value_int(r * step * sign);
-        calls.push_back(avs_new_value_array(members.back().data(), static_cast<int>(members.back().size())));
+        members.back()[index(d, "delta")] = AVSValue(r * step * sign);
+        calls.push_back(AVSValue(members.back().data(), static_cast<int>(members.back().size())));
       }
-    return ac::create_video_filter_bundle<Adapter<Bridge<Operation::Analyse>>>({calls.data(), calls.size()}, env);
+    return av::create_video_filter_bundle<Adapter<Bridge<Operation::Analyse>>>({calls.data(), calls.size()}, env);
   });
 }
 
@@ -111,90 +114,65 @@ ds::FilterDescriptor recalculate_descriptor() {
   return d;
 }
 
-AVS_Value AVSC_CC recalculate(AVS_ScriptEnvironment* env, AVS_Value args, void*) {
+AVSValue __cdecl recalculate(AVSValue args, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = recalculate_descriptor();
     Call call(args, d);
     const auto slot = index(d, "vectors");
     const auto vectors = call.values[slot];
-    require(avs_is_array(vectors) && avs_array_size(vectors) > 0, "Recalculate requires nonempty vectors");
-    std::vector<std::vector<AVS_Value>> members;
-    std::vector<AVS_Value> calls;
-    members.reserve(avs_array_size(vectors));
-    calls.reserve(avs_array_size(vectors));
-    for (int i = 0; i < avs_array_size(vectors); ++i) {
+    require(vectors.IsArray() && vectors.ArraySize() > 0, "Recalculate requires nonempty vectors");
+    std::vector<std::vector<AVSValue>> members;
+    std::vector<AVSValue> calls;
+    members.reserve(vectors.ArraySize());
+    calls.reserve(vectors.ArraySize());
+    for (int i = 0; i < vectors.ArraySize(); ++i) {
       members.push_back(call.values);
-      members.back()[slot] = vectors.d.array[i];
-      calls.push_back(avs_new_value_array(members.back().data(), static_cast<int>(members.back().size())));
+      members.back()[slot] = vectors[i];
+      calls.push_back(AVSValue(members.back().data(), static_cast<int>(members.back().size())));
     }
-    return ac::create_video_filter_bundle<Adapter<Bridge<Operation::Recalculate>>>({calls.data(), calls.size()}, env);
+    return av::create_video_filter_bundle<Adapter<Bridge<Operation::Recalculate>>>({calls.data(), calls.size()}, env);
   });
 }
 
-using Invoke = decltype(&avs_invoke);
-Invoke host_invoke() {
-  static const auto value = [] {
-#if defined(_WIN32)
-    return reinterpret_cast<Invoke>(
-        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("avisynth.dll"), "avs_invoke")));
-#else
-    return reinterpret_cast<Invoke>(dlsym(RTLD_DEFAULT, "avs_invoke"));
-#endif
-  }();
-  return value;
-}
-
 template <class Base>
-AVS_Value AVSC_CC create_depan(AVS_ScriptEnvironment* env, AVS_Value args, void*) {
+AVSValue __cdecl create_depan(AVSValue args, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = Adapter<Base>::descriptor();
     Call call(args, d);
     const auto info = call.values[index(d, "info")];
-    const bool show = avs_defined(info) && avs_is_bool(info) && avs_as_bool(info);
-    auto base = ac::create_video_filter_bridge<Adapter<Base>>(env, call.arguments(), nullptr);
-    if (avs_is_error(base) || !show)
+    const bool show = info.Defined() && info.IsBool() && info.AsBool();
+    const auto base = av::create_video_filter_bridge<Adapter<Base>>(call.arguments(), env);
+    if (!show)
       return base;
-    struct Owner {
-      AVS_Value value;
-      ~Owner() { ac::CApi::instance().release_value(value); }
-    } owner{base};
-    const auto invoke = host_invoke();
-    require(invoke != nullptr, "Depan info requires avs_invoke and propShow");
-    AVS_Value values[] = {base, avs_new_value_string(Base::diagnostic_property)};
+    AVSValue values[] = {base, AVSValue(Base::diagnostic_property)};
     const char* names[] = {nullptr, "props"};
-    return invoke(env, "propShow", avs_new_value_array(values, 2), names);
+    return env->Invoke("propShow", AVSValue(values, 2), names);
   });
 }
 
-AVS_Value AVSC_CC kernel_info(AVS_ScriptEnvironment* env, AVS_Value, void*) {
+AVSValue __cdecl kernel_info(AVSValue, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
-    auto& api = ac::CApi::instance();
-    require(api.copy_value && api.release_value && api.save_string, "KernelInfo requires value ownership APIs");
     const auto fft = estimate_fft_profile();
-    AVS_Value fields[] = {avs_new_value_string(api.save_string(env, selected_backend_name(), -1)),
-                          avs_new_value_string(api.save_string(env, selected_target_name(), -1)),
-                          avs_new_value_string(api.save_string(env, depan::estimate::fft_profile_name(fft), -1)),
-                          avs_new_value_int(depan::estimate::fft_lanes(fft))};
-    AVS_Value result = avs_void;
-    api.copy_value(&result, avs_new_value_array(fields, 4));
-    return result;
+    AVSValue fields[] = {AVSValue(env->SaveString(selected_backend_name())),
+                         AVSValue(env->SaveString(selected_target_name())),
+                         AVSValue(env->SaveString(depan::estimate::fft_profile_name(fft))),
+                         AVSValue(depan::estimate::fft_lanes(fft))};
+    return AVSValue(fields, 4);
   });
 }
 
-void add(AVS_ScriptEnvironment* env, const std::string& name, const ds::FilterDescriptor& d, AVS_ApplyFunc callback,
+using ApplyFunc = AVSValue (__cdecl *)(AVSValue, void*, IScriptEnvironment*);
+void add(IScriptEnvironment* env, const std::string& name, const ds::FilterDescriptor& d, ApplyFunc callback,
          void* data = nullptr) {
-  auto& api = ac::CApi::instance();
   const auto signature = unwrap(ds::make_avisynth_signature(d));
-  require(api.add_function(env, api.save_string(env, name.c_str(), -1), api.save_string(env, signature.c_str(), -1),
-                           callback, data) == 0,
-          "cannot register neo-mv AviSynth function");
+  env->AddFunction(env->SaveString(name.c_str()), env->SaveString(signature.c_str()), callback, data);
 }
 template <class Base>
-void add(AVS_ScriptEnvironment* env) {
+void add(IScriptEnvironment* env) {
   add(env, std::string("neo_mv_") + Base::Core::name, Adapter<Base>::descriptor(), create<Base>);
 }
 template <class Base>
-void add_depan(AVS_ScriptEnvironment* env) {
+void add_depan(IScriptEnvironment* env) {
   add(env, std::string("neo_mv_") + Base::Core::name, Adapter<Base>::descriptor(), create_depan<Base>);
 }
 } // namespace neo_mv::ds2::avs
@@ -205,12 +183,12 @@ void add_depan(AVS_ScriptEnvironment* env) {
 #define NEO_MV_AVS_EXPORT extern "C" __attribute__((visibility("default")))
 #endif
 
-NEO_MV_AVS_EXPORT const char* AVSC_CC avisynth_c_plugin_init2(AVS_ScriptEnvironment* env) {
+NEO_MV_AVS_EXPORT const char* __stdcall AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* linkage) {
+  AVS_linkage = linkage;
   using namespace neo_mv::ds2;
   using namespace neo_mv::ds2::avs;
   try {
-    auto& api = ac::CApi::instance();
-    require(api.add_function && api.save_string, "neo-mv: missing AviSynth registration API");
+    env->CheckVersion(11);
     add<Bridge<Operation::Super>>(env);
     add<Bridge<Operation::Analyse>>(env);
     add(env, "neo_mv_AnalyseMany", many_descriptor(), many);
@@ -234,9 +212,12 @@ NEO_MV_AVS_EXPORT const char* AVSC_CC avisynth_c_plugin_init2(AVS_ScriptEnvironm
     add_depan<DepanStabiliseBridge>(env);
     add(env, "neo_mv_KernelInfo", {"KernelInfo", {}}, kernel_info);
     return "neo-mv AviSynth interface";
+  } catch (const AvisynthError&) {
+    throw;
   } catch (const std::exception& e) {
-    return ac::save_error(env, e.what());
+    env->ThrowError("neo-mv: %s", e.what());
   } catch (...) {
-    return "neo-mv: AviSynth registration failed";
+    env->ThrowError("neo-mv: AviSynth registration failed");
   }
+  return nullptr;
 }

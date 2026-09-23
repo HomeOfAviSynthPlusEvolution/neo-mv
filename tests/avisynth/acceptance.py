@@ -1,15 +1,23 @@
-"""Exercise the public AviSynth interface using DS2's pinned C API runner."""
+"""Exercise the C++ AviSynth plugin using DS2's pinned host runner."""
 import argparse
+import ctypes
+import os
 import pathlib
 import subprocess
 
 parser = argparse.ArgumentParser()
 for option in ("runner", "plugin", "runtime", "backend", "work"):
     parser.add_argument("--" + option, required=True)
+parser.add_argument("--host-api", choices=("c", "cpp"), default="c")
 a = parser.parse_args()
 work = pathlib.Path(a.work).resolve()
 work.mkdir(parents=True, exist_ok=True)
 plugin = pathlib.Path(a.plugin).resolve().as_posix()
+if os.name == "nt":
+    # LoadPlugin must exercise the C++ entry, never silently fall back to C.
+    module = ctypes.WinDLL(plugin)
+    assert hasattr(module, "AvisynthPluginInit3") or hasattr(module, "_AvisynthPluginInit3@8")
+    assert not hasattr(module, "avisynth_c_plugin_init2")
 header = f'LoadPlugin("{plugin}")\n'
 fixture = """
 c = BlankClip(width=64,height=48,length=12,fps=24,pixel_type="YV12",color_yuv=$204080)
@@ -25,7 +33,7 @@ def run(name, body, frame=4, error=None, prefix=fixture, mode="--video", extra=(
     global count
     path = work / (name + ".avs")
     path.write_text(header + prefix + body, encoding="utf-8")
-    result = subprocess.run([a.runner, mode, str(path), "--backend", "c",
+    result = subprocess.run([a.runner, mode, str(path), "--backend", a.host_api,
                              "--runtime", a.runtime, "--frame", str(frame), *extra],
                             capture_output=True, text=True, timeout=40)
     text = result.stdout + result.stderr
@@ -60,6 +68,13 @@ paths = {
 for name, expression in paths.items():
     run(name, "return " + expression)
     run(name + "-prefetch", "return (" + expression + ").Prefetch(4)")
+
+# A later-frame metadata failure must cross the bridge and Prefetch.
+for prefetch in (False, True):
+    run("runtime-error-" + str(prefetch),
+        'bad=b.ScriptClip("""current_frame == 4 ? propSet(last, "MVUtensilsAnalysisPel", 1) : last""")\n'
+        'return neo_mv_Compensate(c,s,bad)' + (".Prefetch(4)" if prefetch else ""),
+        error="render analysis metadata changed")
 for radius in range(1, 26):
     run(f"degrain{radius}", f"vv=neo_mv_AnalyseMany(s,radius={radius},badrange=0)\n"
         f"return neo_mv_Degrain{radius}(c,s,vv)")

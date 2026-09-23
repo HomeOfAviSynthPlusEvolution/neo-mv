@@ -290,12 +290,17 @@ if(BUILD_TESTING AND NEO_MV_BUILD_AVISYNTH)
     if(MINGW)
       target_link_options(neo_mv_avs_runner PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
+    # The plugin always uses the C++ ABI. This selects only the runner's host API.
+    set(_neo_mv_avs_host_api c)
+    if(MSVC)
+      set(_neo_mv_avs_host_api cpp)
+    endif()
     foreach(backend scalar highway)
       if(backend STREQUAL "scalar" OR NEO_MV_ENABLE_SIMD)
         add_test(NAME avs.acceptance.${backend} COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/avisynth/acceptance.py"
           --runner "$<TARGET_FILE:neo_mv_avs_runner>" --plugin "$<TARGET_FILE:neo_mv_vs>"
-          --runtime "${NEO_MV_AVISYNTH_RUNTIME}" --backend "${backend}"
+          --runtime "${NEO_MV_AVISYNTH_RUNTIME}" --backend "${backend}" --host-api "${_neo_mv_avs_host_api}"
           --work "${CMAKE_CURRENT_BINARY_DIR}/avisynth-tests/${backend}")
         set_tests_properties(avs.acceptance.${backend} PROPERTIES LABELS "spec;avisynth"
           RUN_SERIAL TRUE TIMEOUT 300 ENVIRONMENT "NEO_MV_KERNEL=${backend}")
