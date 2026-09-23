@@ -1,6 +1,7 @@
 #include "core/interpolation/dense.hpp"
 
 #include <iostream>
+#include <future>
 
 namespace {
 using namespace neo_mv;
@@ -114,6 +115,75 @@ void failures() {
   malformed.values.pop_back();
   rejects([&] { plan.generate(valid, malformed, 128); });
 }
+
+void reuse(int ratio) {
+  const DenseInterpolationPlan<> plan(metadata(), metadata(-1), ratio, ratio, 80);
+  const auto grid = motion(4, 0), extra = motion(-1, -1, -3);
+  const auto first = plan.generate_reusing(grid, grid, 0, &extra, &grid);
+  const auto next = plan.generate_reusing(grid, grid, 256, &extra, &grid);
+  CHECK(first.motion == next.motion);
+  CHECK(first.mF != next.mF);
+  auto same_motion = grid;
+  same_motion.values[0].error = 10;
+  CHECK(plan.generate_reusing(same_motion, grid, 128, &extra, &grid).motion == first.motion);
+  same_motion.values[0].error = -1;
+  rejects([&] { plan.generate_reusing(same_motion, grid, 128, &extra, &grid); });
+  same_motion = grid;
+  same_motion.width = 1;
+  rejects([&] { plan.generate_reusing(same_motion, grid, 128, &extra, &grid); });
+  rejects([&] { plan.generate_reusing(grid, grid, 257, &extra, &grid); });
+  rejects([&] { plan.generate_reusing(grid, grid, 128, &extra); });
+  const auto changed = motion(5, 0);
+  const auto replaced = plan.generate_reusing(changed, grid, 128, &extra, &grid);
+  CHECK(replaced.motion != first.motion);
+  CHECK(first.motion->B.x == plan.generate(grid, grid, 0).B.x);
+  CHECK(plan.generate_reusing(changed, grid, 128, &grid, &grid).motion != replaced.motion);
+  const auto basic = plan.generate_reusing(grid, grid, 128);
+  CHECK(!basic.motion->BB && !basic.motion->FF);
+  const auto copy = plan;
+  CHECK(copy.generate_reusing(grid, grid, 128).motion == basic.motion);
+
+  const auto clipped = motion(32772, 32768), clipped_changed = motion(32768, 32768);
+  const auto a = plan.generate_reusing(clipped, clipped, 256);
+  const auto b = plan.generate_reusing(clipped_changed, clipped_changed, 256);
+  CHECK(a.motion != b.motion);
+  CHECK(a.motion->F.x == b.motion->F.x);
+  CHECK(a.mF != b.mF);
+
+  // Interleaved publication must preserve each caller's fields and masks.
+  auto run = [&](int seed) {
+    for (int i = 0; i < 24; ++i) {
+      const auto input = motion((i + seed) % 8, seed);
+      const int time = i * 11 % 257;
+      const auto expected = plan.generate(input, grid, time, &extra, &input);
+      const auto actual = plan.generate_reusing(input, grid, time, &extra, &input);
+      CHECK(actual.motion->B.x == expected.B.x && actual.motion->B.y == expected.B.y);
+      CHECK(actual.motion->F.x == expected.F.x && actual.motion->F.y == expected.F.y);
+      CHECK(actual.motion->BB->x == expected.BB->x && actual.motion->BB->y == expected.BB->y);
+      CHECK(actual.motion->FF->x == expected.FF->x && actual.motion->FF->y == expected.FF->y);
+      CHECK(actual.mB == expected.mB && actual.mF == expected.mF);
+    }
+  };
+  auto task = std::async(std::launch::async, run, 1);
+  run(2);
+  task.get();
+}
+
+void oversized_not_retained() {
+  auto b = metadata(), f = metadata(-1);
+  b.width = b.real_width = f.width = f.real_width = 2048;
+  b.height = b.real_height = f.height = f.real_height = 2048;
+  b.blocks_x = f.blocks_x = b.blocks_y = f.blocks_y = 512;
+  const DenseInterpolationPlan<> plan(b, f, 1, 1);
+  MotionGrid grid{512, 512, std::vector<MotionTriple>(512 * 512, {{0, 0}, 0})};
+  std::weak_ptr<const InterpolationMotionFields> released;
+  {
+    const auto result = plan.generate_reusing(grid, grid, 128, &grid, &grid);
+    released = result.motion;
+    CHECK(result.motion->B.x.front() == 0 && result.motion->FF->y.back() == 0);
+  }
+  CHECK(released.expired());
+}
 } // namespace
 
 int main() {
@@ -121,6 +191,9 @@ int main() {
     examples();
     public_vectors_and_extras();
     failures();
+    reuse(1);
+    reuse(2);
+    oversized_not_retained();
     std::cout << "Dense interpolation checks passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

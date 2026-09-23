@@ -3,6 +3,9 @@
 #include "core/interpolation/input.hpp"
 #include "core/mask/scores.hpp"
 
+#include <memory>
+#include <mutex>
+
 namespace neo_mv {
 
 struct DenseInterpolationFields {
@@ -13,12 +16,65 @@ struct DenseInterpolationFields {
 };
 using DenseInterpolationField = DenseInterpolationFields;
 
+struct InterpolationMotionFields {
+  DenseFlowField B, F;
+  std::optional<DenseFlowField> BB, FF;
+};
+
+struct SharedInterpolationFields {
+  std::shared_ptr<const InterpolationMotionFields> motion;
+  OverwriteVector<std::uint8_t> mB, mF;
+};
+
 template <class Resampler = GridResamplingPlan>
 class DenseInterpolationPlan {
   std::array<AnalysisMetadata, 2> metadata_;
   DenseFlowPlan<Resampler> backward_, forward_;
   Resampler masks_;
   float f_;
+  struct CachedMotion {
+    std::array<std::vector<MotionVector>, 4> key;
+    std::shared_ptr<const InterpolationMotionFields> fields;
+  };
+  struct Cache {
+    std::mutex mutex;
+    std::shared_ptr<const CachedMotion> entry;
+  };
+  // Copies of a plan have identical immutable geometry and may share one entry.
+  std::shared_ptr<Cache> cache_ = std::make_shared<Cache>();
+
+  static bool matches(const CachedMotion& entry, const std::array<const MotionGrid*, 4>& grids) {
+    for (std::size_t k = 0; k < grids.size(); ++k) {
+      const auto* grid = grids[k];
+      const auto& key = entry.key[k];
+      if (!grid) {
+        if (!key.empty())
+          return false;
+        continue;
+      }
+      if (key.size() != grid->values.size())
+        return false;
+      for (std::size_t i = 0; i < key.size(); ++i)
+        if (key[i].x != grid->values[i].vector.x || key[i].y != grid->values[i].vector.y)
+          return false;
+    }
+    return true;
+  }
+
+  template <bool Validated>
+  void validate_inputs(const MotionGrid& backward, const MotionGrid& forward, int time256,
+                       const MotionGrid* extra_backward, const MotionGrid* extra_forward) const {
+    if (time256 < 0 || time256 > 256 || bool(extra_backward) != bool(extra_forward))
+      throw std::invalid_argument("invalid interpolation time or unpaired extra fields");
+    if constexpr (!Validated) {
+      validate(backward, 0);
+      validate(forward, 1);
+      if (extra_backward) {
+        validate(*extra_backward, 0);
+        validate(*extra_forward, 1);
+      }
+    }
+  }
 
   static float normalization(double ml) {
     const float value = mask_detail::binary32(ml);
@@ -68,16 +124,7 @@ public:
   DenseInterpolationFields generate(const MotionGrid& backward, const MotionGrid& forward, int time256,
                                     const MotionGrid* extra_backward = nullptr,
                                     const MotionGrid* extra_forward = nullptr) const {
-    if (time256 < 0 || time256 > 256 || bool(extra_backward) != bool(extra_forward))
-      throw std::invalid_argument("invalid interpolation time or unpaired extra fields");
-    if constexpr (!Validated) {
-      validate(backward, 0);
-      validate(forward, 1);
-      if (extra_backward) {
-        validate(*extra_backward, 0);
-        validate(*extra_forward, 1);
-      }
-    }
+    validate_inputs<Validated>(backward, forward, time256, extra_backward, extra_forward);
     const auto& g = geometry();
     DenseInterpolationFields result{g.width,
                                     g.height,
@@ -92,6 +139,61 @@ public:
       result.FF = forward_.template generate<true>(*extra_forward, 0);
     }
     return result;
+  }
+
+  template <bool Validated = false>
+  SharedInterpolationFields generate_reusing(const MotionGrid& backward, const MotionGrid& forward, int time256,
+                                             const MotionGrid* extra_backward = nullptr,
+                                             const MotionGrid* extra_forward = nullptr) const {
+    // Admission precedes lookup, including SAD values that do not affect motion.
+    validate_inputs<Validated>(backward, forward, time256, extra_backward, extra_forward);
+    const std::array<const MotionGrid*, 4> grids{&backward, &forward, extra_backward, extra_forward};
+    const auto& g = geometry();
+    const std::uint64_t fields = extra_backward ? 4 : 2;
+    // Bound retained data per plane plan. In-flight requests own their snapshots.
+    constexpr std::uint64_t budget = 64 * 1024 * 1024;
+    const auto samples = dense_detail::count(g.width, g.height);
+    const bool retain =
+        samples <= budget / (fields * 2 * sizeof(std::int16_t)) &&
+        backward.values.size() <= (budget / fields - samples * 2 * sizeof(std::int16_t)) / sizeof(MotionVector);
+    std::shared_ptr<const InterpolationMotionFields> motion;
+    if (retain) {
+      std::shared_ptr<const CachedMotion> previous;
+      {
+        std::lock_guard<std::mutex> lock(cache_->mutex);
+        previous = cache_->entry;
+      }
+      if (previous && matches(*previous, grids))
+        motion = previous->fields;
+    }
+    if (!motion) {
+      auto generated = std::make_shared<InterpolationMotionFields>();
+      generated->B = backward_.template generate<true>(backward, 0);
+      generated->F = forward_.template generate<true>(forward, 0);
+      if (extra_backward) {
+        generated->BB = backward_.template generate<true>(*extra_backward, 0);
+        generated->FF = forward_.template generate<true>(*extra_forward, 0);
+      }
+      motion = std::move(generated);
+      if (retain) {
+        auto entry = std::make_shared<CachedMotion>();
+        entry->fields = motion;
+        for (std::size_t k = 0; k < grids.size(); ++k)
+          if (grids[k]) {
+            entry->key[k].reserve(grids[k]->values.size());
+            for (const auto& value : grids[k]->values)
+              entry->key[k].push_back(value.vector);
+          }
+        // Generation and comparison stay outside the lock. Duplicate concurrent
+        // misses are harmless; publishing never invalidates an in-flight result.
+        std::shared_ptr<const CachedMotion> replaced = std::move(entry);
+        {
+          std::lock_guard<std::mutex> lock(cache_->mutex);
+          replaced.swap(cache_->entry);
+        }
+      }
+    }
+    return {std::move(motion), mask(backward, 0, 256 - time256), mask(forward, 1, time256)};
   }
 };
 

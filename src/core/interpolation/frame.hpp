@@ -85,25 +85,26 @@ public:
         throw std::invalid_argument("motion interpolation requires eligible fields");
     this->input_.validate_image(left);
     this->input_.validate_image(right);
-    using DenseResult = decltype(dense_[0].generate(B.grid, F.grid, time));
+    using DenseResult = decltype(dense_[0].generate_reusing(B.grid, F.grid, time));
     std::vector<DenseResult> fields;
     std::vector<typename Kernels::Sampling> plans;
     for (int k = 0; k < this->input_.plane_count(); ++k) {
       if (k < 2)
-        fields.push_back(dense_[k].template generate<true>(B.grid, F.grid, time, BB ? &BB->grid : nullptr,
-                                                           FF ? &FF->grid : nullptr));
+        fields.push_back(dense_[k].template generate_reusing<true>(B.grid, F.grid, time, BB ? &BB->grid : nullptr,
+                                                                   FF ? &FF->grid : nullptr));
       const auto g = this->input_.phase_geometry(k);
       plans.emplace_back(g, g, this->video_.width / g.ratio_x, this->video_.height / g.ratio_y, time,
                          this->video_.bits);
-      const auto& f = fields.back();
+      const auto& f = *fields.back().motion;
       plans.back().preflight_generated(f.B, f.F, f.BB ? &*f.BB : nullptr, f.FF ? &*f.FF : nullptr);
     }
     // Every used plane has passed preflight before any reference pixel is read.
     auto result = this->allocate(destination);
     for (int k = 0; k < this->input_.plane_count(); ++k) {
-      const auto& f = fields[(std::min)(k, 1)];
+      const auto& fields_for_plane = fields[(std::min)(k, 1)];
+      const auto& f = *fields_for_plane.motion;
       plans[k].render_preflighted(left.planes[k], right.planes[k], f.B, f.F, f.BB ? &*f.BB : nullptr,
-                                  f.FF ? &*f.FF : nullptr, f.mF, f.mB, result[k].view());
+                                  f.FF ? &*f.FF : nullptr, fields_for_plane.mF, fields_for_plane.mB, result[k].view());
     }
     return result;
   }
