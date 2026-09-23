@@ -247,6 +247,38 @@ void integer_blur(int bits) {
   CHECK(rejected([&] { HighwayBlurAverage{}(&sample, 0, bits, &output); }));
   CHECK(rejected([&] { HighwayBlurAverage{}(&sample, 65538, bits, &output); }));
 }
+template <class T>
+void blur_repeated_directions(int bits) {
+  constexpr int width = 7, height = 4, pad = 8;
+  std::mt19937 rng(39123);
+  Buffer<T> input(width + 2 * pad, height + 2 * pad);
+  for (auto& sample : input.data)
+    sample = random_sample<T>(rng, bits);
+  RenderPhaseGeometry geometry{1, 1, 1, pad, pad, {}};
+  geometry.phases[0] = {input.width, input.height};
+  SubpixelPhases<T> phases{1, {}};
+  phases.planes[0] = input.read();
+  DenseFlowField f{width, height, std::vector<std::int16_t>(width * height),
+                                std::vector<std::int16_t>(width * height)};
+  auto b = f;
+  const int xs[] = {0, 3, 3, 4, 4, 0, 0};
+  const int ys[] = {0, 0, 2, 2, 3, 0, 0};
+  for (int i = 0; i < width * height; ++i) {
+    const int index = (i / 5) % 7;
+    f.x[i] = static_cast<std::int16_t>(xs[index]);
+    f.y[i] = static_cast<std::int16_t>(ys[index]);
+    b.x[i] = static_cast<std::int16_t>(-ys[(index + 2) % 7]);
+    b.y[i] = static_cast<std::int16_t>(-xs[(index + 2) % 7]);
+  }
+  for (int precision : {1, 2, 9})
+    for (int time : {0, 85, 256}) {
+      Buffer<T> scalar(width, height), highway(width, height);
+      BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, scalar.view(), bits);
+      simd::BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, highway.view(), bits);
+      same(scalar.data, highway.data);
+    }
+}
+
 void float_blur() {
   const float maximum = std::numeric_limits<float>::max(), tiny = std::numeric_limits<float>::denorm_min();
   const std::vector<std::vector<float>> sequences{
@@ -465,6 +497,9 @@ int main() {
       integer_blur<std::uint16_t>(10);
       integer_blur<std::uint16_t>(16);
       float_blur();
+      blur_repeated_directions<std::uint8_t>(8);
+      blur_repeated_directions<std::uint16_t>(10);
+      blur_repeated_directions<float>(32);
       guarded_rows<std::uint32_t>();
       guarded_rows<float>();
       guarded_sampled<std::uint8_t>(8);

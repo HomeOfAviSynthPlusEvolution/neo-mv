@@ -88,10 +88,26 @@ void BlurPlane(const BlurSamplingPlan& plan, const DenseFlowField& forward, cons
     storage.strides[a] = source.planes[a].stride_bytes();
   }
   const auto maximum = subpixel_detail::sample_max<T>(bits);
+  // Dense integer fields often repeat between adjacent pixels. Only the
+  // trajectory parameters depend on the vector; sample positions remain local.
+  struct DirectionCache {
+    int x = INT32_MAX, y = INT32_MAX;
+    decltype(plan.direction(0, 0)) direction{};
+  };
+  DirectionCache forward_cache, backward_cache;
+  const auto direction = [&](std::int16_t x, std::int16_t y, DirectionCache& cache) {
+    if (x != cache.x || y != cache.y) {
+      cache.direction = plan.direction(x, y);
+      cache.x = x;
+      cache.y = y;
+    }
+    return cache.direction;
+  };
   for (int y = 0; y < plan.height(); ++y)
     for (int x = 0; x < plan.width(); ++x) {
       const auto i = std::size_t(y) * plan.width() + x;
-      const auto f = plan.direction(forward.x[i], forward.y[i]), b = plan.direction(backward.x[i], backward.y[i]);
+      const auto f = direction(forward.x[i], forward.y[i], forward_cache);
+      const auto b = direction(backward.x[i], backward.y[i], backward_cache);
       const int count = 1 + f.count + b.count;
       const T* centre = source.planes[0].row(y + g.pad_y).data() + x + g.pad_x;
       T* out = output.row(y).data() + x;
