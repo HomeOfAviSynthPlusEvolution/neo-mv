@@ -98,6 +98,31 @@ void pixels() {
   });
 }
 
+void duplicate_initial_seeds() {
+  AnalyseControls c;
+  c.search = 4;
+  c.pzero = 256;
+  c.pglobal = 128;
+  // A singleton domain suppresses refinement while retaining all seed scores.
+  SpatialPredictors spatial{};
+  int calls = 0;
+  const auto evaluate = [&](MotionVector) {
+    ++calls;
+    return BlockError{60, 40, 100};
+  };
+  const auto best = analyse_detail::block({}, spatial, {}, {0, 0, 1, 1}, 0, 1, 0, INT64_MAX, c, evaluate);
+  CHECK(calls == 1);
+  CHECK(best.cost == 100 && best.raw == 100 && best.vector.x == 0 && best.vector.y == 0);
+  spatial.global = {1, 0};
+  for (auto& p : spatial.p)
+    p.vector = {1, 0};
+  calls = 0;
+  const auto distinct = analyse_detail::block({{1, 0}, 0}, spatial, {}, {1, 0, 2, 1}, 0, 1, 0,
+                                             INT64_MAX, c, evaluate);
+  CHECK(calls == 2);
+  CHECK(distinct.cost == 100 && distinct.raw == 100 && distinct.vector.x == 1 && distinct.vector.y == 0);
+}
+
 void selection_and_expansion() {
   SpatialPredictors spatial{};
   spatial.global = {10, 0};
@@ -156,6 +181,7 @@ int main() {
   try {
     planning();
     pixels();
+    duplicate_initial_seeds();
     selection_and_expansion();
     std::cout << "Scalar Analyse checks passed\n";
   } catch (const std::exception& e) {

@@ -118,9 +118,16 @@ SearchResult block(MotionTriple predictor, const SpatialPredictors& spatial, Mot
                    int layer, int pel, std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls,
                    Evaluate&& evaluate) {
   std::array<SearchResult, 7> seeds{};
+  std::array<BlockError, 3> initial_errors{};
   std::size_t count = 0;
   const auto seed = [&](MotionVector v, int kind) {
-    const auto e = evaluate(v);
+    // Equal initial vectors share samples, but retain their separate penalties
+    // and positions in the seed order.
+    const auto e = kind > 0 && kind < 3 && equal(v, seeds[0].vector) ? initial_errors[0]
+                   : kind == 2 && equal(v, seeds[1].vector) ? initial_errors[1]
+                                                          : evaluate(v);
+    if (kind < 3)
+      initial_errors[kind] = e;
     auto cost = candidate_cost(v, predictor.vector, 0, 0, e); // validates evaluator's raw error
     if (kind < 2) {
       const int penalty = kind == 0 || !controls.globalmv ? controls.pzero : controls.pglobal;
