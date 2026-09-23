@@ -278,11 +278,13 @@ HWY_INLINE std::int64_t FixedShortSad(const std::uint16_t *a, std::ptrdiff_t as,
            std::int64_t(Height) * Width * 32768;
 }
 
-template <int Width, int Height>
-std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
+template <int Width, int Height, bool Bounded = false>
+HWY_INLINE std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs,
+                                    std::int64_t limit = INT64_MAX) {
   const hn::CappedTag<std::uint8_t, Width> d;
   const hn::Repartition<std::uint64_t, decltype(d)> wide;
   auto sum0 = hn::Zero(wide), sum1 = sum0, sum2 = sum0, sum3 = sum0;
+  std::int64_t total = 0;
   for (int y = 0; y < Height; y += 4) {
     const auto* ar = a + y * as;
     const auto* br = b + y * bs;
@@ -290,8 +292,18 @@ std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::u
     sum1 = hn::Add(sum1, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + as), hn::LoadU(d, br + bs)));
     sum2 = hn::Add(sum2, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 2 * as), hn::LoadU(d, br + 2 * bs)));
     sum3 = hn::Add(sum3, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 3 * as), hn::LoadU(d, br + 3 * bs)));
+    if constexpr (Bounded) {
+      if (Height != 16 || y != 0) {
+        total = static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
+        if (total >= limit)
+          return total;
+      }
+    }
   }
-  return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
+  if constexpr (Bounded)
+    return total;
+  else
+    return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
 }
 std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
   const hn::CappedTag<std::uint8_t, 8> d;
@@ -606,17 +618,9 @@ HWY_INLINE std::int64_t Sad420Plane(const MetricRequest<T>& r, std::int64_t limi
   if constexpr (std::is_same_v<T, std::uint8_t>) {
     if constexpr (Width == 4)
       return FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
-    else if constexpr (Bounded) {
-      std::int64_t sum = 0;
-      for (int row = 0; row < Width; row += 4) {
-        sum += FixedByteSad<Width, 4>(r.source + row * r.source_stride, r.source_stride,
-                                     r.reference + row * r.reference_stride, r.reference_stride);
-        if (sum >= limit)
-          return sum;
-      }
-      return sum;
-    } else
-      return FixedByteSad<Width, Width>(r.source, r.source_stride, r.reference, r.reference_stride);
+    else
+      return FixedByteSad<Width, Width, Bounded>(r.source, r.source_stride,
+                                                r.reference, r.reference_stride, limit);
   }
 #endif
   return Metric(r.source, r.source_stride, r.reference, r.reference_stride, Width, Width, false);
