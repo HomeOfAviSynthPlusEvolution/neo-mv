@@ -30,13 +30,13 @@ struct DepanEstimateFilter {
   struct CachedWindow {
     int frame, left;
     bool top;
-    std::vector<float> current, previous;
+    std::shared_ptr<const std::vector<float>> current, previous;
     depan::estimate::WindowMotion motion;
   };
   struct CachedSpectrum {
     int frame, left;
-    std::vector<float> input;
-    std::vector<std::complex<float>> spectrum;
+    std::shared_ptr<const std::vector<float>> input;
+    std::shared_ptr<const std::vector<std::complex<float>>> spectrum;
   };
   struct WindowCache {
     std::mutex mutex;
@@ -122,70 +122,79 @@ struct DepanEstimateFilter {
     std::vector<est::BasicMotion> basic;
     const auto observations = est::required_basic_indices(ctx.output_frame, s.clip.num_frames);
     std::vector<float> display[2];
+    // Each source owner is stable for this request. Adjacent motion windows
+    // reuse its admitted pixels; cross-request reuse still compares contents.
+    std::array<std::vector<std::shared_ptr<const std::vector<float>>>, 2> extracted;
+    for (auto& slot : extracted)
+      slot.resize(owners.size());
     for (int n : observations) {
       const auto& current = source(n);
       const bool top = s.fields ? parity(current, n, s.tff) : false;
-      const auto& previous = source((std::max)(0, n - 1));
       auto window = [&](int left, int slot) {
-        auto extract = [&](const ds::VideoFrameView& frame) {
+        auto extract = [&](int frame_index) {
+          auto& cached = extracted[slot][std::size_t(frame_index - indices.front())];
+          if (cached)
+            return cached;
+          const auto& view = source(frame_index);
+          std::vector<float> values;
 #if NEO_MV_ENABLE_HIGHWAY
           if (selected_backend() == KernelBackend::highway)
-            return simd::estimate::extract_window(plane<T>(frame.plane(0)), left, g.top, g.width, g.height, bits);
+            values = simd::estimate::extract_window(plane<T>(view.plane(0)), left, g.top, g.width, g.height, bits);
+          else
 #endif
-          return est::extract_window(plane<T>(frame.plane(0)), left, g.top, g.width, g.height, bits);
+            values = est::extract_window(plane<T>(view.plane(0)), left, g.top, g.width, g.height, bits);
+          cached = std::make_shared<const std::vector<float>>(std::move(values));
+          return cached;
         };
-        auto a = extract(current);
-        auto b = extract(previous);
+        auto a = extract(n);
+        auto b = extract((std::max)(0, n - 1));
         const bool needs_display = s.show && n == ctx.output_frame;
         // A frame index alone is insufficient: an upstream clip may return
         // different samples for the same request. Compare the admitted inputs.
         // Four result entries plus four half-spectrum entries share a 64 MiB
-        // sample-payload budget. Account for both input copies and the FFT shape.
+        // sample-payload budget. Conservatively count shared inputs separately.
         const std::size_t slot_budget = (64u * 1024u * 1024u) / s.cache->entries.size();
         const std::size_t complex_count = std::size_t(g.height) * (std::size_t(g.width) / 2 + 1);
-        const bool cacheable = a.size() <= slot_budget / (3 * sizeof(float)) &&
-            complex_count <= (slot_budget - 3 * a.size() * sizeof(float)) / sizeof(std::complex<float>);
+        const bool cacheable = a->size() <= slot_budget / (3 * sizeof(float)) &&
+            complex_count <= (slot_budget - 3 * a->size() * sizeof(float)) / sizeof(std::complex<float>);
         if (cacheable && !needs_display) {
           std::lock_guard<std::mutex> lock(s.cache->mutex);
           for (const auto& entry : s.cache->entries) {
             if (entry && entry->frame == n && entry->left == left && entry->top == top &&
-                entry->current.size() == a.size() && entry->previous.size() == b.size() &&
-                std::memcmp(entry->current.data(), a.data(), a.size() * sizeof(float)) == 0 &&
-                std::memcmp(entry->previous.data(), b.data(), b.size() * sizeof(float)) == 0)
+                entry->current->size() == a->size() && entry->previous->size() == b->size() &&
+                std::memcmp(entry->current->data(), a->data(), a->size() * sizeof(float)) == 0 &&
+                std::memcmp(entry->previous->data(), b->data(), b->size() * sizeof(float)) == 0)
               return entry->motion;
           }
         }
         std::vector<float> correlation;
 #if NEO_MV_ENABLE_HIGHWAY
         if (selected_backend() == KernelBackend::highway) {
-          const auto forward = [&](int frame_index, const std::vector<float>& input) {
+          const auto forward = [&](int frame_index, const std::shared_ptr<const std::vector<float>>& input) {
             if (cacheable) {
               std::lock_guard<std::mutex> lock(s.cache->mutex);
               for (const auto& entry : s.cache->spectra)
                 if (entry && entry->frame == frame_index && entry->left == left &&
-                    entry->input.size() == input.size() &&
-                    std::memcmp(entry->input.data(), input.data(), input.size() * sizeof(float)) == 0)
+                    entry->input->size() == input->size() &&
+                    std::memcmp(entry->input->data(), input->data(), input->size() * sizeof(float)) == 0)
                   return entry->spectrum;
             }
-            auto result = s.fft->forward(input, simd::estimate::samples_finite);
+            auto result = std::make_shared<const std::vector<std::complex<float>>>(
+                s.fft->forward(*input, simd::estimate::samples_finite));
             if (cacheable) {
               std::lock_guard<std::mutex> lock(s.cache->mutex);
-              try {
-                s.cache->spectra[s.cache->next_spectrum].emplace(CachedSpectrum{frame_index, left, input, result});
-                s.cache->next_spectrum = (s.cache->next_spectrum + 1) % s.cache->spectra.size();
-              } catch (const std::bad_alloc&) {
-                // Cache allocation is optional after a successful transform.
-              }
+              s.cache->spectra[s.cache->next_spectrum].emplace(CachedSpectrum{frame_index, left, input, result});
+              s.cache->next_spectrum = (s.cache->next_spectrum + 1) % s.cache->spectra.size();
             }
             return result;
           };
-          auto current_spectrum = forward(n, a);
+          auto current_spectrum = cacheable ? *forward(n, a) : s.fft->forward(*a, simd::estimate::samples_finite);
           const auto previous_spectrum = forward((std::max)(0, n - 1), b);
-          simd::estimate::product(current_spectrum.data(), previous_spectrum.data(), current_spectrum.size());
+          simd::estimate::product(current_spectrum.data(), previous_spectrum->data(), current_spectrum.size());
           correlation = s.fft->inverse(current_spectrum, simd::estimate::samples_finite);
         } else
 #endif
-          correlation = s.fft->correlate(a, b);
+          correlation = s.fft->correlate(*a, *b);
         auto surface =
             checked_plane<const float>(correlation.data(), g.width, g.height, std::ptrdiff_t(g.width) * sizeof(float),
                                        correlation.size() * sizeof(float));

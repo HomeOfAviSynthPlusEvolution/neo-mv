@@ -288,6 +288,30 @@ def creation():
     fails(lambda: estimate(variable_format))
 
 
+def cache_contents():
+    state = [False]
+    def draw(n, f):
+        f[0][0, n if state[0] else 2 - n] = 10
+    source = edit(blank(), draw)
+    core.std.SetVideoCache(source, mode=0)
+    result = estimate(source)
+    core.std.SetVideoCache(result, mode=0)
+    for reverse in (False, True, False, True):
+        state[0] = reverse
+        close_motion(motion(result, 1), (-1 if reverse else 1, 0, 0, 1, 1))
+
+    # More frames than cache slots: request-held spectra must survive eviction.
+    source = impulse(length=12)
+    shared = estimate(source)
+    core.std.SetVideoCache(shared, mode=0)
+    jobs = (8, 2, 10, 4, 7, 1, 9, 3, 11, 5, 6, 0)
+    expected = {n: motion(estimate(source), n) for n in jobs}
+    futures = [shared.get_frame_async(n) for n in jobs]
+    for n, future in zip(jobs, futures):
+        with future.result() as frame:
+            close_motion(tuple(frame.props[key] for key in MOTION), expected[n])
+
+
 def concurrency():
     # Queue uncached nodes before retrieving any output, in nonchronological order.
     sources = [impulse(amplitude=1), impulse(amplitude=10), impulse(moving=False)]
@@ -307,6 +331,7 @@ parity_and_dependencies()
 display()
 diagnostics()
 creation()
+cache_contents()
 concurrency()
 print("neo-mv phase-6 DepanEstimate VS acceptance passed")
 gc.collect()
