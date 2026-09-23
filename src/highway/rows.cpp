@@ -237,7 +237,15 @@ template <class D>
 HWY_INLINE auto ShortSadPairs(D narrow, const std::uint16_t *a, const std::uint16_t *b) {
   const hn::RebindToSigned<D> signed_narrow;
   const hn::Repartition<std::int32_t, D> d;
-  const auto diff = hn::AbsDiff(hn::LoadU(narrow, a), hn::LoadU(narrow, b));
+  const auto va = hn::LoadU(narrow, a), vb = hn::LoadU(narrow, b);
+#if HWY_ARCH_X86 && HWY_TARGET <= HWY_AVX3
+  // At most one saturated difference is nonzero. AVX512 can combine the OR
+  // and the following bias XOR in one ternary operation, avoiding the
+  // min/max/subtract dependency used by the generic unsigned absolute diff.
+  const auto diff = hn::Or(hn::SaturatedSub(va, vb), hn::SaturatedSub(vb, va));
+#else
+  const auto diff = hn::AbsDiff(va, vb);
+#endif
   // XOR maps the entire unsigned difference range to d - 32768.
   // Pairwise signed multiply-add is exact; restore the prefix bias below.
   return hn::WidenMulPairwiseAdd(d, hn::BitCast(signed_narrow, hn::Xor(diff, hn::Set(narrow, 0x8000))),
