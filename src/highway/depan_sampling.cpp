@@ -134,8 +134,8 @@ void LinearRow(const depan::SamplingPlan& plan, span2d::Plane<const T> source, T
     x += used;
   }
 }
-template <class T>
-void LinearRender(const depan::SamplingPlan& plan, span2d::Plane<const T> source, span2d::Plane<T> output,
+template <class T, bool Native>
+void LinearRenderImpl(const depan::SamplingPlan& plan, span2d::Plane<const T> source, span2d::Plane<T> output,
                   bool preserve) {
   if (plan.sampling_class() != depan::SamplingClass::affine) {
     std::vector<depan::SamplingCoordinates> coordinates(plan.width());
@@ -168,11 +168,17 @@ void LinearRender(const depan::SamplingPlan& plan, span2d::Plane<const T> source
         px[i] = next_x;
         py[i] = next_y;
         if (x + i + 1 < plan.width()) {
-          next_x = arithmetic.add(next_x, m.u);
-          next_y = arithmetic.add(next_y, m.w);
+          if constexpr (Native) {
+            const hn::CappedTag<float, 1> one;
+            next_x = hn::GetLane(hn::Add(hn::Set(one, next_x), hn::Set(one, m.u)));
+            next_y = hn::GetLane(hn::Add(hn::Set(one, next_y), hn::Set(one, m.w)));
+          } else {
+            next_x = arithmetic.add(next_x, m.u);
+            next_y = arithmetic.add(next_y, m.w);
+          }
         }
       }
-      const auto X = hn::Load(df, px), Y = hn::Load(df, py);
+      const auto X = FiniteCoordinate(df, hn::Load(df, px)), Y = FiniteCoordinate(df, hn::Load(df, py));
       const auto I = hn::Floor(X), J = hn::Floor(Y);
       const auto FX = hn::Sub(X, I), FY = hn::Sub(Y, J);
       hn::Store(I, df, ix);
@@ -212,6 +218,20 @@ void LinearRender(const depan::SamplingPlan& plan, span2d::Plane<const T> source
       x += used;
     }
   }
+}
+template <class T>
+void LinearRender(const depan::SamplingPlan& plan, span2d::Plane<const T> source, span2d::Plane<T> output,
+                  bool preserve) {
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  // Native addition exactly implements the scalar binary32 recurrence under
+  // nearest rounding and gradual underflow. Check the environment once;
+  // finite results are admitted per coordinate batch before any sampling.
+  if ((_mm_getcsr() & 0xffc0u) == 0x1f80u) {
+    LinearRenderImpl<T, true>(plan, source, output, preserve);
+    return;
+  }
+#endif
+  LinearRenderImpl<T, false>(plan, source, output, preserve);
 }
 void RenderLinear8(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, span2d::Plane<std::uint8_t> o,
                    bool preserve) {

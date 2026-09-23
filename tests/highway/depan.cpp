@@ -624,6 +624,28 @@ void guarded_linear() {
     }
   }
 }
+void linear_rounding_environment() {
+#if defined(__SSE2__) || defined(_M_X64)
+  const auto saved = _mm_getcsr();
+  for (const unsigned mode : {0u, 0x2000u, 0x4000u, 0x6000u, 0x8040u}) {
+    _mm_setcsr((saved & ~0xe040u) | mode);
+    Buffer<std::uint16_t> input(33, 5), scalar(33, 5), highway(33, 5);
+    for (int y = 0; y < 5; ++y)
+      for (int x = 0; x < 33; ++x)
+        input.view().row(y)[x] = std::uint16_t((x * 1931 + y * 7151) & 65535);
+    for (const auto map : {Transform{-0.96875f, 0.03125f, 1.00001f, 0.125f, -0.00390625f, 1},
+                           Transform{-0.0f, 0.0f, 1, std::numeric_limits<float>::denorm_min(), 0, 1},
+                           Transform{0, 0, std::numeric_limits<float>::max(), 0.125f, 0, 1}}) {
+      const auto a = rejected([&] { SamplingPlan(33, 5, 16, 1, 0, 0, 7, map).render(input.read(), scalar.view()); });
+      const auto b = rejected([&] { HighwaySamplingPlan(33, 5, 16, 1, 0, 0, 7, map).render(input.read(), highway.view()); });
+      CHECK(a == b);
+      if (!a)
+        same_storage(scalar.storage, highway.storage);
+    }
+  }
+  _mm_setcsr(saved);
+#endif
+}
 template <class T>
 void guarded_cubic() {
   for (const int width : widths) {
@@ -770,6 +792,7 @@ int main() {
       guarded_weighted();
       guarded_linear<std::uint8_t>();
       guarded_linear<std::uint16_t>();
+      linear_rounding_environment();
       guarded_cubic<std::uint8_t>();
       guarded_cubic<std::uint16_t>();
       strict_weight_admission();
