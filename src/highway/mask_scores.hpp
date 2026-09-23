@@ -122,7 +122,10 @@ public:
   }
 
 private:
-  void event(std::vector<T>& output, std::int64_t overlap, std::int64_t h, float scale, int position, int count,
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  inline void event(std::vector<T>& output, std::int64_t overlap, std::int64_t h, float scale, int position, int count,
              std::size_t start, std::size_t stride, ScoreCache& cache) const {
     if (overlap <= 0)
       return;
