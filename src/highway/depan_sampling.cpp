@@ -36,6 +36,7 @@ void Coordinates(const depan::SamplingPlan& plan, int y, depan::SamplingCoordina
   const float vertical = depan::mul(m.h, row);
   const float shear = kind == depan::SamplingClass::affine ? depan::mul(m.v, row) : 0;
   const bool sequential = kind == depan::SamplingClass::affine && plan.mode() != 2;
+  const depan::ArithmeticContext arithmetic;
   float next_x = sequential ? depan::add(m.tx, shear) : 0;
   float next_y = sequential ? depan::add(m.ty, vertical) : 0;
   for (int x = 0; x < plan.width();) {
@@ -47,8 +48,8 @@ void Coordinates(const depan::SamplingPlan& plan, int y, depan::SamplingCoordina
         px[i] = next_x;
         py[i] = next_y;
         if (x + i + 1 < plan.width()) {
-          next_x = depan::add(next_x, m.u);
-          next_y = depan::add(next_y, m.w);
+          next_x = arithmetic.add(next_x, m.u);
+          next_y = arithmetic.add(next_y, m.w);
         }
       }
       X = hn::Load(d, px);

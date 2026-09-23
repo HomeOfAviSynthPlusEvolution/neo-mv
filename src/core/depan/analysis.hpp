@@ -288,7 +288,14 @@ struct ScalarFitArithmetic {
 // separately rounded inner products; only the outer weighted accumulation may fuse.
 template <class Arithmetic = ScalarFitArithmetic, class Residuals>
 inline FitSums accumulate_fit(const Observations& observations, const std::vector<float>& weights,
-                              Residuals&& residuals, bool zoom, bool rotation) {
+                              Residuals&& residuals, bool zoom, bool rotation,
+                              const ArithmeticContext* context = nullptr) {
+  const auto sum = [context](float a, float b) {
+    return context ? context->add(a, b) : add(a, b);
+  };
+  const auto product = [context](float a, float b) {
+    return context ? context->mul(a, b) : mul(a, b);
+  };
   FitSums sums;
   auto& [n, x2, y2, residual, gx, gy, gxx, gyy, gxy, gyx] = sums;
   for (std::size_t i = 0; i < observations.values.size(); ++i) {
@@ -296,22 +303,22 @@ inline FitSums accumulate_fit(const Observations& observations, const std::vecto
     const float weight = f32(weights[i]);
     const auto errors = residuals(i);
     const float ex = errors[0], ey = errors[1];
-    n = add(n, weight);
+    n = sum(n, weight);
     x2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight, x2);
     y2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight, y2);
-    residual = Arithmetic::multiply_add(add(mul(ex, ex), mul(ey, ey)), weight, residual);
-    gx = Arithmetic::multiply_add(mul(2.0f, ex), weight, gx);
-    gy = Arithmetic::multiply_add(mul(2.0f, ey), weight, gy);
+    residual = Arithmetic::multiply_add(sum(product(ex, ex), product(ey, ey)), weight, residual);
+    gx = Arithmetic::multiply_add(product(2.0f, ex), weight, gx);
+    gy = Arithmetic::multiply_add(product(2.0f, ey), weight, gy);
     if (zoom) {
-      gxx = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex),
+      gxx = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex),
                                      weight, gxx);
-      gyy = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey),
+      gyy = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey),
                                      weight, gyy);
     }
     if (rotation) {
-      gxy = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex),
+      gxy = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex),
                                      weight, gxy);
-      gyx = Arithmetic::multiply_add(mul(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey),
+      gyx = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey),
                                      weight, gyx);
     }
   }

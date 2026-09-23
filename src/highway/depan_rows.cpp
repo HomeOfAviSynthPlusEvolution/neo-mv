@@ -36,7 +36,9 @@ auto MulAdd(D d, V a, V b, V c) {
   return Add(d, product, c);
 #endif
 }
-bool NativeFma() { return HWY_NATIVE_FMA != 0; }
+bool NativeFma() {
+  return HWY_NATIVE_FMA != 0;
+}
 struct FitArithmetic {
   static float multiply_add(float a, float b, float c) {
     const hn::CappedTag<float, 1> d;
@@ -44,10 +46,12 @@ struct FitArithmetic {
     return hn::GetLane(MulAdd(d, hn::Set(d, a), hn::Set(d, b), hn::Set(d, c)));
   }
 };
-depan::FitSums Accumulate(const depan::Observations& observations, const std::vector<float>& weights,
-                          const float* ex, const float* ey, bool zoom, bool rotation) {
-  return depan::accumulate_fit<FitArithmetic>(observations, weights,
-      [ex, ey](std::size_t i) { return std::array<float, 2>{ex[i], ey[i]}; }, zoom, rotation);
+depan::FitSums Accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
+                          const float* ey, bool zoom, bool rotation) {
+  const depan::ArithmeticContext arithmetic;
+  return depan::accumulate_fit<FitArithmetic>(
+      observations, weights, [ex, ey](std::size_t i) { return std::array<float, 2>{ex[i], ey[i]}; }, zoom, rotation,
+      &arithmetic);
 }
 template <class D>
 void AdjustChunk(D d, const float* values, const float* scales, const float* gradients, float* output) {
@@ -76,12 +80,10 @@ template <class D>
 void ResidualChunk(D d, const float* x, const float* y, const float* dx, const float* dy, depan::Transform t, float* ex,
                    float* ey) {
   const auto X = hn::LoadU(d, x), Y = hn::LoadU(d, y);
-  const auto a =
-      Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.v), Y, MulAdd(d, hn::Set(d, t.u), X, hn::Set(d, t.tx))), X),
-          hn::LoadU(d, dx));
-  const auto b =
-      Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.h), Y, MulAdd(d, hn::Set(d, t.w), X, hn::Set(d, t.ty))), Y),
-          hn::LoadU(d, dy));
+  const auto a = Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.v), Y, MulAdd(d, hn::Set(d, t.u), X, hn::Set(d, t.tx))), X),
+                     hn::LoadU(d, dx));
+  const auto b = Sub(d, Sub(d, MulAdd(d, hn::Set(d, t.h), Y, MulAdd(d, hn::Set(d, t.w), X, hn::Set(d, t.ty))), Y),
+                     hn::LoadU(d, dy));
   hn::StoreU(a, d, ex);
   hn::StoreU(b, d, ey);
 }
@@ -115,15 +117,17 @@ void WeightedChunk(D d, const std::int64_t* samples, const std::int64_t* weights
 }
 template <int FixedTaps>
 void WeightedRows(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
-              bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
+                  bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
   const hn::ScalableTag<std::int64_t> d;
   const auto lanes = hn::Lanes(d);
   std::size_t i = 0;
   for (; i + lanes <= count; i += lanes)
-    WeightedChunk(d, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum, out + i);
+    WeightedChunk(d, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum,
+                  out + i);
   const hn::CappedTag<std::int64_t, 1> one;
   for (; i < count; ++i)
-    WeightedChunk(one, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum, out + i);
+    WeightedChunk(one, samples + i, weights + i, tap_stride, FixedTaps ? FixedTaps : taps, shift, round, maximum,
+                  out + i);
 }
 void Weighted(const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps, int shift,
               bool round, std::int64_t maximum, std::int64_t* out, std::size_t tap_stride) {
@@ -144,11 +148,13 @@ HWY_EXPORT(Weighted);
 HWY_EXPORT(NativeFma);
 HWY_EXPORT(Adjust);
 HWY_EXPORT(Accumulate);
-depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights,
-                          const float* ex, const float* ey, bool zoom, bool rotation) {
+depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
+                          const float* ey, bool zoom, bool rotation) {
   return HWY_DYNAMIC_DISPATCH(Accumulate)(observations, weights, ex, ey, zoom, rotation);
 }
-bool native_fma() { return HWY_DYNAMIC_DISPATCH(NativeFma)(); }
+bool native_fma() {
+  return HWY_DYNAMIC_DISPATCH(NativeFma)();
+}
 void adjust(const float* values, const float* scales, const float* gradients, std::size_t count, float* output) {
   HWY_DYNAMIC_DISPATCH(Adjust)(values, scales, gradients, count, output);
 }

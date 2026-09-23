@@ -50,21 +50,29 @@ inline float binary32_exact(double value) {
 }
 
 // Keep the common conversion small enough to inline into arithmetic loops.
-inline float binary32(double value) {
+inline bool nearest_rounding() {
+#if defined(__SSE2__) || defined(_M_X64)
+  return (_mm_getcsr() & 0x6000u) == 0;
+#else
+  return std::fegetround() == FE_TONEAREST;
+#endif
+}
+inline float binary32(double value, bool nearest) {
   std::uint64_t bits;
   std::memcpy(&bits, &value, sizeof(bits));
   const auto exponent = (bits >> 52) & 0x7ff;
   // Input and result are normal and in range; FTZ/DAZ cannot affect them.
-  if (exponent >= 897 && exponent < 1150) {
+  if (exponent >= 897 && exponent < 1150 && nearest) {
 #if defined(__SSE2__) || defined(_M_X64)
-    if ((_mm_getcsr() & 0x6000u) == 0)
-      return _mm_cvtss_f32(_mm_cvtsd_ss(_mm_setzero_ps(), _mm_set_sd(value)));
+    return _mm_cvtss_f32(_mm_cvtsd_ss(_mm_setzero_ps(), _mm_set_sd(value)));
 #else
-    if (std::fegetround() == FE_TONEAREST)
-      return static_cast<float>(value);
+    return static_cast<float>(value);
 #endif
   }
   return binary32_exact(value);
+}
+inline float binary32(double value) {
+  return binary32(value, nearest_rounding());
 }
 
 template <class T>

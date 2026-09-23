@@ -335,6 +335,21 @@ void complete_example() {
 
 int main() {
   try {
+    const int saved_rounding = std::fegetround();
+    for (int mode : {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO}) {
+      CHECK(std::fesetround(mode) == 0);
+      const ArithmeticContext arithmetic;
+      for (float a : {0.0f, -0.0f, 0x1p-149f, 1.0f, 0x1.fffffep100f})
+        for (float b : {0.0f, -0.0f, 0x1p-24f, 0.5f, -1.0f}) {
+          const auto expected_sum = add(a, b), actual_sum = arithmetic.add(a, b);
+          const auto expected_product = mul(a, b), actual_product = arithmetic.mul(a, b);
+          CHECK(std::memcmp(&expected_sum, &actual_sum, sizeof(float)) == 0);
+          CHECK(std::memcmp(&expected_product, &actual_product, sizeof(float)) == 0);
+        }
+      rejects([&] { arithmetic.mul(std::numeric_limits<float>::max(), 2.0f); });
+      rejects([&] { arithmetic.add(std::numeric_limits<float>::infinity(), 0.0f); });
+    }
+    CHECK(std::fesetround(saved_rounding) == 0);
     input_and_mask();
     current_metadata();
     metadata_only_creation();

@@ -10,6 +10,16 @@ inline float finite(float x) {
     throw std::invalid_argument("non-finite Depan operand");
   return x;
 }
+// Local to a built-in arithmetic loop that does not change the rounding mode.
+// Keep the environment in a register instead of consulting thread state for
+// every operation. Exceptional values still use the exact conversion path.
+class ArithmeticContext {
+  bool nearest_ = mask_detail::nearest_rounding();
+
+public:
+  float add(float a, float b) const { return mask_detail::binary32(double(finite(a)) + double(finite(b)), nearest_); }
+  float mul(float a, float b) const { return mask_detail::binary32(double(finite(a)) * double(finite(b)), nearest_); }
+};
 inline float add(float a, float b) {
   return f32(double(finite(a)) + double(finite(b)));
 }
