@@ -156,8 +156,48 @@ HWY_INLINE void StoreTyped(D d, V v, T* out) {
     hn::StoreU(hn::TruncateTo(narrow, v), narrow, out);
   }
 }
+#if HWY_TARGET <= HWY_AVX2
+template <class T>
+bool RenderGathered(const SampledPlane<T>& p, span2d::Plane<T> out) {
+  PhaseGather<T> left(p.left, p.images[0]), right(p.right, p.images[1]);
+  if (!left.prepare(out.width(), out.height()) || !right.prepare(out.width(), out.height()))
+    return false;
+  using Lane = std::conditional_t<std::is_same_v<T, float>, float, std::uint32_t>;
+  const hn::ScalableTag<Lane> d;
+  const hn::CappedTag<Lane, 1> one;
+  const int lanes = int(hn::Lanes(d));
+  const bool extra = p.fields[2] != nullptr;
+  for (int y = 0; y < out.height(); ++y) {
+    const auto compose = [&](auto tag, int x) HWY_ATTR {
+      const auto offset = std::size_t(y) * out.width() + x;
+      const auto a = left.sample(tag, *p.fields[0], p.time, x, y, p.bits);
+      const auto c = right.sample(tag, *p.fields[1], 256 - p.time, x, y, p.bits);
+      const auto e =
+          extra ? left.sample(tag, *p.fields[2], p.time, x, y, p.bits)
+                : LoadTyped(tag, p.images[0].planes[0].row(y + p.left.pad_y).data() + x + p.left.pad_x, p.bits);
+      const auto k =
+          extra ? right.sample(tag, *p.fields[3], 256 - p.time, x, y, p.bits)
+                : LoadTyped(tag, p.images[1].planes[0].row(y + p.right.pad_y).data() + x + p.right.pad_x, p.bits);
+      StoreTyped(tag,
+                 ComposeValue(tag, a, c, e, k, LoadMask(tag, p.masks[0] + offset), LoadMask(tag, p.masks[1] + offset),
+                              extra, p.time),
+                 out.row(y).data() + x);
+    };
+    int x = 0;
+    for (; x + lanes <= out.width(); x += lanes)
+      compose(d, x);
+    for (; x < out.width(); ++x)
+      compose(one, x);
+  }
+  return true;
+}
+#endif
 template <class T>
 void RenderSampled(const SampledPlane<T>& p, span2d::Plane<T> out) {
+#if HWY_TARGET <= HWY_AVX2
+  if (RenderGathered(p, out))
+    return;
+#endif
   using Lane = std::conditional_t<std::is_same_v<T, float>, float, std::uint32_t>;
   const hn::ScalableTag<Lane> d;
   const int lanes = int(hn::Lanes(d));

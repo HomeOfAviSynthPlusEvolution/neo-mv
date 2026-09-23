@@ -1,4 +1,5 @@
 // Included inside each Highway target namespace; intentionally no include guard.
+#include "highway/flow_gather-inl.hpp"
 template <std::size_t Bytes, class Lane, bool HasStorage, bool CheckCoordinates>
 void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage,
                     PhaseRounding rounding, int first_row = 0, int row_count = -1) {
@@ -151,13 +152,13 @@ void FlowSampleImpl(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
           }
         } else
 #endif
-        for (int i = 0; i < used; ++i) {
-          const auto a = static_cast<std::size_t>(phases[i]);
-          const auto* source = use_offsets ? source_planes[a] + offsets[i]
-                                           : source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
-          auto* output = output_row + std::size_t(x + i) * pixel_stride;
-          std::memcpy(output, source, Bytes);
-        }
+          for (int i = 0; i < used; ++i) {
+            const auto a = static_cast<std::size_t>(phases[i]);
+            const auto* source = use_offsets ? source_planes[a] + offsets[i]
+                                             : source_planes[a] + rows[i] * source_strides[a] + columns[i] * Bytes;
+            auto* output = output_row + std::size_t(x + i) * pixel_stride;
+            std::memcpy(output, source, Bytes);
+          }
       }
       x += used;
     }
@@ -179,9 +180,46 @@ void FlowSampleMode(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& 
   FlowSampleImpl<Bytes, std::int64_t, HasStorage, CheckCoordinates>(plan, field, storage, rounding, first_row,
                                                                     row_count);
 }
+#if HWY_TARGET <= HWY_AVX2
+template <std::size_t Bytes>
+bool FlowGatherRows(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage& storage,
+                    PhaseRounding rounding, int first_row, int row_count) {
+  using T = std::conditional_t<Bytes == 1, std::uint8_t, std::conditional_t<Bytes == 2, std::uint16_t, std::uint32_t>>;
+  PhaseGather<T> sampler(plan.geometry(), storage);
+  if (!sampler.prepare(plan.width(), plan.height()))
+    return false;
+  const hn::ScalableTag<std::uint32_t> d;
+  const hn::CappedTag<std::uint32_t, 1> one;
+  const int lanes = int(hn::Lanes(d));
+  for (int y = first_row; y < (row_count < 0 ? plan.height() : first_row + row_count); ++y) {
+    auto* output = reinterpret_cast<T*>(storage.output + std::ptrdiff_t(y - first_row) * storage.output_stride);
+    const auto store = [&](auto tag, int x) HWY_ATTR {
+      const auto value = sampler.sample(tag, field, plan.time_coefficient(), x, y, Bytes * 8,
+                                        rounding == PhaseRounding::nearest ? 128 : 0);
+      if constexpr (Bytes == 4)
+        hn::StoreU(value, tag, output + x);
+      else {
+        const hn::Rebind<T, decltype(tag)> narrow;
+        hn::StoreU(hn::TruncateTo(narrow, value), narrow, output + x);
+      }
+    };
+    int x = 0;
+    for (; x + lanes <= plan.width(); x += lanes)
+      store(d, x);
+    for (; x < plan.width(); ++x)
+      store(one, x);
+  }
+  return true;
+}
+#endif
 template <std::size_t Bytes>
 void FlowSample(const neo_mv::FlowSamplingPlan& plan, const DenseFlowField& field, const FlowSampleStorage* storage,
                 PhaseRounding rounding, int first_row = 0, int row_count = -1) {
+#if HWY_TARGET <= HWY_AVX2
+  if (storage && storage->coordinates_validated && storage->output_pixel_stride == Bytes &&
+      FlowGatherRows<Bytes>(plan, field, *storage, rounding, first_row, row_count))
+    return;
+#endif
   if (!storage)
     return FlowSampleMode<Bytes, false, true>(plan, field, storage, rounding, first_row, row_count);
   if (storage->coordinates_validated)

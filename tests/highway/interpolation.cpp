@@ -329,6 +329,65 @@ struct EndRow {
   EndRow& operator=(const EndRow&) = delete;
 };
 template <class T>
+void guarded_sampled(int bits) {
+  std::mt19937 rng(91273);
+  for (const int width : widths)
+    for (const int pel : {1, 2})
+      for (const int odd : {0, 1}) {
+        const int source_width = ((width + 11) / 4) * 4 + odd;
+        RenderPhaseGeometry g{pel, 1, 1, 4, 0, {}};
+        SubpixelPhases<T> images[2];
+        std::array<std::unique_ptr<EndRow<T>>, 8> sources;
+        for (int side = 0; side < 2; ++side) {
+          images[side].pel = pel;
+          for (int a = 0; a < pel * pel; ++a) {
+            g.phases[a] = {source_width, 1};
+            auto& source = sources[side * 4 + a];
+            source = std::make_unique<EndRow<T>>(source_width);
+            for (int i = 0; i < source_width; ++i)
+              source->data[i] = random_sample<T>(rng, bits);
+            images[side].planes[a] =
+                checked_plane<const T>(source->data, source_width, 1, std::ptrdiff_t(source_width) * sizeof(T),
+                                       std::size_t(source_width) * sizeof(T));
+          }
+        }
+        DenseFlowField fields[4];
+        for (int k = 0; k < 4; ++k) {
+          auto& f = fields[k];
+          f.width = width;
+          f.height = 1;
+          f.x.resize(width);
+          f.y.resize(width);
+          for (int i = 0; i < width; ++i) {
+            f.x[i] = std::int16_t((i + k) % 7 - 3);
+            f.y[i] = std::int16_t(pel == 2 ? (i + k) % 2 : 0);
+          }
+          // Exercise a gather of the very last pixel before the guard page.
+          f.x.back() = std::int16_t((source_width - 1 - (4 + width - 1)) * pel);
+        }
+        std::vector<std::uint8_t> mf(width), mb(width);
+        for (int i = 0; i < width; ++i) {
+          mf[i] = std::uint8_t(rng());
+          mb[i] = std::uint8_t(rng());
+        }
+        EndRow<T> expected(width), actual(width);
+        const auto view = [&](T* data) {
+          return checked_plane(data, width, 1, std::ptrdiff_t(width) * sizeof(T), std::size_t(width) * sizeof(T));
+        };
+        for (int time : times)
+          for (bool extra : {false, true}) {
+            const auto* bb = extra ? &fields[2] : nullptr;
+            const auto* ff = extra ? &fields[3] : nullptr;
+            const InterpolationSamplingPlan scalar(g, g, width, 1, time, bits);
+            const simd::InterpolationSamplingPlan highway(g, g, width, 1, time, bits);
+            scalar.preflight(fields[0], fields[1], bb, ff);
+            scalar.render_preflighted(images[0], images[1], fields[0], fields[1], bb, ff, mf, mb, view(expected.data));
+            highway.render_preflighted(images[0], images[1], fields[0], fields[1], bb, ff, mf, mb, view(actual.data));
+            CHECK(std::memcmp(expected.data, actual.data, std::size_t(width) * sizeof(T)) == 0);
+          }
+      }
+}
+template <class T>
 void guarded_rows() {
   for (const int width : widths) {
     EndRow<T> a(width), c(width), x(width), y(width), mf(width), mb(width), out(width);
@@ -408,6 +467,10 @@ int main() {
       float_blur();
       guarded_rows<std::uint32_t>();
       guarded_rows<float>();
+      guarded_sampled<std::uint8_t>(8);
+      guarded_sampled<std::uint16_t>(10);
+      guarded_sampled<std::uint16_t>(16);
+      guarded_sampled<float>(32);
       guarded_sum<std::uint8_t>();
       guarded_sum<std::uint16_t>();
     }
