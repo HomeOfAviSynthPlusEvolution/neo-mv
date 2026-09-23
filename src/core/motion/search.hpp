@@ -110,6 +110,9 @@ struct SearchEvaluator {
   SearchResult refine(SearchResult initial, const SearchParams& p) {
     return refine_impl(initial, p, *this);
   }
+  bool improve_expansion(MotionVector vector, const SearchParams& p, SearchResult& best) {
+    return improve(vector, p, best);
+  }
 };
 } // namespace search_detail
 

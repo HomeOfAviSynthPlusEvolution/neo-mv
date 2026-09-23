@@ -176,6 +176,34 @@ void selection_and_expansion() {
   for (auto v : visits)
     CHECK(v.first > -3 && v.second > -3);
 }
+
+void bounded_expansion() {
+  struct Evaluator {
+    int full_corner = 0, bounded_corner = 0;
+    static bool corner(MotionVector v) {
+      return (v.x == -1 && v.y == -1) || (v.x == 1 && v.y == 1);
+    }
+    BlockError operator()(MotionVector v) {
+      full_corner += corner(v);
+      const std::int64_t raw = corner(v) ? 1 : 100;
+      return {raw, 0, raw};
+    }
+    std::optional<BlockError> bounded(MotionVector v, std::int64_t limit, MotionVector, std::int64_t, int) {
+      bounded_corner += corner(v);
+      const std::int64_t raw = corner(v) ? 1 : 100;
+      if (raw >= limit)
+        return std::nullopt;
+      return BlockError{raw, 0, raw};
+    }
+  } evaluate;
+  AnalyseControls c;
+  c.search = 4; // Ordinary horizontal search leaves these corners to expansion.
+  c.pzero = c.pglobal = c.pnew = 0;
+  c.badrange = -4;
+  const auto best = analyse_detail::block({}, SpatialPredictors{}, {}, {-4, -4, 5, 5}, 0, 2, 0, 99, c, evaluate);
+  CHECK(best.vector.x == -1 && best.vector.y == -1 && best.raw == 1 && best.cost == 1);
+  CHECK(evaluate.full_corner == 0 && evaluate.bounded_corner > 0);
+}
 } // namespace
 int main() {
   try {
@@ -183,6 +211,7 @@ int main() {
     pixels();
     duplicate_initial_seeds();
     selection_and_expansion();
+    bounded_expansion();
     std::cout << "Scalar Analyse checks passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

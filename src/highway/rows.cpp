@@ -756,6 +756,10 @@ struct Analyse420 {
   SearchResult refine(SearchResult initial, const SearchParams& p) {
     return refine_impl(initial, p, *this);
   }
+  // Keep this less frequent ring body out of the main search's live state.
+  HWY_NOINLINE bool improve_expansion(MotionVector vector, const SearchParams& p, SearchResult& best) const {
+    return improve(vector, p, best);
+  }
 };
 } // namespace fused_motion
 

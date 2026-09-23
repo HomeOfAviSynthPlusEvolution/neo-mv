@@ -80,6 +80,14 @@ SearchResult block_impl(MotionTriple predictor, const SpatialPredictors& spatial
     if (cost < best.cost)
       best = {v, cost, e.raw};
   };
+  // Wide rings often reject poor candidates early. The final nearby subpixel
+  // ring keeps full SAD to avoid prefix reductions on similar candidates.
+  const auto consider_bounded = [&](std::int64_t x, std::int64_t y) NEO_MV_MOTION_ATTR {
+    if (x < omega.left || x >= omega.right || y < omega.top || y >= omega.bottom)
+      return;
+    const MotionVector v{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)};
+    evaluate.improve_expansion(v, search, best);
+  };
   if (controls.badrange > 0) {
     auto expansion = search;
     expansion.type = 3;
@@ -89,7 +97,7 @@ SearchResult block_impl(MotionTriple predictor, const SpatialPredictors& spatial
   } else if (controls.badrange < 0) {
     const auto limit = -std::int64_t(controls.badrange) * pel;
     for (std::int64_t r = 1; r < limit; r += pel) {
-      ring({0, 0}, r, pel, consider);
+      ring({0, 0}, r, pel, consider_bounded);
       if (best.raw < ordinary_raw / 4)
         break;
     }
