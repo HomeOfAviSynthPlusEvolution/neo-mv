@@ -39,6 +39,62 @@ auto MulAdd(D d, V a, V b, V c) {
 bool NativeFma() {
   return HWY_NATIVE_FMA != 0;
 }
+bool NativeArithmeticEnvironment() {
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  return (_mm_getcsr() & 0xffc0u) == 0x1f80u;
+#else
+  return false;
+#endif
+}
+
+depan::FitSums AccumulateComponents(const std::vector<float>& weights, const float* ex, const float* ey, bool zoom,
+                                    bool rotation, const depan::FitGeometry* geometry) {
+  // Lanes hold independent statistics, not partial observation sums. Each
+  // statistic sees the original observation order with the same rounding.
+  const hn::CappedTag<float, 4> d;
+  const hn::CappedTag<float, 1> one;
+  auto a = hn::Set(d, 0.1f), b = hn::Zero(d), c = hn::Zero(d);
+  HWY_ALIGN float factors[4], values[4], inner[4], terms_a[4], terms_b[4], terms_c[4];
+  for (std::size_t i = 0; i < weights.size(); ++i) {
+    const float x = ex[i], y = ey[i];
+    values[0] = values[2] = x;
+    values[1] = values[3] = y;
+    factors[0] = x;
+    factors[1] = y;
+    factors[2] = factors[3] = 2;
+    hn::Store(Mul(d, hn::Load(d, values), hn::Load(d, factors)), d, inner);
+    terms_a[0] = geometry[i].x2;
+    terms_a[1] = geometry[i].y2;
+    terms_a[2] = hn::GetLane(Add(one, hn::Set(one, inner[0]), hn::Set(one, inner[1])));
+    terms_a[3] = 1;
+    terms_b[0] = inner[2];
+    terms_b[1] = inner[3];
+    terms_b[2] = terms_b[3] = 0;
+    if (zoom || rotation) {
+      factors[0] = zoom ? geometry[i].twice_x : 0;
+      factors[1] = zoom ? geometry[i].twice_y : 0;
+      factors[2] = rotation ? geometry[i].twice_y : 0;
+      factors[3] = rotation ? geometry[i].twice_x : 0;
+      hn::Store(Mul(d, hn::Load(d, values), hn::Load(d, factors)), d, inner);
+      terms_b[2] = inner[0];
+      terms_b[3] = inner[1];
+      terms_c[0] = inner[2];
+      terms_c[1] = inner[3];
+      terms_c[2] = terms_c[3] = 0;
+    }
+    const auto weight = hn::Set(d, weights[i]);
+    a = MulAdd(d, hn::Load(d, terms_a), weight, a);
+    b = MulAdd(d, hn::Load(d, terms_b), weight, b);
+    if (rotation)
+      c = MulAdd(d, hn::Load(d, terms_c), weight, c);
+  }
+  hn::Store(a, d, terms_a);
+  hn::Store(b, d, terms_b);
+  hn::Store(c, d, terms_c);
+  return {terms_a[3], terms_a[0], terms_a[1], terms_a[2], terms_b[0],
+          terms_b[1], terms_b[2], terms_b[3], terms_c[0], terms_c[1]};
+}
+
 struct FitArithmetic {
   static float multiply_add(float a, float b, float c) {
     const hn::CappedTag<float, 1> d;
@@ -48,6 +104,8 @@ struct FitArithmetic {
 };
 depan::FitSums Accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
                           const float* ey, bool zoom, bool rotation, const depan::FitGeometry* geometry) {
+  if (geometry && NativeArithmeticEnvironment())
+    return AccumulateComponents(weights, ex, ey, zoom, rotation, geometry);
   const depan::ArithmeticContext arithmetic;
   return depan::accumulate_fit<FitArithmetic>(
       observations, weights, [ex, ey](std::size_t i) { return std::array<float, 2>{ex[i], ey[i]}; }, zoom, rotation,

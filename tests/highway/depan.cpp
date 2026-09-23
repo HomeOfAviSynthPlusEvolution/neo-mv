@@ -281,6 +281,43 @@ void fit_pair(const Observations& o, FitParameters p = {}, bool bounded = false)
     }
   }
 }
+void component_accumulation() {
+  auto o = observations(17, 3);
+  FitWorkspace<HighwayResiduals> workspace(o);
+  std::vector<float> weights(o.values.size()), ex(o.values.size()), ey(o.values.size());
+  const std::array<float, 7> values{0.0f, -0.0f, 0x1p-149f, -0x1p-149f, 1.125f, -0.75f, 0x1p12f};
+  for (std::size_t i = 0; i < weights.size(); ++i) {
+    weights[i] = values[(i + 2) % values.size()];
+    ex[i] = values[i % values.size()];
+    ey[i] = values[(i + 3) % values.size()];
+  }
+  const auto compare = [&](bool zoom, bool rotation) {
+    std::optional<FitSums> expected, actual;
+    CHECK(rejected([&] {
+            expected = simd::depan_rows::accumulate(o, weights, ex.data(), ey.data(), zoom, rotation);
+          }) == rejected([&] {
+            actual = simd::depan_rows::accumulate(o, weights, ex.data(), ey.data(), zoom, rotation,
+                                                  workspace.geometry.data());
+          }));
+    if (!expected)
+      return;
+    const auto pack = [](FitSums s) {
+      return std::array<float, 10>{s.n, s.x2, s.y2, s.residual, s.gx, s.gy, s.gxx, s.gyy, s.gxy, s.gyx};
+    };
+    const auto a = pack(*expected), b = pack(*actual);
+    for (std::size_t i = 0; i < a.size(); ++i)
+      same_float(a[i], b[i]);
+  };
+  for (bool zoom : {false, true})
+    for (bool rotation : {false, true})
+      compare(zoom, rotation);
+  ex.back() = std::numeric_limits<float>::max();
+  weights.back() = 0; // Zero weight cannot hide overflowing inner products.
+  compare(false, false);
+  ex.back() = 1;
+  weights.back() = std::numeric_limits<float>::infinity();
+  compare(true, true);
+}
 void strict_weight_admission() {
   auto o = observations(17, 9);
   o.masked = true;
@@ -672,6 +709,7 @@ int main() {
       guarded_linear<std::uint8_t>();
       guarded_linear<std::uint16_t>();
       strict_weight_admission();
+      component_accumulation();
       guarded_residuals();
       guarded_adjustments();
       guarded_accumulation();
