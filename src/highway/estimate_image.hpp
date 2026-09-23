@@ -6,6 +6,20 @@ namespace neo_mv::simd::estimate {
 void extract_row(const std::uint8_t*, float*, std::size_t, float);
 void extract_row(const std::uint16_t*, float*, std::size_t, float);
 void extract_row(const float*, float*, std::size_t, float);
+// Compare against a previously admitted window, including the sign of zero.
+bool matches_row(const std::uint8_t*, const float*, std::size_t);
+bool matches_row(const std::uint16_t*, const float*, std::size_t);
+bool matches_row(const float*, const float*, std::size_t);
+template <class T>
+bool matches_window(span2d::Plane<const T> source, int left, int top, int width, int height,
+                    const std::vector<float>& admitted) {
+  if (depan::estimate::image_detail::rectangle(source, left, top, width, height) != admitted.size())
+    return false;
+  for (int y = 0; y < height; ++y)
+    if (!matches_row(source.row(top + y).data() + left, admitted.data() + std::size_t(y) * width, width))
+      return false;
+  return true;
+}
 void display_row(const float*, std::uint8_t*, std::size_t, float, float, float);
 void display_row(const float*, std::uint16_t*, std::size_t, float, float, float);
 void display_row(const float*, float*, std::size_t, float, float, float);

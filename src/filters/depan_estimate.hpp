@@ -138,9 +138,25 @@ struct DepanEstimateFilter {
           const auto& view = source(frame_index);
           std::vector<float> values;
 #if NEO_MV_ENABLE_HIGHWAY
-          if (selected_backend() == KernelBackend::highway)
+          if (selected_backend() == KernelBackend::highway) {
+            std::shared_ptr<const std::vector<float>> candidate;
+            {
+              std::lock_guard<std::mutex> lock(s.cache->mutex);
+              for (const auto& entry : s.cache->spectra)
+                if (entry && entry->frame == frame_index && entry->left == left) {
+                  candidate = entry->input;
+                  break;
+                }
+            }
+            // A content match reuses admission without assuming that equal
+            // frame numbers identify equal pixels across separate requests.
+            if (candidate && simd::estimate::matches_window(plane<T>(view.plane(0)), left, g.top,
+                                                            g.width, g.height, *candidate)) {
+              cached = std::move(candidate);
+              return cached;
+            }
             values = simd::estimate::extract_window(plane<T>(view.plane(0)), left, g.top, g.width, g.height, bits);
-          else
+          } else
 #endif
             values = est::extract_window(plane<T>(view.plane(0)), left, g.top, g.width, g.height, bits);
           cached = std::make_shared<const std::vector<float>>(std::move(values));
@@ -162,8 +178,8 @@ struct DepanEstimateFilter {
           for (const auto& entry : s.cache->entries) {
             if (entry && entry->frame == n && entry->left == left && entry->top == top &&
                 entry->current->size() == a->size() && entry->previous->size() == b->size() &&
-                std::memcmp(entry->current->data(), a->data(), a->size() * sizeof(float)) == 0 &&
-                std::memcmp(entry->previous->data(), b->data(), b->size() * sizeof(float)) == 0)
+                (entry->current == a || std::memcmp(entry->current->data(), a->data(), a->size() * sizeof(float)) == 0) &&
+                (entry->previous == b || std::memcmp(entry->previous->data(), b->data(), b->size() * sizeof(float)) == 0))
               return entry->motion;
           }
         }
@@ -176,7 +192,8 @@ struct DepanEstimateFilter {
               for (const auto& entry : s.cache->spectra)
                 if (entry && entry->frame == frame_index && entry->left == left &&
                     entry->input->size() == input->size() &&
-                    std::memcmp(entry->input->data(), input->data(), input->size() * sizeof(float)) == 0)
+                    (entry->input == input ||
+                     std::memcmp(entry->input->data(), input->data(), input->size() * sizeof(float)) == 0))
                   return entry->spectrum;
             }
             auto result = std::make_shared<const std::vector<std::complex<float>>>(

@@ -203,6 +203,16 @@ void images(int bits) {
       surface.data[x + 1] = float(x % 19);
     }
     vector::extract_row(source.data + 1, converted.data + 1, width, maximum);
+    CHECK(vector::matches_row(source.data + 1, converted.data + 1, width));
+    const float last = converted.data[width];
+    converted.data[width] = last + 1;
+    CHECK(!vector::matches_row(source.data + 1, converted.data + 1, width));
+    converted.data[width] = last;
+    if constexpr (std::is_same_v<T, float>) {
+      converted.data[1] = 0.0f;
+      CHECK(!vector::matches_row(source.data + 1, converted.data + 1, width));
+      converted.data[1] = -0.0f;
+    }
     for (int x = 0; x < width; ++x)
       CHECK(same(converted.data[x + 1], float(source.data[x + 1])));
     vector::display_row(surface.data + 1, output.data + 1, width, 0, maximum / 18, maximum);
@@ -227,6 +237,9 @@ void images(int bits) {
     auto sa = scalar::extract_window(source_view, 1, 1, width, 2, bits);
     auto sb = vector::extract_window(source_view, 1, 1, width, 2, bits);
     CHECK(std::memcmp(sa.data(), sb.data(), sa.size() * sizeof(float)) == 0);
+    CHECK(vector::matches_window(source_view, 1, 1, width, 2, sb));
+    sb.back() += 1;
+    CHECK(!vector::matches_window(source_view, 1, 1, width, 2, sb));
     CHECK(std::memcmp(padded.data(), before_source.data(), padded.size() * sizeof(T)) == 0);
     for (std::size_t i = 0; i < sa.size(); ++i)
       sa[i] = float(i % 23);

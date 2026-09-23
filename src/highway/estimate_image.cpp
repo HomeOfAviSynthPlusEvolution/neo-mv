@@ -54,6 +54,36 @@ void DisplayChunk(D d, const float* source, T* output, float minimum, float norm
     hn::StoreU(hn::DemoteTo(narrow, hn::ConvertTo(wide, integer)), narrow, output);
   }
 }
+
+template <class D, class T>
+bool MatchesChunk(D d, const T* source, const float* admitted) {
+  const hn::Rebind<std::int32_t, D> bits;
+  auto value = hn::Zero(d);
+  if constexpr (std::is_same_v<T, float>)
+    value = hn::LoadU(d, source);
+  else {
+    const hn::Rebind<T, D> narrow;
+    value = hn::ConvertTo(d, hn::PromoteTo(bits, hn::LoadU(narrow, source)));
+  }
+  return hn::AllTrue(bits, hn::Eq(hn::BitCast(bits, value), hn::BitCast(bits, hn::LoadU(d, admitted))));
+}
+template <class T>
+bool MatchesRow(const T* source, const float* admitted, std::size_t count) {
+  const hn::ScalableTag<float> d;
+  const auto lanes = hn::Lanes(d);
+  std::size_t i = 0;
+  for (; count - i >= lanes; i += lanes)
+    if (!MatchesChunk(d, source + i, admitted + i))
+      return false;
+  const hn::CappedTag<float, 1> one;
+  for (; i < count; ++i)
+    if (!MatchesChunk(one, source + i, admitted + i))
+      return false;
+  return true;
+}
+bool Matches8(const std::uint8_t* p, const float* q, std::size_t n) { return MatchesRow(p, q, n); }
+bool Matches16(const std::uint16_t* p, const float* q, std::size_t n) { return MatchesRow(p, q, n); }
+bool Matches32(const float* p, const float* q, std::size_t n) { return MatchesRow(p, q, n); }
 template <class T>
 void DisplayImage(const float* source, T* output, std::size_t count, float minimum, float norm, float maximum) {
   const hn::ScalableTag<float> d;
@@ -115,6 +145,18 @@ namespace neo_mv::simd::estimate {
 HWY_EXPORT(Extract8);
 HWY_EXPORT(Extract16);
 HWY_EXPORT(Extract32);
+HWY_EXPORT(Matches8);
+HWY_EXPORT(Matches16);
+HWY_EXPORT(Matches32);
+bool matches_row(const std::uint8_t* p, const float* q, std::size_t n) {
+  return HWY_DYNAMIC_DISPATCH(Matches8)(p, q, n);
+}
+bool matches_row(const std::uint16_t* p, const float* q, std::size_t n) {
+  return HWY_DYNAMIC_DISPATCH(Matches16)(p, q, n);
+}
+bool matches_row(const float* p, const float* q, std::size_t n) {
+  return HWY_DYNAMIC_DISPATCH(Matches32)(p, q, n);
+}
 HWY_EXPORT(Display8);
 HWY_EXPORT(Display16);
 HWY_EXPORT(Display32);
