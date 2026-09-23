@@ -60,6 +60,12 @@ if(NEO_MV_ENABLE_HIGHWAY)
   add_library(neo_mv_highway STATIC src/highway/rows.cpp src/highway/scene.cpp src/highway/flow_sampling.cpp src/highway/blur_sampling.cpp src/highway/render_rows.cpp src/highway/mask_rows.cpp src/highway/interpolation_rows.cpp src/highway/depan_rows.cpp src/highway/depan_sampling.cpp src/highway/depan_estimate.cpp src/highway/estimate_image.cpp)
   target_link_libraries(neo_mv_highway PUBLIC neo_mv_core hwy)
   target_compile_definitions(neo_mv_highway PUBLIC HWY_COMPILE_ALL_ATTAINABLE)
+  # GCC crashes while optimizing the SVE2 Degrain kernels.
+  # Retain NEON and scalar fallback; other toolchains keep their normal targets.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+      AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+    target_compile_definitions(neo_mv_highway PUBLIC HWY_DISABLED_TARGETS=HWY_ALL_SVE)
+  endif()
   set_target_properties(neo_mv_highway hwy PROPERTIES POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
   if(NEO_MV_HWY_SCALAR_ONLY)

@@ -47,6 +47,10 @@ jobs:
       max-parallel: 1
       matrix:
         include:
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            host_tests: 'OFF'
           - platform: windows-x64
             runner: windows-2022
             arch: x64
@@ -60,10 +64,6 @@ jobs:
           - platform: linux-x64
             runner: ubuntu-24.04
             arch: x64
-            host_tests: 'OFF'
-          - platform: linux-arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
             host_tests: 'OFF'
           - platform: macos-x64
             runner: macos-15-intel
