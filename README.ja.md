@@ -32,7 +32,8 @@ neo-mv は動きの計算とホストのフレーム管理を分離していま�
 
 計算ナレッジベースでは、各関数が入力から出力を求める過程を解説します。データ表現、数式、演算順序、パラメーターの役割、数値例、境界、精度を扱います。英語版を参照してください。
 
-- [English knowledge base](docs/knowledge/en/README.md)
+- [API reference (English)](docs/api/en/README.md)：関数シグネチャ、パラメーター表、既定値、使用例。
+- [Knowledge base (English)](docs/knowledge/en/README.md)
 
 ビルドしたプラグインを明示的に読み込むか、VapourSynth のプラグイン自動読み込みディレクトリに配置してください。以下は Windows のファイル名を使用しています。他のプラットフォームでは実際のプラグインパスに置き換えてください。
 
@@ -62,7 +63,7 @@ vectors = neo_mv_AnalyseMany(super_clip, radius=1)
 return neo_mv_Degrain1(clip, super_clip, vectors)
 ```
 
-関数名とパラメーター順はナレッジベースに対応し、関数名には `neo_mv_` を付けます。配列パラメーターは `[16, 8]` などのネイティブ配列を受け取り、単一の値も 1 要素の配列として扱います。`AnalyseMany` と `Recalculate` はクリップ配列を返し、Recalculate の入力が 1 つでも 1 要素の配列になります。`neo_mv_KernelInfo()` は `[backend, target, fft, fft_lanes]` を返します。真偽値には `true`/`false` を使用します。音声とフィールドパリティは最初の入力クリップから引き継ぎ、フィールド計算は `_Field` プロパティまたは明示した `tff` を使用します。Depan の `info=true` は AviSynth の `propShow` で診断プロパティを描画します。
+関数名とパラメーター順は API リファレンスに対応し、関数名には `neo_mv_` を付けます。配列パラメーターは `[16, 8]` などのネイティブ配列を受け取り、単一の値も 1 要素の配列として扱います。`AnalyseMany` と `Recalculate` はクリップ配列を返し、Recalculate の入力が 1 つでも 1 要素の配列になります。`neo_mv_KernelInfo()` は `[backend, target, fft, fft_lanes]` を返します。真偽値には `true`/`false` を使用します。音声とフィールドパリティは最初の入力クリップから引き継ぎ、フィールド計算は `_Field` プロパティまたは明示した `tff` を使用します。Depan の `info=true` は AviSynth の `propShow` で診断プロパティを描画します。
 
 ## SIMD と CPU 選択
 

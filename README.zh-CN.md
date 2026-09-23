@@ -32,7 +32,8 @@ neo-mv 将运动计算与宿主帧管理分离。核心处理图像平面、运�
 
 计算知识库逐个解释函数如何将输入变成输出，包括数据表示、公式、运算顺序、参数作用、数值示例、边界及精度。
 
-- [简体中文知识库](docs/knowledge/zh-CN/README.md)
+- [API 使用参考](docs/api/zh-CN/README.md)：函数签名、参数表、默认值及使用示例。
+- [知识库](docs/knowledge/zh-CN/README.md)
 
 可以显式加载构建出的插件，也可以将其放入 VapourSynth 的插件自动加载目录。下面使用 Windows 文件名，其他平台请替换为实际插件路径。
 
@@ -62,7 +63,7 @@ vectors = neo_mv_AnalyseMany(super_clip, radius=1)
 return neo_mv_Degrain1(clip, super_clip, vectors)
 ```
 
-函数名和参数顺序对应知识库，函数名前加 `neo_mv_`。数组参数接受 `[16, 8]` 这样的原生数组，单值可作为一个元素的简写。`AnalyseMany` 和 `Recalculate` 返回剪辑数组，单个 Recalculate 输入也返回一个元素的数组。`neo_mv_KernelInfo()` 返回 `[backend, target, fft, fft_lanes]`。布尔参数使用 `true`/`false`。音频和场序从第一个输入剪辑传递；场模式计算使用 `_Field` 属性或显式 `tff`。Depan 的 `info=true` 使用 AviSynth 的 `propShow` 绘制诊断属性。
+函数名和参数顺序对应 API 使用参考，函数名前加 `neo_mv_`。数组参数接受 `[16, 8]` 这样的原生数组，单值可作为一个元素的简写。`AnalyseMany` 和 `Recalculate` 返回剪辑数组，单个 Recalculate 输入也返回一个元素的数组。`neo_mv_KernelInfo()` 返回 `[backend, target, fft, fft_lanes]`。布尔参数使用 `true`/`false`。音频和场序从第一个输入剪辑传递；场模式计算使用 `_Field` 属性或显式 `tff`。Depan 的 `info=true` 使用 AviSynth 的 `propShow` 绘制诊断属性。
 
 ## SIMD 与 CPU 选择
 
