@@ -152,6 +152,12 @@ HWY_INLINE void FormulaChunk(D d, const T *const *p, T *out, std::int64_t maximu
   else
     hn::StoreU(hn::DemoteTo(narrow, v), narrow, out);
 }
+template <class D>
+HWY_INLINE auto LoadBiasedU16(D d, const std::uint16_t* p) {
+  const hn::RebindToUnsigned<D> du;
+  return hn::BitCast(d, hn::Xor(hn::LoadU(du, p), hn::Set(du, 32768)));
+}
+
 template <Formula Op, int Step, class T>
 void FormulaRowKnownStep(const T *const *p, T *out, int count, std::int64_t maximum) {
   const hn::ScalableTag<FormulaWide<T>> d;
@@ -159,6 +165,32 @@ void FormulaRowKnownStep(const T *const *p, T *out, int count, std::int64_t maxi
   int x = 0;
   constexpr int nt = Op == Formula::average ? 2 : ((Op == Formula::reduce6 || Op == Formula::sharp6) ? 6 : 4);
   const T *taps[6]{};
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  if constexpr (std::is_same_v<T, std::uint16_t> && Op == Formula::sharp6 && Step == 1) {
+    const hn::ScalableTag<std::int16_t> d16;
+    const hn::RebindToUnsigned<decltype(d16)> du16;
+    const hn::Repartition<std::int32_t, decltype(d16)> d32;
+    const int packed_lanes = int(hn::Lanes(d16));
+    const auto bias = hn::Set(du16, 32768);
+    const auto c1 = hn::Set(d16, 1), cm5 = hn::Set(d16, -5), c20 = hn::Set(d16, 20);
+    const auto rounding = hn::Set(d32, 16), limit = hn::Set(d32, int(maximum) - 32768);
+    for (; x <= count - packed_lanes; x += packed_lanes) {
+      const auto a = LoadBiasedU16(d16, p[0] + x), b = LoadBiasedU16(d16, p[1] + x), c = LoadBiasedU16(d16, p[2] + x);
+      const auto e = LoadBiasedU16(d16, p[3] + x), f = LoadBiasedU16(d16, p[4] + x), g = LoadBiasedU16(d16, p[5] + x);
+      const auto lo = hn::Add(hn::Add(hn::WidenMulPairwiseAdd(d32, hn::InterleaveLower(d16, a, g), c1),
+                                     hn::WidenMulPairwiseAdd(d32, hn::InterleaveLower(d16, b, f), cm5)),
+                              hn::WidenMulPairwiseAdd(d32, hn::InterleaveLower(d16, c, e), c20));
+      const auto hi = hn::Add(hn::Add(hn::WidenMulPairwiseAdd(d32, hn::InterleaveUpper(d16, a, g), c1),
+                                     hn::WidenMulPairwiseAdd(d32, hn::InterleaveUpper(d16, b, f), cm5)),
+                              hn::WidenMulPairwiseAdd(d32, hn::InterleaveUpper(d16, c, e), c20));
+      // The coefficients sum to 32: signed input bias survives the rounded
+      // shift unchanged. Signed saturation clamps the lower output endpoint.
+      const auto value = hn::ReorderDemote2To(d16, hn::Min(hn::ShiftRight<5>(hn::Add(lo, rounding)), limit),
+                                             hn::Min(hn::ShiftRight<5>(hn::Add(hi, rounding)), limit));
+      hn::StoreU(hn::Xor(hn::BitCast(du16, value), bias), du16, out + x);
+    }
+  }
+#endif
   for (; x <= count - n; x += n) {
     for (int j = 0; j < nt; ++j)
       taps[j] = p[j] + x * Step;

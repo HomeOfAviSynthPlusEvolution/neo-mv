@@ -100,6 +100,34 @@ template <class T> void run() {
 }
 #include "boundaries.hpp"
 
+void sharp6_integer_boundaries() {
+  for (int width : {1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65})
+    for (int bits : {9, 10, 12, 16})
+      for (int pattern = 0; pattern < 4; ++pattern) {
+        const int maximum = (1 << bits) - 1;
+        std::array<std::vector<std::uint16_t>, 6> rows;
+        const std::uint16_t* taps[6];
+        std::vector<std::uint16_t> output(width + 2, 123);
+        constexpr int coefficients[] = {1, -5, 20, 20, -5, 1};
+        for (int tap = 0; tap < 6; ++tap) {
+          rows[tap].resize(width + 1);
+          taps[tap] = rows[tap].data() + 1;
+          for (int x = 0; x < width; ++x)
+            rows[tap][x + 1] = std::uint16_t(pattern == 0 ? 0 : pattern == 1 ? maximum :
+                                            ((coefficients[tap] > 0) == ((x + pattern) % 2 == 0) ? maximum : 0));
+        }
+        neo_mv::simd::detail::formula(taps, 1, output.data() + 1, width, neo_mv::simd::detail::Formula::sharp6, maximum);
+        for (int x = 0; x < width; ++x) {
+          int sum = 16;
+          for (int tap = 0; tap < 6; ++tap)
+            sum += coefficients[tap] * taps[tap][x];
+          const int expected = std::min(maximum, std::max(0, sum) / 32);
+          check(output[x + 1] == expected, "sharp6 integer clipping mismatch");
+        }
+        check(output.front() == 123 && output.back() == 123, "sharp6 output canary");
+      }
+}
+
 template <class T> void sampled_motion(int block_width = 8) {
   using namespace neo_mv;
   for (int pel : {1, 2, 4}) {
@@ -461,6 +489,7 @@ int main() {
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();
+      sharp6_integer_boundaries();
       bounded_sad_thresholds<std::uint8_t>();
       bounded_sad_thresholds<std::uint16_t>();
       integer_metric_extremes<std::uint8_t>();
