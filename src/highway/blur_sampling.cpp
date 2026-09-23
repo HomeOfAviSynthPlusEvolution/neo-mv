@@ -11,6 +11,21 @@ namespace hn = hwy::HWY_NAMESPACE;
 template <std::size_t Bytes, class Consume>
 void BlurVisit(const RenderPhaseGeometry& g, int x, int y, int count, std::int64_t step_x, std::int64_t step_y,
                const FlowSampleStorage* storage, Consume&& consume) {
+#if HWY_TARGET == HWY_AVX2
+  if (count == 1 && storage && storage->coordinates_validated) {
+    // A single admitted sample does not need vector setup and spill arrays.
+    const auto dx = flow_coordinates::floor_shift(step_x, 8);
+    const auto dy = flow_coordinates::floor_shift(step_y, 8);
+    const int shift = flow_coordinates::shift(g.pel);
+    const auto qx = flow_coordinates::floor_shift(dx, shift);
+    const auto qy = flow_coordinates::floor_shift(dy, shift);
+    const auto phase = std::size_t((dy - qy * g.pel) * g.pel + dx - qx * g.pel);
+    const auto offset = (std::int64_t(g.pad_y) + y + qy) * storage->strides[phase] +
+                        (std::int64_t(g.pad_x) + x + qx) * Bytes;
+    consume(0, storage->planes[phase] + offset);
+    return;
+  }
+#endif
   const hn::ScalableTag<std::int64_t> d;
   const int lanes = static_cast<int>(hn::Lanes(d));
   const hn::Rebind<std::int32_t, decltype(d)> d32;

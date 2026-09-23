@@ -251,13 +251,6 @@ template <class T>
 void blur_repeated_directions(int bits) {
   constexpr int width = 7, height = 4, pad = 8;
   std::mt19937 rng(39123);
-  Buffer<T> input(width + 2 * pad, height + 2 * pad);
-  for (auto& sample : input.data)
-    sample = random_sample<T>(rng, bits);
-  RenderPhaseGeometry geometry{1, 1, 1, pad, pad, {}};
-  geometry.phases[0] = {input.width, input.height};
-  SubpixelPhases<T> phases{1, {}};
-  phases.planes[0] = input.read();
   DenseFlowField f{width, height, std::vector<std::int16_t>(width * height),
                                 std::vector<std::int16_t>(width * height)};
   auto b = f;
@@ -270,13 +263,27 @@ void blur_repeated_directions(int bits) {
     b.x[i] = static_cast<std::int16_t>(-ys[(index + 2) % 7]);
     b.y[i] = static_cast<std::int16_t>(-xs[(index + 2) % 7]);
   }
-  for (int precision : {1, 2, 9})
-    for (int time : {0, 85, 256}) {
-      Buffer<T> scalar(width, height), highway(width, height);
-      BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, scalar.view(), bits);
-      simd::BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, highway.view(), bits);
-      same(scalar.data, highway.data);
+  for (int pel : {1, 2, 4}) {
+    RenderPhaseGeometry geometry{pel, 1, 1, pad, pad, {}};
+    SubpixelPhases<T> phases{pel, {}};
+    std::vector<Buffer<T>> inputs;
+    inputs.reserve(pel * pel);
+    for (int phase = 0; phase < pel * pel; ++phase) {
+      inputs.emplace_back(width + 2 * pad, height + 2 * pad);
+      auto& input = inputs.back();
+      for (auto& sample : input.data)
+        sample = random_sample<T>(rng, bits);
+      geometry.phases[phase] = {input.width, input.height};
+      phases.planes[phase] = input.read();
     }
+    for (int precision : {1, 2, 9})
+      for (int time : {0, 85, 256}) {
+        Buffer<T> scalar(width, height), highway(width, height);
+        BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, scalar.view(), bits);
+        simd::BlurSamplingPlan(geometry, width, height, precision, time).sample(f, b, phases, highway.view(), bits);
+        same(scalar.data, highway.data);
+      }
+  }
 }
 
 void float_blur() {
