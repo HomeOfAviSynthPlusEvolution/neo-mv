@@ -6,7 +6,7 @@ find_path(NEO_MV_AVS_INCLUDE_DIR NAMES avisynth_c.h
 if(NOT NEO_MV_AVS_INCLUDE_DIR)
   FetchContent_Declare(neo_mv_avisynth_sdk
     GIT_REPOSITORY https://github.com/AviSynth/AviSynthPlus.git
-    GIT_TAG 001cfd68b3ef80479e9a0aa45235fee13b9dd1e8
+    GIT_TAG 5c82777b374bdef16e13007a11e77d735ac1e4eb
     SOURCE_SUBDIR neo_mv_headers_only)
   FetchContent_MakeAvailable(neo_mv_avisynth_sdk)
   set(NEO_MV_AVS_INCLUDE_DIR "${neo_mv_avisynth_sdk_SOURCE_DIR}/avs_core/include")
