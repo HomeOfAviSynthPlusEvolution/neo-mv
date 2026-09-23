@@ -1,6 +1,7 @@
 #pragma once
 #include "core/mask/scores.hpp"
 #include "highway/mask_rows.hpp"
+#include <array>
 namespace neo_mv::simd {
 // These kernels consume complete, scene-eligible grids. The input plan owns
 // metadata matching and scene eligibility; validation here still rejects forged
@@ -18,16 +19,18 @@ public:
     if constexpr (!Validated)
       grid_.validate(grid);
     const auto& m = grid_.metadata();
-    std::vector<T> output;
-    output.reserve(grid.values.size());
-    std::vector<double> xs(grid.values.size()), ys(grid.values.size()), scores(grid.values.size());
-    for (std::size_t i = 0; i < grid.values.size(); ++i) {
-      xs[i] = grid.values[i].vector.x;
-      ys[i] = grid.values[i].vector.y;
+    std::vector<T> output(grid.values.size());
+    std::array<double, 256> xs, ys, scores;
+    for (std::size_t first = 0; first < grid.values.size(); first += xs.size()) {
+      const auto count = (std::min)(xs.size(), grid.values.size() - first);
+      for (std::size_t i = 0; i < count; ++i) {
+        xs[i] = grid.values[first + i].vector.x;
+        ys[i] = grid.values[first + i].vector.y;
+      }
+      mask_rows::magnitude(xs.data(), ys.data(), count, m.pel, f2_, g2_, maximum_, scores.data());
+      for (std::size_t i = 0; i < count; ++i)
+        output[first + i] = mask_detail::quantize<T>(scores[i], m.bits);
     }
-    mask_rows::magnitude(xs.data(), ys.data(), scores.size(), m.pel, f2_, g2_, maximum_, scores.data());
-    for (double score : scores)
-      output.push_back(mask_detail::quantize<T>(score, m.bits));
     return output;
   }
 
