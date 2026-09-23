@@ -5,8 +5,10 @@
 #include "core/depan/estimate_image.hpp"
 #include "core/depan/estimate_motion.hpp"
 #include <array>
+#include <complex>
 #include <cstring>
 #include <mutex>
+#include <new>
 #if NEO_MV_ENABLE_HIGHWAY
 #include "highway/depan_estimate.hpp"
 #include "highway/estimate_image.hpp"
@@ -31,10 +33,17 @@ struct DepanEstimateFilter {
     std::vector<float> current, previous;
     depan::estimate::WindowMotion motion;
   };
+  struct CachedSpectrum {
+    int frame, left;
+    std::vector<float> input;
+    std::vector<std::complex<float>> spectrum;
+  };
   struct WindowCache {
     std::mutex mutex;
     std::array<std::optional<CachedWindow>, 4> entries;
+    std::array<std::optional<CachedSpectrum>, 4> spectra;
     std::size_t next = 0;
+    std::size_t next_spectrum = 0;
   };
   struct State {
     ds::VideoInputInfo clip;
@@ -130,7 +139,12 @@ struct DepanEstimateFilter {
         const bool needs_display = s.show && n == ctx.output_frame;
         // A frame index alone is insufficient: an upstream clip may return
         // different samples for the same request. Compare the admitted inputs.
-        const bool cacheable = a.size() <= (32u * 1024u * 1024u) / (8u * s.cache->entries.size());
+        // Four result entries plus four half-spectrum entries share a 64 MiB
+        // sample-payload budget. Account for both input copies and the FFT shape.
+        const std::size_t slot_budget = (64u * 1024u * 1024u) / s.cache->entries.size();
+        const std::size_t complex_count = std::size_t(g.height) * (std::size_t(g.width) / 2 + 1);
+        const bool cacheable = a.size() <= slot_budget / (3 * sizeof(float)) &&
+            complex_count <= (slot_budget - 3 * a.size() * sizeof(float)) / sizeof(std::complex<float>);
         if (cacheable && !needs_display) {
           std::lock_guard<std::mutex> lock(s.cache->mutex);
           for (const auto& entry : s.cache->entries) {
@@ -143,9 +157,33 @@ struct DepanEstimateFilter {
         }
         std::vector<float> correlation;
 #if NEO_MV_ENABLE_HIGHWAY
-        if (selected_backend() == KernelBackend::highway)
-          correlation = simd::estimate::correlate(*s.fft, a, b);
-        else
+        if (selected_backend() == KernelBackend::highway) {
+          const auto forward = [&](int frame_index, const std::vector<float>& input) {
+            if (cacheable) {
+              std::lock_guard<std::mutex> lock(s.cache->mutex);
+              for (const auto& entry : s.cache->spectra)
+                if (entry && entry->frame == frame_index && entry->left == left &&
+                    entry->input.size() == input.size() &&
+                    std::memcmp(entry->input.data(), input.data(), input.size() * sizeof(float)) == 0)
+                  return entry->spectrum;
+            }
+            auto result = s.fft->forward(input, simd::estimate::samples_finite);
+            if (cacheable) {
+              std::lock_guard<std::mutex> lock(s.cache->mutex);
+              try {
+                s.cache->spectra[s.cache->next_spectrum].emplace(CachedSpectrum{frame_index, left, input, result});
+                s.cache->next_spectrum = (s.cache->next_spectrum + 1) % s.cache->spectra.size();
+              } catch (const std::bad_alloc&) {
+                // Cache allocation is optional after a successful transform.
+              }
+            }
+            return result;
+          };
+          auto current_spectrum = forward(n, a);
+          const auto previous_spectrum = forward((std::max)(0, n - 1), b);
+          simd::estimate::product(current_spectrum.data(), previous_spectrum.data(), current_spectrum.size());
+          correlation = s.fft->inverse(current_spectrum, simd::estimate::samples_finite);
+        } else
 #endif
           correlation = s.fft->correlate(a, b);
         auto surface =
