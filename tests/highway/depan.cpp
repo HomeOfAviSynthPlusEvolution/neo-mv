@@ -135,9 +135,12 @@ void sampling(int bits) {
 }
 
 void coordinates() {
-  const Transform maps[] = {{}, {-0.5f, 0.5f}, {0.99999994f, -0.0000001f, 0.875f, 0, 0, 1.125f},
+  const Transform maps[] = {{},
+                            {-0.5f, 0.5f},
+                            {0.99999994f, -0.0000001f, 0.875f, 0, 0, 1.125f},
                             {1.001f, -0.001f, 1.03125f, -0.125f, 0.0625f, 0.96875f},
-                            {0, 0, -0.0f, 0, 0, -0.0f}, {0, 0, -1e30f, 0, 0, 1e30f},
+                            {0, 0, -0.0f, 0, 0, -0.0f},
+                            {0, 0, -1e30f, 0, 0, 1e30f},
                             {0, 0, 1, 1e30f, -1e30f, 1},
                             {0, 0, std::numeric_limits<float>::max(), 0, 0, 1}};
   for (int width : widths)
@@ -176,8 +179,8 @@ float fused_add(float a, float b, float c) {
 }
 // Reference reduction spells out all ten sums independently of accumulate_fit.
 template <class Residuals>
-FitSums oracle_sums(const Observations& o, const std::vector<float>& weights, Residuals&& errors,
-                    bool zoom, bool rotation) {
+FitSums oracle_sums(const Observations& o, const std::vector<float>& weights, Residuals&& errors, bool zoom,
+                    bool rotation) {
   FitSums sums;
   const auto madd = [](float a, float b, float c) {
     return simd::depan_rows::native_fma() ? fused_add(a, b, c) : add(c, mul(a, b));
@@ -222,7 +225,7 @@ struct FmaOracle : ScalarResiduals {
     return result;
   }
   static std::array<float, 4> adjust(std::array<float, 4> values, const std::array<float, 4>& scales,
-                                    const std::array<float, 4>& gradients, std::size_t count) {
+                                     const std::array<float, 4>& gradients, std::size_t count) {
     if (!simd::depan_rows::native_fma())
       return ScalarResiduals::adjust(values, scales, gradients, count);
     for (std::size_t i = 0; i < count; ++i)
@@ -231,13 +234,15 @@ struct FmaOracle : ScalarResiduals {
   }
 };
 struct OracleResiduals : FmaOracle {
-  static FitSums accumulate(const Observations& o, const std::vector<float>& weights, Transform map,
-                            bool zoom, bool rotation) {
+  static FitSums accumulate(const Observations& o, const std::vector<float>& weights, Transform map, bool zoom,
+                            bool rotation) {
     const auto rows = FmaOracle::prepare(o, map);
     return oracle_sums(o, weights, [&rows](std::size_t i) { return rows[i]; }, zoom, rotation);
   }
   static auto prepare(const Observations& o, Transform t) {
-    return [rows = FmaOracle::prepare(o, t)](std::size_t i) { return rows[i]; };
+    return [rows = FmaOracle::prepare(o, t)](std::size_t i) {
+      return rows[i];
+    };
   }
 };
 void close_float(float a, float b) {
@@ -386,7 +391,7 @@ struct EndRow {
 #endif
     data = reinterpret_cast<T*>(static_cast<unsigned char*>(memory) + committed - count * sizeof(T));
     for (std::size_t i = 0; i < count; ++i)
-      ::new (data + i) T(0);
+      ::new (data + i) T{};
   }
   ~EndRow() {
 #if defined(_WIN32)
@@ -418,7 +423,8 @@ void guarded_weighted() {
             if (round && shift != 11)
               continue;
             for (const std::int64_t maximum : {255, 1023, 65535}) {
-              simd::depan_rows::weighted(samples.data, weights.data, width, taps, shift, round, maximum, out.data, padding ? stride : 0);
+              simd::depan_rows::weighted(samples.data, weights.data, width, taps, shift, round, maximum, out.data,
+                                         padding ? stride : 0);
               for (int i = 0; i < width; ++i) {
                 std::int64_t total = round ? 1024 : 0;
                 for (int k = 0; k < taps; ++k)
@@ -464,6 +470,31 @@ void guarded_weighted() {
         const auto divided = total >= 0 ? total / denominator : -1 - ((-1 - total) / denominator);
         CHECK(out.data[i] == std::clamp(divided, std::int64_t{0}, std::int64_t{65535}));
       }
+    }
+  }
+}
+
+template <class T>
+void guarded_linear() {
+  for (int width : widths) {
+    EndRow<T> source(width * 2), output(width);
+    EndRow<SamplingCoordinates> coords(width);
+    auto input = checked_plane(static_cast<const T*>(source.data), width, 2, std::ptrdiff_t(width) * sizeof(T),
+                               std::size_t(width) * 2 * sizeof(T));
+    for (int i = 0; i < width * 2; ++i)
+      source.data[i] = (i & 1) ? std::numeric_limits<T>::max() : T(0);
+    for (int i = 0; i < width; ++i)
+      coords.data[i] = {i % 3 ? double(width - 2) : -2.0, 0,
+                        i % 2 ? std::nextafter(1.0f, 0.0f) : std::numeric_limits<float>::denorm_min(), 0.96875f};
+    const SamplingPlan plan(width, 2, sizeof(T) * 8, 1, 0, 0, 7, {});
+    for (bool preserve : {false, true}) {
+      for (int i = 0; i < width; ++i)
+        output.data[i] = T(173);
+      std::vector<T> expected(width, T(173));
+      for (int i = 0; i < width; ++i)
+        plan.write_sample(input, expected[i], coords.data[i], preserve);
+      simd::depan_rows::linear_row(plan, input, output.data, coords.data, preserve);
+      CHECK(std::equal(expected.begin(), expected.end(), output.data));
     }
   }
 }
@@ -514,13 +545,13 @@ void guarded_accumulation() {
     }
     for (bool zoom : {false, true})
       for (bool rotation : {false, true}) {
-        const auto expected = oracle_sums(o, weights,
-            [&](std::size_t i) { return std::array<float, 2>{ex.data[i], ey.data[i]}; }, zoom, rotation);
+        const auto expected = oracle_sums(
+            o, weights, [&](std::size_t i) { return std::array<float, 2>{ex.data[i], ey.data[i]}; }, zoom, rotation);
         const auto actual = simd::depan_rows::accumulate(o, weights, ex.data, ey.data, zoom, rotation);
-        const std::array<float, 10> a{expected.n, expected.x2, expected.y2, expected.residual, expected.gx,
-                                      expected.gy, expected.gxx, expected.gyy, expected.gxy, expected.gyx};
-        const std::array<float, 10> b{actual.n, actual.x2, actual.y2, actual.residual, actual.gx,
-                                      actual.gy, actual.gxx, actual.gyy, actual.gxy, actual.gyx};
+        const std::array<float, 10> a{expected.n,  expected.x2,  expected.y2,  expected.residual, expected.gx,
+                                      expected.gy, expected.gxx, expected.gyy, expected.gxy,      expected.gyx};
+        const std::array<float, 10> b{actual.n,  actual.x2,  actual.y2,  actual.residual, actual.gx,
+                                      actual.gy, actual.gxx, actual.gyy, actual.gxy,      actual.gyx};
         CHECK(std::memcmp(a.data(), b.data(), sizeof(a)) == 0);
       }
     for (float invalid : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
@@ -577,6 +608,8 @@ int main() {
       sampling<std::uint16_t>(16);
       fitting();
       guarded_weighted();
+      guarded_linear<std::uint8_t>();
+      guarded_linear<std::uint16_t>();
       guarded_residuals();
       guarded_adjustments();
       guarded_accumulation();

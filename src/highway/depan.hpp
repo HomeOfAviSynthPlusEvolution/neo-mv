@@ -53,6 +53,13 @@ public:
   void render(span2d::Plane<const T> source, span2d::Plane<T> output, bool preserve = false) const {
     validate(source, output);
     std::vector<SamplingCoordinates> coordinates(width());
+    if (mode() == 1) {
+      for (int y = 0; y < height(); ++y) {
+        simd::depan_rows::coordinates(*this, y, coordinates.data());
+        simd::depan_rows::linear_row(*this, source, output.row(y).data(), coordinates.data(), preserve);
+      }
+      return;
+    }
     if (mode() == 0) {
       for (int y = 0; y < height(); ++y) {
         simd::depan_rows::coordinates(*this, y, coordinates.data());
@@ -62,7 +69,7 @@ public:
       return;
     }
     const auto count = static_cast<std::size_t>(width());
-    const int taps = mode() == 2 ? 16 : 4;
+    constexpr int taps = 16;
     const bool translation = sampling_class() == SamplingClass::translation;
     std::vector<std::int64_t> samples, weights, results;
     if (count > samples.max_size() / static_cast<std::size_t>(taps))
@@ -74,33 +81,22 @@ public:
     for (int y = 0; y < height(); ++y) {
       columns.clear();
       auto visit = [&](int x, SamplingCoordinates q) {
-        const bool complete = mode() == 1 ? (q.i >= 0 && q.i < width() - 1 && q.j >= 0 && q.j < height() - 1)
-                                          : (q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2);
-        if (mode() == 0 || !complete) {
+        const bool complete = q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2;
+        if (!complete) {
           write_sample(source, output.row(y)[x], q, preserve);
           return;
         }
         const auto index = columns.size();
         columns.push_back(x);
         const int ix = static_cast<int>(q.i), iy = static_cast<int>(q.j);
-        if (mode() == 1) {
-          const int ax = static_cast<int>(mul(32, q.fx)), ay = static_cast<int>(mul(32, q.fy));
-          for (int f = 0; f < 2; ++f)
-            for (int e = 0; e < 2; ++e) {
-              const auto pos = std::size_t(f * 2 + e) * count + index;
-              samples[pos] = source.row(iy + f)[ix + e];
-              weights[pos] = (e ? ax : 32 - ax) * (f ? ay : 32 - ay);
-            }
-        } else {
-          const auto cx = cubic_coefficients(static_cast<int>(mul(256, q.fx))),
-                     cy = cubic_coefficients(static_cast<int>(mul(256, q.fy)));
-          for (int f = 0; f < 4; ++f)
-            for (int e = 0; e < 4; ++e) {
-              const auto pos = std::size_t(f * 4 + e) * count + index;
-              samples[pos] = source.row(iy + f - 1)[ix + e - 1];
-              weights[pos] = translation ? cx[e] * cy[f] / 2048 : cx[e] * cy[f];
-            }
-        }
+        const auto cx = cubic_coefficients(static_cast<int>(mul(256, q.fx))),
+                   cy = cubic_coefficients(static_cast<int>(mul(256, q.fy)));
+        for (int f = 0; f < 4; ++f)
+          for (int e = 0; e < 4; ++e) {
+            const auto pos = std::size_t(f * 4 + e) * count + index;
+            samples[pos] = source.row(iy + f - 1)[ix + e - 1];
+            weights[pos] = translation ? cx[e] * cy[f] / 2048 : cx[e] * cy[f];
+          }
       };
       simd::depan_rows::coordinates(*this, y, coordinates.data());
       for (int x = 0; x < width(); ++x)
@@ -110,11 +106,8 @@ public:
         continue;
       // The admitted footprints already occupy the start of each tap row.
       // Read with the original row spacing instead of compacting every row.
-      simd::depan_rows::weighted(samples.data(), weights.data(), used, taps,
-                                 mode() == 1   ? 10
-                                 : translation ? 11
-                                               : 22,
-                                 mode() == 2 && translation, (1 << bits()) - 1, results.data(), count);
+      simd::depan_rows::weighted(samples.data(), weights.data(), used, taps, translation ? 11 : 22, translation,
+                                 (1 << bits()) - 1, results.data(), count);
       for (std::size_t i = 0; i < used; ++i)
         output.row(y)[columns[i]] = static_cast<T>(results[i]);
     }

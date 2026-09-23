@@ -297,6 +297,22 @@ void fitting() {
   rejects([&] { fit(grid, parameters); }); // Negative zerow is accepted until its required arithmetic fails.
 }
 
+void reused_weight_admission() {
+  for (bool masked : {false, true}) {
+    auto grid = observations(11, 9, masked);
+    for (std::size_t i = 0; i < grid.values.size(); ++i) {
+      grid.values[i].dx = float(int(i % 7) - 3);
+      grid.values[i].dy = float(int(i % 5) - 2);
+      grid.values[i].sad = i % 11 ? 50 : 500;
+    }
+    std::vector<std::int8_t> admission(grid.values.size(), -1);
+    for (const auto map : {Transform{}, Transform{1.5f, -2.25f}, Transform{-3.0f, 2.0f}})
+      for (float global : {0.0f, 1.0f, 1000.0f})
+        CHECK(select_weights(grid, map, 2, 0.05f, global) ==
+              select_weights<true>(grid, map, 2, 0.05f, global, &admission));
+  }
+}
+
 void complete_example() {
   const auto m = metadata();
   auto current = field(m);
@@ -331,6 +347,7 @@ int main() {
       }
     weight_rules();
     fitting();
+    reused_weight_admission();
     complete_example();
     std::cout << "Depan analysis checks passed\n";
   } catch (const std::exception& error) {

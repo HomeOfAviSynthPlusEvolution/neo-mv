@@ -231,28 +231,43 @@ struct FitUpdate {
 
 template <bool Validated = false>
 inline std::vector<float> select_weights(const Observations& observations, const Transform& map, float wrong,
-                                         float zerow, float global) {
+                                         float zerow, float global, std::vector<std::int8_t>* eligibility = nullptr) {
   if constexpr (!Validated)
     analysis_detail::validate(observations);
   f32(wrong);
   f32(zerow);
   f32(global);
   const int border = observations.masked ? 0 : 4;
+  // Internal fit scratch: static admission is evaluated lazily, in the same
+  // order as the uncached path, and reused only within this fit invocation.
+  if (eligibility && eligibility->size() != observations.values.size())
+    throw std::invalid_argument("invalid Depan weight eligibility storage");
   std::vector<float> weights(observations.values.size(), 0.0f);
   for (int by = 0; by < observations.ny; ++by)
     for (int bx = 0; bx < observations.nx; ++bx) {
       const auto index = std::size_t(by) * observations.nx + bx;
       const auto& value = observations.values[index];
-      if (bx < border || bx >= observations.nx - border || by < border || by >= observations.ny - border)
-        continue;
-      if (value.sad > observations.sad_threshold)
-        continue;
-      if (bx > 0 && bx + 1 < observations.nx && by > 0 && by + 1 < observations.ny) {
-        if (std::abs(sub(value.dx, analysis_detail::neighbor_mean(observations, index, false))) > wrong)
-          continue;
-        if (std::abs(sub(value.dy, analysis_detail::neighbor_mean(observations, index, true))) > wrong)
-          continue;
+      auto admitted = eligibility ? (*eligibility)[index] : std::int8_t{-1};
+      if (admitted < 0) {
+        const auto check = [&] {
+          if (bx < border || bx >= observations.nx - border || by < border || by >= observations.ny - border)
+            return false;
+          if (value.sad > observations.sad_threshold)
+            return false;
+          if (bx > 0 && bx + 1 < observations.nx && by > 0 && by + 1 < observations.ny) {
+            if (std::abs(sub(value.dx, analysis_detail::neighbor_mean(observations, index, false))) > wrong)
+              return false;
+            if (std::abs(sub(value.dy, analysis_detail::neighbor_mean(observations, index, true))) > wrong)
+              return false;
+          }
+          return true;
+        };
+        admitted = check() ? 1 : 0;
+        if (eligibility)
+          (*eligibility)[index] = admitted;
       }
+      if (!admitted)
+        continue;
       if (std::abs(analysis_detail::residual_x(value, map)) > global)
         continue;
       if (std::abs(analysis_detail::residual_y(value, map)) > global)
@@ -368,6 +383,7 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
   if (observations.eligible) {
     analysis_detail::validate(observations);
     std::vector<float> weights;
+    std::vector<std::int8_t> eligibility(observations.values.size(), -1);
     weights.reserve(observations.values.size());
     for (const auto& value : observations.values)
       weights.push_back(value.base);
@@ -375,7 +391,7 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
       const auto next = fit_update<Residuals, true>(observations, weights, result.map, p.aspect, 0.3f, false, false);
       result.map = next.map;
       result.error = next.error;
-      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f);
+      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f, &eligibility);
     }
     result.iteration = 100;
     for (int k = 5; k < 100; ++k) {
@@ -391,7 +407,7 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
         result.iteration = k;
         break;
       }
-      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f));
+      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f), &eligibility);
     }
   }
   result.good = result.error < p.error;

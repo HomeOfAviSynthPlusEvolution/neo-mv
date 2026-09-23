@@ -89,12 +89,74 @@ void Coordinates(const depan::SamplingPlan& plan, int y, depan::SamplingCoordina
     x += used;
   }
 }
+template <class T>
+void LinearRow(const depan::SamplingPlan& plan, span2d::Plane<const T> source, T* output,
+               const depan::SamplingCoordinates* coordinates, bool preserve) {
+  const hn::ScalableTag<std::uint32_t> d;
+  const auto lanes = static_cast<int>(hn::Lanes(d));
+  HWY_ALIGN std::uint32_t a[hn::MaxLanes(d)], b[hn::MaxLanes(d)], c[hn::MaxLanes(d)], e[hn::MaxLanes(d)];
+  HWY_ALIGN std::uint32_t ax[hn::MaxLanes(d)], ay[hn::MaxLanes(d)], result[hn::MaxLanes(d)];
+  bool interior[hn::MaxLanes(d)];
+  const auto scale = hn::Set(d, 32);
+  for (int x = 0; x < plan.width();) {
+    const int used = (std::min)(lanes, plan.width() - x);
+    for (int i = 0; i < lanes; ++i) {
+      a[i] = b[i] = c[i] = e[i] = ax[i] = ay[i] = 0;
+      interior[i] = false;
+      if (i >= used)
+        continue;
+      const auto q = coordinates[x + i];
+      if (!(q.i >= 0 && q.i < plan.width() - 1 && q.j >= 0 && q.j < plan.height() - 1)) {
+        plan.write_sample(source, output[x + i], q, preserve);
+        continue;
+      }
+      interior[i] = true;
+      const auto ix = static_cast<int>(q.i), iy = static_cast<int>(q.j);
+      const auto top = source.row(iy), bottom = source.row(iy + 1);
+      a[i] = top[ix];
+      b[i] = top[ix + 1];
+      c[i] = bottom[ix];
+      e[i] = bottom[ix + 1];
+      // Generated fractions are in [0,1]. Power-of-two scaling is exact,
+      // and truncation of a subnormal fraction is zero even under DAZ.
+      ax[i] = static_cast<std::uint32_t>(double(q.fx) * 32);
+      ay[i] = static_cast<std::uint32_t>(double(q.fy) * 32);
+    }
+    const auto X = hn::Load(d, ax), Y = hn::Load(d, ay), IX = hn::Sub(scale, X), IY = hn::Sub(scale, Y);
+    const auto top = hn::Add(hn::Mul(hn::Load(d, a), IX), hn::Mul(hn::Load(d, b), X));
+    const auto bottom = hn::Add(hn::Mul(hn::Load(d, c), IX), hn::Mul(hn::Load(d, e), X));
+    // The full uint16 weighted sum is at most 65535 * 1024.
+    hn::Store(hn::ShiftRight<10>(hn::Add(hn::Mul(top, IY), hn::Mul(bottom, Y))), d, result);
+    for (int i = 0; i < used; ++i)
+      if (interior[i])
+        output[x + i] = static_cast<T>(result[i]);
+    x += used;
+  }
+}
+void Linear8(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, std::uint8_t* o,
+             const depan::SamplingCoordinates* q, bool preserve) {
+  LinearRow(p, s, o, q, preserve);
+}
+void Linear16(const depan::SamplingPlan& p, span2d::Plane<const std::uint16_t> s, std::uint16_t* o,
+              const depan::SamplingCoordinates* q, bool preserve) {
+  LinearRow(p, s, o, q, preserve);
+}
 } // namespace HWY_NAMESPACE
 } // namespace neo_mv::simd::depan_rows
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd::depan_rows {
 HWY_EXPORT(Coordinates);
+HWY_EXPORT(Linear8);
+HWY_EXPORT(Linear16);
+void linear_row(const depan::SamplingPlan& p, span2d::Plane<const std::uint8_t> s, std::uint8_t* o,
+                const depan::SamplingCoordinates* q, bool preserve) {
+  HWY_DYNAMIC_DISPATCH(Linear8)(p, s, o, q, preserve);
+}
+void linear_row(const depan::SamplingPlan& p, span2d::Plane<const std::uint16_t> s, std::uint16_t* o,
+                const depan::SamplingCoordinates* q, bool preserve) {
+  HWY_DYNAMIC_DISPATCH(Linear16)(p, s, o, q, preserve);
+}
 void coordinates(const depan::SamplingPlan& plan, int y, depan::SamplingCoordinates* output) {
   HWY_DYNAMIC_DISPATCH(Coordinates)(plan, y, output);
 }

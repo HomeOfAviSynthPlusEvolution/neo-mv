@@ -17,7 +17,7 @@ namespace neo_mv::mask_detail {
 // Convert parameters to binary32 using ties-to-even, including the narrow
 // interval above FLT_MAX that still rounds to FLT_MAX. Casting an out-of-range
 // binary64 value directly to float need not have defined C++ behavior.
-inline float binary32(double value) {
+inline float binary32_exact(double value) {
   static_assert(sizeof(double) == 8 && sizeof(float) == 4 && std::numeric_limits<double>::is_iec559 &&
                 std::numeric_limits<float>::is_iec559);
   std::uint64_t bits;
@@ -28,17 +28,6 @@ inline float binary32(double value) {
   const int e = exponent - 1023;
   if (e > 127)
     throw std::invalid_argument("mask parameter rounds outside finite binary32");
-  // Both the input and result are normal and the conversion is in range.
-  // FTZ/DAZ cannot affect this path; other rounding modes use the exact path.
-  if (e >= -126 && e < 127) {
-#if defined(__SSE2__) || defined(_M_X64)
-    if ((_mm_getcsr() & 0x6000u) == 0)
-      return _mm_cvtss_f32(_mm_cvtsd_ss(_mm_setzero_ps(), _mm_set_sd(value)));
-#else
-    if (std::fegetround() == FE_TONEAREST)
-      return static_cast<float>(value);
-#endif
-  }
   std::uint32_t encoded = static_cast<std::uint32_t>(bits >> 32) & 0x80000000u;
   if (e >= -150) {
     // Round the significand directly. This also handles subnormal results and
@@ -58,6 +47,24 @@ inline float binary32(double value) {
   float result;
   std::memcpy(&result, &encoded, sizeof(result));
   return result;
+}
+
+// Keep the common conversion small enough to inline into arithmetic loops.
+inline float binary32(double value) {
+  std::uint64_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  const auto exponent = (bits >> 52) & 0x7ff;
+  // Input and result are normal and in range; FTZ/DAZ cannot affect them.
+  if (exponent >= 897 && exponent < 1150) {
+#if defined(__SSE2__) || defined(_M_X64)
+    if ((_mm_getcsr() & 0x6000u) == 0)
+      return _mm_cvtss_f32(_mm_cvtsd_ss(_mm_setzero_ps(), _mm_set_sd(value)));
+#else
+    if (std::fegetround() == FE_TONEAREST)
+      return static_cast<float>(value);
+#endif
+  }
+  return binary32_exact(value);
 }
 
 template <class T>
