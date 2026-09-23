@@ -1,19 +1,14 @@
 name: Release builds
-run-name: Release build ${{ inputs.ref }}
+run-name: Release build ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Existing version tag (publishes) or commit ID (artifacts only)'
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -27,13 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Resolve source and validate tag version
         id: source
-        env:
-          RELEASE_REF: ${{ inputs.ref }}
         run: python3 .github/scripts/release.py resolve
 
   build:
@@ -74,15 +66,9 @@ jobs:
             arch: arm64
             host_tests: 'OFF'
     steps:
-      # Keep release tooling independent of the source commit being built.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.workflow_sha }}
-          path: tooling
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.resolve.outputs.commit }}
+          ref: ${{ github.sha }}
           path: source
           persist-credentials: false
       - uses: actions/setup-python@v7
@@ -145,7 +131,7 @@ jobs:
           RELEASE_PLATFORM: ${{ matrix.platform }}
           RELEASE_HOST_TESTS: ${{ matrix.host_tests }}
           RELEASE_WORKFLOW_COMMIT: ${{ github.workflow_sha }}
-        run: python tooling/.github/scripts/release.py package --source source --build build --output dist
+        run: python source/.github/scripts/release.py package --source source --build build --output dist
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
@@ -164,14 +150,14 @@ jobs:
 
   publish:
     needs: [resolve, build]
-    if: needs.resolve.outputs.kind == 'tag'
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ needs.resolve.outputs.tag }}
+          ref: ${{ github.ref }}
           persist-credentials: false
       - name: Verify tag still points to tested source
         env:

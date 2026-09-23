@@ -74,7 +74,7 @@ void parent_interpolation() {
         continue;
       const MotionGrid p{2, 2, {{{-13, 17}, 5}, {{23, -29}, 11}, {{-31, 37}, 19}, {{41, -43}, 23}}};
       const std::int64_t ax = 24 - 2 * ox, ay = 24 - 2 * oy, bx = 4 * (8 - ox) - ax, by = 4 * (8 - oy) - ay;
-      const std::int64_t denominator = (8 - ox) * (8 - oy);
+      const std::int64_t denominator = std::int64_t(8 - ox) * (8 - oy);
       const auto nx = (-13 * ax * ay + 23 * bx * ay - 31 * ax * by + 41 * bx * by) / denominator;
       const auto ny = (17 * ax * ay - 29 * bx * ay + 37 * ax * by - 43 * bx * by) / denominator;
       const auto ns = (5 * ax * ay + 11 * bx * ay + 19 * ax * by + 23 * bx * by) / denominator;

@@ -115,7 +115,7 @@ void floats() {
   // Row gaps are never sampled, including their nonfinite values.
   Block<float> gaps(4, 4, 0.0f);
   for (int y = 0; y < 4; ++y)
-    gaps.data[y * gaps.stride] = std::numeric_limits<float>::infinity();
+    gaps.data[std::size_t(y) * gaps.stride] = std::numeric_limits<float>::infinity();
   CHECK(block_metric(gaps.view(), r.view(), BlockMetric::satd) == 0);
 }
 

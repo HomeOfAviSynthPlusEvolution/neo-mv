@@ -75,6 +75,9 @@ jobs:
           print(f"Runner architecture: {actual}")
           assert actual in expected[os.environ["EXPECTED_ARCH"]], "Unexpected runner architecture"
 
+      - name: Test release source validation
+        run: python .github/scripts/test_release.py
+
       - name: Install Linux build tools
         if: runner.os == 'Linux'
         run: |

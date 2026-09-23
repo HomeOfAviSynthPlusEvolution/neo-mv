@@ -24,26 +24,28 @@ def version(source_text):
 
 
 def resolve():
-    ref = os.environ['RELEASE_REF']
-    is_version = re.fullmatch(r'v?\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?', ref)
-    is_commit = re.fullmatch(r'[0-9a-fA-F]{7,40}', ref)
-    if not (is_version or is_commit):
-        raise ValueError('Use an existing version tag or a 7-40 digit hexadecimal commit ID; branches are not accepted')
-    if is_version:
-        commit = git('.', 'rev-parse', '--verify', f'refs/tags/{ref}^{{commit}}')
+    kind = os.environ['GITHUB_REF_TYPE']
+    ref = os.environ['GITHUB_REF_NAME']
+    commit = git('.', 'rev-parse', '--verify', f"{os.environ['GITHUB_SHA']}^{{commit}}")
+    if git('.', 'rev-parse', 'HEAD') != commit:
+        raise ValueError('Source checkout differs from the workflow run commit')
+    if kind == 'tag':
+        if not re.fullmatch(r'v?\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?', ref):
+            raise ValueError('Publishing requires a version tag')
         actual = version(git('.', 'show', f'{commit}:CMakeLists.txt'))
         if ref.removeprefix('v').split('-', 1)[0] != actual:
             raise ValueError(f'Tag {ref} does not match source version {actual}')
-        values = dict(commit=commit, kind='tag', tag=ref, label=ref)
+        values = dict(commit=commit, kind=kind, tag=ref, label=ref)
+    elif kind == 'branch':
+        values = dict(commit=commit, kind=kind, tag='', label=f'git-{commit[:12]}')
     else:
-        commit = git('.', 'rev-parse', '--verify', f'{ref}^{{commit}}')
-        values = dict(commit=commit, kind='commit', tag='', label=f'git-{commit[:12]}')
+        raise ValueError('Select a branch or tag when dispatching the workflow')
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         for key, value in values.items():
             output.write(f'{key}={value}\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
         output.write(f"Source: `{commit}`\n\nMode: **{values['kind']}**; "
-                     f"{'publish after all six builds pass' if is_version else 'artifacts only; no GitHub Release'}.\n")
+                     f"{'publish after all six builds pass' if kind == 'tag' else 'artifacts only; no GitHub Release'}.\n")
 
 
 def sha(path):

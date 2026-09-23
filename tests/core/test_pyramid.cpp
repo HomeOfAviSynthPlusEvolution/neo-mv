@@ -129,7 +129,8 @@ void constant_and_small() {
   }();
   for (int width : {1, 2, 3, 5})
     for (int height : {1, 2, 3, 5}) {
-      std::vector<T> source(4 * width * height, value), output(width * height), scratch(2 * width * height);
+      const auto area = std::size_t(width) * height;
+      std::vector<T> source(4 * area, value), output(area), scratch(2 * area);
       auto src = neo_mv::checked_plane<const T>(source.data(), 2 * width, 2 * height, 2 * width * sizeof(T),
                                                 source.size() * sizeof(T));
       auto dst = neo_mv::checked_plane(output.data(), width, height, width * sizeof(T), output.size() * sizeof(T));
