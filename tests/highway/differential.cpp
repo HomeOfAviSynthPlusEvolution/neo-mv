@@ -225,6 +225,80 @@ template <class T> void sampled_motion(int block_width = 8) {
     }
   }
 }
+template <class T> void fused_analyse_block() {
+  using namespace neo_mv;
+  for (int pel : {1, 2, 4}) {
+    MotionFixture<T> f(32, 32, 16, 16, 16, pel, true);
+    const BlockRegion region{0, 0, 16, 16};
+    const CandidateDomain omega{-3, -3, 4, 4};
+    const MotionTriple predictor{{1, -1}, 0};
+    const MotionVector zero{-4, 0}; // Safe seed outside Omega remains eligible.
+    const SpatialPredictors spatial{{{{{-1, 0}, 0}, {{1, 0}, 0}, {{0, 1}, 0}, {{0, -1}, 0}}}, {2, -2}};
+    validate_sampling_domain(f.geometry, region, omega, {zero});
+    for (int pattern = 0; pattern < 3; ++pattern) {
+      for (int k = 0; k < 3; ++k) {
+        for (std::size_t i = 0; i < f.source[k].size(); ++i)
+          f.source[k][i] = pattern == 0 ? T(0) : T((i * 997 + k * 113) & std::numeric_limits<T>::max());
+        for (int a = 0; a < pel * pel; ++a) {
+          const auto extent = f.geometry.planes[k].reference[a];
+          const int stride = extent.width + a + 3;
+          auto& storage = f.reference[k][a];
+          storage.resize(std::size_t(stride) * extent.height);
+          f.frames.reference[k][a] = checked_plane<const T>(storage.data(), extent.width, extent.height,
+              stride * sizeof(T), storage.size() * sizeof(T));
+          for (std::size_t i = 0; i < storage.size(); ++i)
+            storage[i] = pattern == 0 ? T(0) : pattern == 1 ? std::numeric_limits<T>::max()
+                : T((i * 313 + a * 251 + k * 17) & std::numeric_limits<T>::max());
+        }
+      }
+      validate_sampling_frames(f.geometry, f.frames);
+      auto owned = simd::PreparedBlockError<T>(f.geometry, region, f.frames, BlockMetric::sad);
+      auto frames = simd::PreparedSamplingFrames<T>(f.geometry, f.frames);
+      auto borrowed = simd::PreparedBlockError<T, false>(f.geometry, region, frames, BlockMetric::sad);
+      auto copied = borrowed;
+      const auto scalar = [&](MotionVector v) {
+        return block_error<T, true>(f.geometry, region, f.frames, v, BlockMetric::sad);
+      };
+      for (int search = 0; search <= 5; ++search)
+        for (int scenario = 0; scenario < 5; ++scenario) {
+          const std::int64_t lambdas[] = {0, 17, INT32_MAX, std::int64_t(INT32_MAX) + 1, INT64_MAX};
+          const auto lambda = lambdas[scenario];
+          AnalyseControls c;
+          c.search = search;
+          c.searchparam = c.pelsearch = 3;
+          c.trymany = scenario % 3;
+          c.badrange = scenario % 2 ? -3 : 3;
+          c.pnew = scenario % 2 ? 256 : 0;
+          c.pzero = pattern == 0 ? 0 : 25;
+          c.pglobal = 127;
+          const int layer = scenario == 2 ? 1 : 0;
+          const auto threshold = scenario == 0 ? INT64_MAX : std::int64_t{-1};
+          SearchResult expected{};
+          bool overflow = false;
+          try {
+            expected = analyse_detail::block(predictor, spatial, zero, omega, layer, pel, lambda, threshold, c, scalar);
+          } catch (const std::overflow_error&) {
+            overflow = true;
+          }
+          const auto verify = [&](auto& evaluate) {
+            bool actual_overflow = false;
+            try {
+              const auto actual = evaluate.analyse(predictor, spatial, zero, omega, layer, pel, lambda, threshold, c);
+              check(!overflow && actual.vector.x == expected.vector.x && actual.vector.y == expected.vector.y &&
+                        actual.cost == expected.cost && actual.raw == expected.raw, "fused analysis result");
+            } catch (const std::overflow_error&) {
+              actual_overflow = true;
+            }
+            check(actual_overflow == overflow, "fused analysis changed overflow behavior");
+          };
+          verify(owned);
+          verify(copied);
+          check(owned(zero).raw == scalar(zero).raw, "fused/full interleaving");
+        }
+    }
+  }
+}
+
 template <class T> void narrow_reference_motion() {
   using namespace neo_mv;
   Buffer<T> current(100, 1), reference(4, 1);
@@ -273,6 +347,20 @@ template <class T> void bounded_narrow_reference_motion() {
                     actual->raw == expected.raw, "bounded narrow reference mismatch");
           check(!prepared.bounded(vector, expected.raw, vector, 0, 0), "bounded narrow reference threshold");
         }
+      if (width == 16) {
+        const MotionVector zero{-96 * pel, 0};
+        const CandidateDomain omega{zero.x, 0, zero.x + 2 * pel, 2 * pel};
+        const SpatialPredictors spatial{{{{zero, 0}, {zero, 0}, {zero, 0}, {zero, 0}}}, zero};
+        AnalyseControls c;
+        c.trymany = 2;
+        const auto scalar = [&](MotionVector v) {
+          return block_error<T, true>(f.geometry, block, f.frames, v, BlockMetric::sad);
+        };
+        const auto expected = analyse_detail::block({zero, 0}, spatial, zero, omega, 0, pel, 17, -1, c, scalar);
+        const auto actual = prepared.analyse({zero, 0}, spatial, zero, omega, 0, pel, 17, -1, c);
+        check(actual.vector.x == expected.vector.x && actual.vector.y == expected.vector.y &&
+                  actual.cost == expected.cost && actual.raw == expected.raw, "fused narrow reference");
+      }
     }
 }
 
@@ -385,6 +473,8 @@ int main() {
       sampled_motion<std::uint8_t>(16);
       sampled_motion<std::uint16_t>(16);
       sampled_motion<float>();
+      fused_analyse_block<std::uint8_t>();
+      fused_analyse_block<std::uint16_t>();
       narrow_reference_motion<std::uint8_t>();
       narrow_reference_motion<std::uint16_t>();
       narrow_reference_motion<float>();

@@ -1,5 +1,6 @@
 #include "highway/rows.hpp"
 #include "core/motion/block_metric.hpp"
+#include "core/motion/analyse.hpp"
 #include <algorithm>
 #include <limits>
 #undef HWY_TARGET_INCLUDE
@@ -641,6 +642,20 @@ bool MetricBatch420Bounded(const MetricRequest<T> *requests, std::int64_t limit,
   return true;
 }
 
+template <int Width, bool Bounded>
+HWY_NOINLINE std::int64_t AnalyseShortSad(const MetricRequest<std::uint16_t>& r, std::int64_t limit) {
+  return Sad420Plane<std::uint16_t, Width, Bounded>(r, limit);
+}
+template <class T, int Width, bool Bounded, bool Fused>
+HWY_INLINE std::int64_t MotionSad420Plane(const MetricRequest<T>& r, std::int64_t limit) {
+  // Keep the larger u16 arithmetic body out of the fused search's live state.
+  // This is a direct call within the already selected target, not dispatch.
+  if constexpr (Fused && std::is_same_v<T, std::uint16_t>)
+    return AnalyseShortSad<Width, Bounded>(r, limit);
+  else
+    return Sad420Plane<T, Width, Bounded>(r, limit);
+}
+
 HWY_INLINE std::int64_t MotionQuotient(std::int64_t value, int pel) {
   switch (pel) {
   case 1: return value;
@@ -663,31 +678,108 @@ HWY_INLINE MetricRequest<T> MotionPlane(const MotionMetricRequest<T>& block,
   return r;
 }
 
-template <class T, int LumaWidth>
-bool MotionMetric420Bounded(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
+template <class T, int LumaWidth, bool Bounded = true, int Pel = 0>
+HWY_INLINE bool MotionMetric420Bounded(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
                             int vx, int vy, std::int64_t limit, std::int64_t* errors) {
-  const auto qx = MotionQuotient(vx, block.pel), qy = MotionQuotient(vy, block.pel);
-  const auto phase = std::size_t((vy - block.pel * qy) * block.pel + vx - block.pel * qx);
+  const int pel = Pel == 0 ? block.pel : Pel;
+  const auto qx = MotionQuotient(vx, pel), qy = MotionQuotient(vy, pel);
+  const auto phase = std::size_t((vy - pel * qy) * pel + vx - pel * qx);
   const auto y = MotionPlane(block, frames, 0, qx, qy, phase);
-  errors[0] = Sad420Plane<T, LumaWidth, true>(y, limit);
-  if (errors[0] >= limit)
-    return false;
-  limit -= errors[0];
+  errors[0] = MotionSad420Plane<T, LumaWidth, Bounded, (Pel != 0)>(y, limit);
+  if constexpr (Bounded) {
+    if (errors[0] >= limit)
+      return false;
+    limit -= errors[0];
+  }
 
   // Chroma truncates the vector before applying the phase floor division.
   // Defer both its phase and address work until the luma candidate survives.
   const auto tx = std::int64_t(vx) / 2, ty = std::int64_t(vy) / 2;
-  const auto cx = MotionQuotient(tx, block.pel), cy = MotionQuotient(ty, block.pel);
-  const auto chroma_phase = std::size_t((ty - block.pel * cy) * block.pel + tx - block.pel * cx);
+  const auto cx = MotionQuotient(tx, pel), cy = MotionQuotient(ty, pel);
+  const auto chroma_phase = std::size_t((ty - pel * cy) * pel + tx - pel * cx);
   for (int k = 1; k < 3; ++k) {
     const auto r = MotionPlane(block, frames, k, cx, cy, chroma_phase);
-    errors[k] = Sad420Plane<T, LumaWidth / 2, false>(r, limit);
-    if (errors[k] >= limit)
-      return false;
-    limit -= errors[k];
+    errors[k] = MotionSad420Plane<T, LumaWidth / 2, false, (Pel != 0)>(r, limit);
+    if constexpr (Bounded) {
+      if (errors[k] >= limit)
+        return false;
+      limit -= errors[k];
+    }
   }
   return true;
 }
+
+namespace fused_motion {
+// Instantiate the same scalar selection rules inside this SIMD target. This
+// makes the error evaluator visible to the search loop without a function
+// pointer or an optional BlockError crossing the boundary per candidate.
+#define NEO_MV_MOTION_ATTR HWY_ATTR
+#include "core/motion/search-loop-inl.hpp"
+#include "core/motion/analyse-block-inl.hpp"
+#undef NEO_MV_MOTION_ATTR
+
+template <class T, int Pel>
+struct Analyse420 {
+  const MotionMetricRequest<T>& block;
+  const MetricReferenceFrames<T>& frames;
+
+  HWY_INLINE BlockError operator()(MotionVector vector) const {
+    std::int64_t errors[3];
+    MotionMetric420Bounded<T, 16, false, Pel>(block, frames, vector.x, vector.y, INT64_MAX, errors);
+    const auto chroma = errors[1] + errors[2];
+    return {errors[0], chroma, errors[0] + chroma};
+  }
+  HWY_INLINE bool improve(MotionVector vector, const SearchParams& p, SearchResult& best) const {
+    if (best.cost <= 0)
+      return false;
+    std::int64_t errors[3];
+    if (!MotionMetric420Bounded<T, 16, true, Pel>(block, frames, vector.x, vector.y, best.cost, errors))
+      return false;
+    const auto luma = errors[0], chroma = errors[1] + errors[2], raw = luma + chroma;
+    const auto dx = std::int64_t(vector.x) - p.predictor.x, dy = std::int64_t(vector.y) - p.predictor.y;
+    // PreparedBlockError::analyse has proved this bound for the whole domain.
+    const auto cost = raw + p.lambda * (dx * dx + dy * dy) / 256 +
+                      luma * p.penalty / 256 + chroma * p.penalty / 256;
+    if (cost >= best.cost)
+      return false;
+    best = {vector, cost, raw};
+    return true;
+  }
+  SearchResult refine(SearchResult initial, const SearchParams& p) {
+    return refine_impl(initial, p, *this);
+  }
+};
+} // namespace fused_motion
+
+template <class T, int Pel>
+SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
+                             MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
+                             CandidateDomain omega, int layer, std::int64_t lambda,
+                             std::int64_t bad_threshold, AnalyseControls controls) {
+  fused_motion::Analyse420<T, Pel> execution{block, frames};
+  return fused_motion::block_impl(predictor, spatial, zero, omega, layer, Pel, lambda, bad_threshold,
+                                  controls, execution);
+}
+template <class T>
+SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
+                             MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
+                             CandidateDomain omega, int layer, std::int64_t lambda,
+                             std::int64_t bad_threshold, AnalyseControls controls) {
+  if (block.pel == 1)
+    return AnalyseBlock420<T, 1>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  if (block.pel == 2)
+    return AnalyseBlock420<T, 2>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  return AnalyseBlock420<T, 4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+}
+#define NEO_ANALYSE_IMPL(T, S)                                                                                       \
+  SearchResult AnalyseBlock420##S(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,        \
+      MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega,           \
+      int layer, std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {                         \
+    return AnalyseBlock420(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);   \
+  }
+NEO_ANALYSE_IMPL(std::uint8_t, U8)
+NEO_ANALYSE_IMPL(std::uint16_t, U16)
+#undef NEO_ANALYSE_IMPL
 
 #define NEO_IMPL(T, S)                                                                                                 \
   void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
@@ -744,6 +836,14 @@ namespace neo_mv::simd::detail {
 HWY_EXPORT(Target);
 const char *target_name() {
   return hwy::TargetName(HWY_DYNAMIC_DISPATCH(Target)());
+}
+HWY_EXPORT(AnalyseBlock420U8);
+HWY_EXPORT(AnalyseBlock420U16);
+AnalyseBlockFunction<std::uint8_t> analyse_block_420_function(std::uint8_t*) {
+  return HWY_DYNAMIC_DISPATCH(AnalyseBlock420U8);
+}
+AnalyseBlockFunction<std::uint16_t> analyse_block_420_function(std::uint16_t*) {
+  return HWY_DYNAMIC_DISPATCH(AnalyseBlock420U16);
 }
 #define NEO_EXPORT(T, S)                                                                                               \
   HWY_EXPORT(Extract##S);                                                                                              \

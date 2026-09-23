@@ -2,6 +2,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+namespace neo_mv {
+struct MotionTriple;
+struct SpatialPredictors;
+struct MotionVector;
+struct CandidateDomain;
+struct AnalyseControls;
+struct SearchResult;
+} // namespace neo_mv
 namespace neo_mv::simd::detail {
 // Uses the same dispatch table selection as the row kernels.
 const char *target_name();
@@ -28,6 +36,13 @@ template <class T> struct MotionMetricRequest {
 template <class T>
 using BoundedMotionMetricFunction = bool (*)(const MotionMetricRequest<T>&, const MetricReferenceFrames<T>&,
                                             int, int, std::int64_t, std::int64_t*);
+
+template <class T>
+using AnalyseBlockFunction = SearchResult (*)(const MotionMetricRequest<T>&, const MetricReferenceFrames<T>&,
+    MotionTriple, const SpatialPredictors&, MotionVector, CandidateDomain, int, std::int64_t, std::int64_t,
+    AnalyseControls);
+AnalyseBlockFunction<std::uint8_t> analyse_block_420_function(std::uint8_t*);
+AnalyseBlockFunction<std::uint16_t> analyse_block_420_function(std::uint16_t*);
 
 template <class T>
 using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t *);

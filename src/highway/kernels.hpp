@@ -1,5 +1,6 @@
 #pragma once
 #include "core/motion/block_sampling.hpp"
+#include "core/motion/analyse.hpp"
 #include "core/super/border_extension.hpp"
 #include "core/super/pyramid_reduction.hpp"
 #include "core/super/subpixel.hpp"
@@ -425,6 +426,35 @@ public:
       return std::nullopt;
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return BlockError{errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
+  }
+  SearchResult analyse(MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
+                       CandidateDomain omega, int layer, int pel, std::int64_t lambda,
+                       std::int64_t bad_threshold, AnalyseControls controls) {
+    if constexpr (std::is_integral_v<T>) {
+      // Prove the cost bound once for all candidates, including out-of-domain
+      // seeds. Integer 16x16 420 SAD is at most 384*65535; with these vector
+      // and lambda bounds the distance product is below 2^62. Penalties and
+      // their sum cannot overflow. Other cases retain checked evaluation.
+      const auto near = [&](std::int64_t x, std::int64_t y) {
+        const auto dx = x - predictor.vector.x, dy = y - predictor.vector.y;
+        return dx >= -32767 && dx <= 32767 && dy >= -32767 && dy <= 32767;
+      };
+      bool admitted = bounded_metric_batch_ && block_.planes[0].width == 16 &&
+          pel == block_.pel && lambda >= 0 && lambda <= INT32_MAX &&
+          omega.left >= INT32_MIN && omega.top >= INT32_MIN && omega.right <= std::int64_t(INT32_MAX) + 1 &&
+          omega.bottom <= std::int64_t(INT32_MAX) + 1 && omega.left < omega.right && omega.top < omega.bottom &&
+          near(omega.left, omega.top) && near(omega.right - 1, omega.bottom - 1) && near(zero.x, zero.y) &&
+          near(spatial.global.x, spatial.global.y) && controls.search >= 0 && controls.search <= 5 &&
+          controls.pelsearch > 0 && controls.pnew >= 0 && controls.pnew <= 256 &&
+          controls.pzero >= 0 && controls.pzero <= 256 && controls.pglobal >= 0 && controls.pglobal <= 256;
+      for (const auto& p : spatial.p)
+        admitted = admitted && near(p.vector.x, p.vector.y);
+      if (admitted) {
+        const auto execute = detail::analyse_block_420_function(static_cast<T*>(nullptr));
+        return execute(block_, frames(), predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+      }
+    }
+    return analyse_detail::block(predictor, spatial, zero, omega, layer, pel, lambda, bad_threshold, controls, *this);
   }
 };
 
