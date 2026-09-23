@@ -1,4 +1,5 @@
 #include "plugin/bridges.hpp"
+#include "neo_mv_version.hpp"
 #include <dualsynth/vapoursynth/video_bridge.hpp>
 
 namespace neo_mv::ds2 {
@@ -212,8 +213,8 @@ void VS_CC create_mask(const VSMap* in, VSMap* out, void*, VSCore* core, const V
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* api) {
   using namespace neo_mv::ds2;
   using neo_mv::MaskKind;
-  api->configPlugin("org.neofilters.neo_mv", "neomv", "neo-mv", VS_MAKE_VERSION(0, 1), VAPOURSYNTH_API_VERSION, 0,
-                    plugin);
+  api->configPlugin("org.neofilters.neo_mv", "neomv", "neo-mv",
+                    VS_MAKE_VERSION(NEO_MV_VERSION_MAJOR, NEO_MV_VERSION_MINOR), VAPOURSYNTH_API_VERSION, 0, plugin);
   api->registerFunction("Super", super_signature, "clip:vnode;", create<Operation::Super>, nullptr, plugin);
   api->registerFunction("Analyse", analyse_signature, "clip:vnode;", create<Operation::Analyse>, nullptr, plugin);
   api->registerFunction("AnalyseMany", many_signature, "clip:vnode[];", many, nullptr, plugin);
