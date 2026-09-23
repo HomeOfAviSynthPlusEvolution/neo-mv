@@ -72,9 +72,9 @@ struct SuperRuntime final : Runtime {
       for (int k = 0; k < extra->frame.plane_count; ++k)
         pel.at(k) = plane<T>(extra->frame.plane(k));
     }
-    SuperPyramid<T> pyramid(plan, inputs, pel, Kernels{});
     require(ctx.frame_factory != nullptr, "Super requires frame factory");
-    publish_super(pyramid, *ctx.frame_factory, properties(ctx.dst), prefix, source.format.sample_format);
+    build_host_super(plan, inputs, pel, Kernels{}, *ctx.frame_factory, properties(ctx.dst), prefix,
+                     source.format.sample_format);
   }
 };
 inline AnalyseControls analyse_controls(Params p, int pel) {

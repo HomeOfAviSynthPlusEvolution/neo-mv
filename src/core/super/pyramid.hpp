@@ -99,6 +99,78 @@ public:
   bool external() const { return external_; }
 };
 
+// Internal builder: allocate must return a distinct writable plane of the
+// requested dimensions and retain its storage until this call returns. When
+// complete is false it must initialize the otherwise unwritten quarter edges.
+// No writable views escape the builder, allowing host frames to publish next.
+template <class T, class Kernels, class Allocate>
+void build_super_pyramid(const SuperPlan<T>& plan, const std::array<span2d::Plane<const T>, 3>& source,
+                         const std::array<span2d::Plane<const T>, 3>& external, Kernels, Allocate allocate) {
+  std::array<std::vector<std::vector<span2d::Plane<T>>>, 3> planes;
+  const auto& g = plan.geometry();
+  const int pel = plan.params().pel;
+  // Check all borrowed views before reading any plane's samples.
+  for (int k = 0; k < g.plane_count; ++k) {
+    const auto& p = g.planes[k];
+    validate_plane(source[k]);
+    if (source[k].width() != p.actual_width || source[k].height() != p.actual_height)
+      throw std::invalid_argument("Super source dimensions mismatch");
+    if (plan.external() && pel > 1) {
+      validate_plane(external[k]);
+      if (external[k].width() != std::int64_t(pel) * p.actual_width ||
+          external[k].height() != std::int64_t(pel) * p.actual_height)
+        throw std::invalid_argument("Super external dimensions mismatch");
+    }
+  }
+  const auto maximum = subpixel_detail::sample_max<T>(plan.bits());
+  for (int k = 0; k < g.plane_count; ++k) {
+    const auto& p = g.planes[k];
+    if constexpr (std::is_same_v<T, float>) {
+      for (int y = 0; y < source[k].height(); ++y)
+        Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
+    } else if (maximum < std::numeric_limits<T>::max()) {
+      for (int y = 0; y < source[k].height(); ++y)
+        Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
+    }
+    auto& levels = planes[k];
+    levels.reserve(p.levels.size());
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+      const auto& size = p.levels[l];
+      levels.emplace_back();
+      auto& phases = levels.back();
+      phases.reserve(size.phase_count);
+      for (int a = 0; a < size.phase_count; ++a) {
+        // Quarter-phase right/bottom edges are outside the logical view but
+        // remain initialized so copying an owning pyramid never reads gaps.
+        const bool complete = l != 0 || plan.external() || pel != 4 || (a % pel != 3 && a / pel != 3);
+        phases.push_back(allocate(k, int(l), size.padded_width, size.padded_height, complete));
+      }
+      if (l == 0)
+        Kernels::extend_border_validated(source[k], phases[0], size.width, size.height, p.pad_x, p.pad_y);
+      else {
+        super_detail::PlaneBuffer<T> working(size.width, size.height, overwrite);
+        if (plan.filter() == 0) {
+          Kernels::reduce_pyramid_validated(span2d::Plane<const T>(levels[l - 1][0]), p.pad_x, p.pad_y, working.view(), 0, {});
+        } else {
+          super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height, overwrite);
+          Kernels::reduce_pyramid_validated(span2d::Plane<const T>(levels[l - 1][0]), p.pad_x, p.pad_y, working.view(), plan.filter(),
+                                            scratch.view());
+        }
+        Kernels::extend_border_validated(working.view(), phases[0], size.width, size.height, p.pad_x, p.pad_y);
+      }
+    }
+    auto& base = levels[0];
+    std::array<span2d::Plane<T>, 16> storage{};
+    for (int a = 1; a < pel * pel; ++a)
+      storage[a] = base[a];
+    if (plan.external())
+      Kernels::extract_external_subpixels(span2d::Plane<const T>(base[0]), external[k], p.actual_width, p.actual_height, p.pad_x,
+                                          p.pad_y, pel, plan.bits(), storage);
+    else
+      Kernels::interpolate_subpixels_validated(span2d::Plane<const T>(base[0]), pel, plan.sharp(), plan.bits(), storage);
+  }
+}
+
 // Owning, host-neutral logical payload. No global registry or borrowed input
 // pixels; const phase views remain valid for the lifetime of this owner.
 template <class T>
@@ -112,71 +184,22 @@ public:
   SuperPyramid(const SuperPlan<T>& plan, const std::array<span2d::Plane<const T>, 3>& source,
                const std::array<span2d::Plane<const T>, 3>& external = {}, Kernels = {})
       : plan_(plan) {
-    const auto& g = plan_.geometry();
-    const int pel = plan_.params().pel;
-    // Check all borrowed views before reading any plane's samples.
-    for (int k = 0; k < g.plane_count; ++k) {
-      const auto& p = g.planes[k];
-      validate_plane(source[k]);
-      if (source[k].width() != p.actual_width || source[k].height() != p.actual_height)
-        throw std::invalid_argument("Super source dimensions mismatch");
-      if (plan_.external() && pel > 1) {
-        validate_plane(external[k]);
-        if (external[k].width() != std::int64_t(pel) * p.actual_width ||
-            external[k].height() != std::int64_t(pel) * p.actual_height)
-          throw std::invalid_argument("Super external dimensions mismatch");
-      }
-    }
-    const auto maximum = subpixel_detail::sample_max<T>(plan_.bits());
-    for (int k = 0; k < g.plane_count; ++k) {
-      const auto& p = g.planes[k];
-      if constexpr (std::is_same_v<T, float>) {
-        for (int y = 0; y < source[k].height(); ++y)
-          Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
-      } else if (maximum < std::numeric_limits<T>::max()) {
-        for (int y = 0; y < source[k].height(); ++y)
-          Kernels::validate_samples(source[k].row(y).data(), source[k].width(), maximum);
-      }
-      auto& levels = planes_[k];
-      levels.reserve(p.levels.size());
-      for (std::size_t l = 0; l < p.levels.size(); ++l) {
-        const auto& size = p.levels[l];
-        levels.emplace_back();
-        auto& phases = levels.back();
-        phases.reserve(size.phase_count);
-        for (int a = 0; a < size.phase_count; ++a) {
-          // Quarter-phase right/bottom edges are outside the logical view but
-          // remain initialized so copying an owning pyramid never reads gaps.
-          const bool complete = l != 0 || plan_.external() || pel != 4 || (a % pel != 3 && a / pel != 3);
-          if (complete)
-            phases.emplace_back(size.padded_width, size.padded_height, overwrite);
-          else
-            phases.emplace_back(size.padded_width, size.padded_height);
-        }
-        if (l == 0)
-          Kernels::extend_border_validated(source[k], phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
-        else {
-          super_detail::PlaneBuffer<T> working(size.width, size.height, overwrite);
-          if (plan_.filter() == 0) {
-            Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), 0, {});
-          } else {
-            super_detail::PlaneBuffer<T> scratch(geometry_detail::dimension(2LL * size.width), size.height, overwrite);
-            Kernels::reduce_pyramid_validated(levels[l - 1][0].view(), p.pad_x, p.pad_y, working.view(), plan_.filter(),
-                                              scratch.view());
+    for (int k = 0; k < plan_.geometry().plane_count; ++k)
+      planes_[k].reserve(plan_.geometry().planes[k].levels.size());
+    build_super_pyramid(plan_, source, external, Kernels{},
+        [&](int k, int l, int width, int height, bool complete) {
+          auto& levels = planes_[k];
+          if (levels.size() <= std::size_t(l)) {
+            levels.emplace_back();
+            levels.back().reserve(plan_.geometry().planes[k].levels[l].phase_count);
           }
-          Kernels::extend_border_validated(working.view(), phases[0].view(), size.width, size.height, p.pad_x, p.pad_y);
-        }
-      }
-      auto& base = levels[0];
-      std::array<span2d::Plane<T>, 16> storage{};
-      for (int a = 1; a < pel * pel; ++a)
-        storage[a] = base[a].view();
-      if (plan_.external())
-        Kernels::extract_external_subpixels(base[0].view(), external[k], p.actual_width, p.actual_height, p.pad_x,
-                                            p.pad_y, pel, plan_.bits(), storage);
-      else
-        Kernels::interpolate_subpixels_validated(base[0].view(), pel, plan_.sharp(), plan_.bits(), storage);
-    }
+          auto& phases = levels.back();
+          if (complete)
+            phases.emplace_back(width, height, overwrite);
+          else
+            phases.emplace_back(width, height);
+          return phases.back().view();
+        });
   }
   const SuperPlan<T>& plan() const { return plan_; }
   SuperPyramid(const SuperPyramid&) = default;

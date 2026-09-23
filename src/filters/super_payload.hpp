@@ -55,6 +55,16 @@ AnalysisProperties super_properties(const SuperPlan<T>& plan, const std::string&
   return result;
 }
 template <class T>
+void publish_super_properties(const SuperPlan<T>& plan, const std::vector<ds::FrameRef>& owners,
+                              ds::FrameProperties& props, const std::string& prefix) {
+  // Native properties retain the auxiliary frames independently of the request.
+  props.set(planes_key(prefix), owners);
+  props.set(descriptor_key(prefix), describe(plan));
+  for (const auto& entry : super_properties(plan, prefix))
+    props.set(entry.first, entry.second);
+}
+
+template <class T>
 void publish_super(const SuperPyramid<T>& pyramid, ds::FrameFactory& factory, ds::FrameProperties& props,
                    const std::string& prefix, ds::SampleFormat sample) {
   const auto& plan = pyramid.plan();
@@ -75,11 +85,33 @@ void publish_super(const SuperPyramid<T>& pyramid, ds::FrameFactory& factory, ds
           owners.push_back(std::move(aux).publish());
         }
     }
-  // Replace both private keys; native frame properties own auxiliary frame refs.
-  props.set(planes_key(prefix), owners);
-  props.set(descriptor_key(prefix), describe(plan));
-  for (const auto& entry : super_properties(plan, prefix))
-    props.set(entry.first, entry.second);
+  publish_super_properties(plan, owners, props, prefix);
+}
+
+template <class T, class Kernels>
+void build_host_super(const SuperPlan<T>& plan, const std::array<span2d::Plane<const T>, 3>& source,
+                      const std::array<span2d::Plane<const T>, 3>& external, Kernels,
+                      ds::FrameFactory& factory, ds::FrameProperties& props,
+                      const std::string& prefix, ds::SampleFormat sample) {
+  // Internal quarter phases have deliberately smaller published dimensions;
+  // retain the owning builder's cropped publication for that representation.
+  if (plan.params().pel == 4 && !plan.external()) {
+    SuperPyramid<T> pyramid(plan, source, external, Kernels{});
+    publish_super(pyramid, factory, props, prefix, sample);
+    return;
+  }
+  std::vector<ds::WritableFrame> storage;
+  build_super_pyramid(plan, source, external, Kernels{},
+      [&](int, int, int width, int height, bool) {
+        storage.push_back(factory.allocate({ds::ColorFamily::Gray, sample, 1, 0, 0}, width, height));
+        return plane<T>(storage.back().view().plane(0));
+      });
+  // The builder has discarded every writable view before ownership is published.
+  std::vector<ds::FrameRef> owners;
+  owners.reserve(storage.size());
+  for (auto& frame : storage)
+    owners.push_back(std::move(frame).publish());
+  publish_super_properties(plan, owners, props, prefix);
 }
 
 template <class T>
