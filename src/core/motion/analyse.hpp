@@ -176,7 +176,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         const int x = direction == 1 ? i : m.blocks_x - 1 - i;
         const auto block = analysis_block(m, x, y);
         const auto omega = analysis_domain(m, block, layer.bound_pad_x, layer.bound_pad_y);
-        const auto spatial = spatial_predictors(current, x, y, direction, f, global, omega);
+        const auto spatial = prediction_detail::spatial<true>(current, x, y, direction, f, global, omega);
         auto u = current.values[std::size_t(y) * m.blocks_x + x];
         u.vector = prediction_detail::clamp(u.vector, omega);
         if (coarsest)

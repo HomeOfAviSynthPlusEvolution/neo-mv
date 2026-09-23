@@ -77,6 +77,7 @@ class PredictionInterpolationPlan {
   int shift_;
   bool overlap_;
   double reciprocal_ = 1;
+  std::int64_t error_limit_;
   std::array<std::array<std::int64_t, 4>, 4> weights_{};
 public:
   PredictionInterpolationPlan(const MotionGrid& parent, PredictionGeometry g) : parent_(parent) {
@@ -90,6 +91,9 @@ public:
     const std::int64_t sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
     if (overlap_)
       reciprocal_ = 1.0 / double(sx * sy);
+    // All parities have the same total nonnegative weight. This bound also
+    // reserves the no-overlap rounding bias, proving every partial sum safe.
+    error_limit_ = (INT64_MAX - 8) / (overlap_ ? 16 * sx * sy : 16);
     for (int y = 0; y < 2; ++y)
       for (int x = 0; x < 2; ++x) {
         auto& weights = weights_[2 * y + x];
@@ -123,6 +127,8 @@ public:
     } else
       values = {a, at(parent_, x + dx, y), at(parent_, x, y + dy), at(parent_, x + dx, y + dy)};
     const auto& weights = weights_[2 * int(dy > 0) + int(dx > 0)];
+    const bool safe_errors = std::max({values[0].error, values[1].error, values[2].error, values[3].error}) <=
+                             error_limit_;
     const auto numerator = [&](int component) {
       std::int64_t sum = 0;
       for (int n = 0; n < 4; ++n) {
@@ -131,14 +137,14 @@ public:
                                             : values[n].error;
         // Coordinate magnitudes are at most 2^31. Admitted block dimensions
         // are <=128 and total weights <=16*128*128, so these sums fit int64.
-        if (component < 2)
+        if (component < 2 || safe_errors)
           sum += value * weights[n];
         else
           sum = add(sum, weight(value, weights[n]));
       }
       if (overlap_)
         return truncate(double(sum) * reciprocal_);
-      return component == 2 ? add(sum, 8) : sum;
+      return component == 2 ? (safe_errors ? sum + 8 : add(sum, 8)) : sum;
     };
     // Supported pel ratios make the shift range from 1 through 5.
     return {{coordinate(sampling_detail::floor_div(numerator(0), 1 << shift_)),
@@ -192,39 +198,54 @@ inline MotionVector enter_global_level(MotionVector global, int pel, int field_s
           prediction_detail::coordinate(std::int64_t(global.y) * pel + field_shift)};
 }
 
-inline SpatialPredictors spatial_predictors(const MotionGrid& grid, int bx, int by, int direction, int field_shift,
-                                            MotionVector layer_global, CandidateDomain omega) {
-  using namespace prediction_detail;
-  validate(grid);
-  if (bx < 0 || bx >= grid.width || by < 0 || by >= grid.height || (direction != 1 && direction != -1) ||
-      omega.left < INT32_MIN || omega.top < INT32_MIN || omega.right > std::int64_t(INT32_MAX) + 1 ||
-      omega.bottom > std::int64_t(INT32_MAX) + 1 || omega.left >= omega.right || omega.top >= omega.bottom)
-    throw std::invalid_argument("invalid spatial predictor query");
+namespace prediction_detail {
+// The admitted analysis pass owns a correctly sized grid of nonnegative
+// errors and visits in-range blocks with a planned, int32 candidate domain.
+template <bool Admitted>
+inline SpatialPredictors spatial(const MotionGrid& grid, int bx, int by, int direction, int field_shift,
+                                 MotionVector layer_global, CandidateDomain omega) {
+  if constexpr (!Admitted) {
+    validate(grid);
+    if (bx < 0 || bx >= grid.width || by < 0 || by >= grid.height || (direction != 1 && direction != -1) ||
+        omega.left < INT32_MIN || omega.top < INT32_MIN || omega.right > std::int64_t(INT32_MAX) + 1 ||
+        omega.bottom > std::int64_t(INT32_MAX) + 1 || omega.left >= omega.right || omega.top >= omega.bottom)
+      throw std::invalid_argument("invalid spatial predictor query");
+  }
+  const auto read = [&](int x, int y) {
+    if constexpr (Admitted)
+      return grid.values[std::size_t(y) * grid.width + x];
+    else
+      return at(grid, x, y);
+  };
   const MotionTriple missing{{0, field_shift}, 0};
   const auto present = [&](int x, int y) {
     return x >= 0 && x < grid.width && y >= 0 && y < grid.height;
   };
   SpatialPredictors result;
-  result.p[1] = present(bx - direction, by) ? at(grid, bx - direction, by) : missing;
-  result.p[2] = present(bx, by - 1) ? at(grid, bx, by - 1) : missing;
-  result.p[3] = present(bx + direction, by + 1)   ? at(grid, bx + direction, by + 1)
-                : present(bx + direction, by - 1) ? at(grid, bx + direction, by - 1)
+  result.p[1] = present(bx - direction, by) ? read(bx - direction, by) : missing;
+  result.p[2] = present(bx, by - 1) ? read(bx, by - 1) : missing;
+  result.p[3] = present(bx + direction, by + 1)   ? read(bx + direction, by + 1)
+                : present(bx + direction, by - 1) ? read(bx + direction, by - 1)
                                                   : missing;
   for (int i = 1; i < 4; ++i)
     result.p[i].vector = clamp(result.p[i].vector, omega);
   result.p[0] = result.p[1];
   if (by > 0) {
-    std::array<std::int32_t, 3> xs{}, ys{};
-    for (int i = 0; i < 3; ++i) {
-      xs[i] = result.p[i + 1].vector.x;
-      ys[i] = result.p[i + 1].vector.y;
-    }
-    std::sort(xs.begin(), xs.end());
-    std::sort(ys.begin(), ys.end());
-    result.p[0] = {{xs[1], ys[1]}, std::max({result.p[1].error, result.p[2].error, result.p[3].error})};
+    const auto median = [](std::int32_t a, std::int32_t b, std::int32_t c) {
+      return std::max(std::min(a, b), std::min(std::max(a, b), c));
+    };
+    result.p[0] = {{median(result.p[1].vector.x, result.p[2].vector.x, result.p[3].vector.x),
+                    median(result.p[1].vector.y, result.p[2].vector.y, result.p[3].vector.y)},
+                   std::max({result.p[1].error, result.p[2].error, result.p[3].error})};
   }
   result.global = clamp(layer_global, omega);
   return result;
+}
+} // namespace prediction_detail
+
+inline SpatialPredictors spatial_predictors(const MotionGrid& grid, int bx, int by, int direction, int field_shift,
+                                            MotionVector layer_global, CandidateDomain omega) {
+  return prediction_detail::spatial<false>(grid, bx, by, direction, field_shift, layer_global, omega);
 }
 
 } // namespace neo_mv

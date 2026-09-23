@@ -93,6 +93,28 @@ void interpolation_parity() {
   triple(plan(2, 2), 30, -31, 17);
 }
 
+void interpolation_error_bounds() {
+  constexpr auto limit = (INT64_MAX - 8) / 16;
+  const PredictionGeometry plain{8, 8, 0, 0, 1, 1};
+  triple(interpolate_predictor({1, 1, {{{0, 0}, limit}}}, 0, 0, plain), 0, 0, limit);
+  rejects<std::overflow_error>([&] {
+    interpolate_predictor({1, 1, {{{0, 0}, limit + 1}}}, 0, 0, plain);
+  });
+  // Above the sufficient fast bound can still be valid: only the weight-one
+  // corner is large, so the checked fallback must compute it, not reject it.
+  MotionGrid grid{2, 2, std::vector<MotionTriple>(4)};
+  grid.values[3].error = limit + 1;
+  triple(interpolate_predictor(grid, 1, 1, plain), 0, 0, (limit + 1 + 8) / 16);
+  // Half overlap gives zero weights at this parity. A huge unused error
+  // must not reject a valid weighted sum in the fallback.
+  grid.values[0].error = 5;
+  grid.values[3].error = INT64_MAX;
+  triple(interpolate_predictor(grid, 1, 1, {8, 8, 4, 4, 1, 1}), 0, 0, 5);
+  rejects<std::overflow_error>([&] {
+    interpolate_predictor(grid, 2, 2, {8, 8, 4, 4, 1, 1});
+  });
+}
+
 void global_modes() {
   MotionGrid grid{2, 1, {{{2, 0}, 0}, {{0, 0}, 0}}};
   position(global_predictor(grid), 2, 0);
@@ -143,6 +165,32 @@ void spatial_neighbours() {
   p = spatial_predictors(grid, 2, 1, 1, 1, {0, 0}, omega);
   triple(p.p[3], 0, 1, 0); // no forward column at either height
   triple(grid.values[3], 9, -2, 10);
+
+  for (int direction : {-1, 1})
+    for (int y = 0; y < grid.height; ++y)
+      for (int x = 0; x < grid.width; ++x) {
+        const auto checked = spatial_predictors(grid, x, y, direction, -1, {10, -10}, omega);
+        const auto admitted = prediction_detail::spatial<true>(grid, x, y, direction, -1, {10, -10}, omega);
+        for (int i = 0; i < 4; ++i)
+          triple(admitted.p[i], checked.p[i].vector.x, checked.p[i].vector.y, checked.p[i].error);
+        position(admitted.global, checked.global.x, checked.global.y);
+      }
+}
+
+void spatial_median_extremes() {
+  MotionGrid grid{3, 3, std::vector<MotionTriple>(9)};
+  const CandidateDomain omega{INT32_MIN, INT32_MIN, std::int64_t(INT32_MAX) + 1, std::int64_t(INT32_MAX) + 1};
+  for (int a : {INT32_MIN, -7, INT32_MAX})
+    for (int b : {INT32_MIN, -7, INT32_MAX})
+      for (int c : {INT32_MIN, -7, INT32_MAX}) {
+        grid.values[3] = {{a, c}, 10};
+        grid.values[1] = {{b, a}, 20};
+        grid.values[8] = {{c, b}, 30};
+        std::array<int, 3> sorted{a, b, c};
+        std::sort(sorted.begin(), sorted.end());
+        const auto p = spatial_predictors(grid, 1, 1, 1, 0, {0, 0}, omega);
+        triple(p.p[0], sorted[1], sorted[1], 30);
+      }
 }
 
 void invalid_and_overflow() {
@@ -158,6 +206,9 @@ void invalid_and_overflow() {
   rejects<std::overflow_error>([] { enter_global_level({INT32_MAX, 0}, 4, 0); });
   rejects<std::invalid_argument>([&] { spatial_predictors(valid, 0, 0, 0, 0, {0, 0}, {0, 0, 1, 1}); });
   rejects<std::invalid_argument>([&] { spatial_predictors(valid, 0, 0, 1, 0, {0, 0}, {0, 0, 0, 1}); });
+  rejects<std::invalid_argument>([&] {
+    spatial_predictors({2, 1, {{{0, 0}, -1}, {{0, 0}, 0}}}, 1, 0, 1, 0, {0, 0}, {-1, -1, 2, 2});
+  });
 }
 } // namespace
 
@@ -165,8 +216,10 @@ int main() {
   try {
     parent_interpolation();
     interpolation_parity();
+    interpolation_error_bounds();
     global_modes();
     spatial_neighbours();
+    spatial_median_extremes();
     invalid_and_overflow();
     std::cout << "Scalar vector prediction checks passed\n";
   } catch (const std::exception& error) {
