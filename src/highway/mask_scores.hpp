@@ -85,6 +85,10 @@ private:
 
 template <class T>
 class OcclusionMaskPlan {
+  struct ScoreCache {
+    std::int64_t overlap = -1;
+    T value{};
+  };
 public:
   OcclusionMaskPlan(const AnalysisMetadata& m, float f, float gamma, int time256)
       : grid_(m, f, gamma, time256), maximum_(score_detail::maximum<T>(m.bits)), gamma_(gamma),
@@ -100,16 +104,17 @@ public:
       grid_.validate(grid);
     const auto& m = grid_.metadata();
     std::vector<T> output(grid.values.size(), T{0});
+    ScoreCache horizontal, vertical;
     for (int by = 0; by < m.blocks_y; ++by) {
       for (int bx = 0; bx < m.blocks_x; ++bx) {
         const auto index = static_cast<std::size_t>(by) * m.blocks_x + bx;
         if (bx + 1 < m.blocks_x) {
           const auto overlap = std::int64_t(grid.values[index].vector.x) - grid.values[index + 1].vector.x;
-          event(output, overlap, hx_, ax_, bx, m.blocks_x, static_cast<std::size_t>(by) * m.blocks_x, 1);
+          event(output, overlap, hx_, ax_, bx, m.blocks_x, static_cast<std::size_t>(by) * m.blocks_x, 1, horizontal);
         }
         if (by + 1 < m.blocks_y) {
           const auto overlap = std::int64_t(grid.values[index].vector.y) - grid.values[index + m.blocks_x].vector.y;
-          event(output, overlap, hy_, ay_, by, m.blocks_y, static_cast<std::size_t>(bx), m.blocks_x);
+          event(output, overlap, hy_, ay_, by, m.blocks_y, static_cast<std::size_t>(bx), m.blocks_x, vertical);
         }
       }
     }
@@ -118,7 +123,7 @@ public:
 
 private:
   void event(std::vector<T>& output, std::int64_t overlap, std::int64_t h, float scale, int position, int count,
-             std::size_t start, std::size_t stride) const {
+             std::size_t start, std::size_t stride, ScoreCache& cache) const {
     if (overlap <= 0)
       return;
     const auto& m = grid_.metadata();
@@ -128,11 +133,15 @@ private:
         m.delta > 0 ? std::int64_t(position) + 1 : (std::min)(std::int64_t(position) + 1 - k, std::int64_t(count) - 1);
     if (left > right)
       return;
-    const float o = static_cast<float>(overlap);
-    const float score =
-        gamma_ == 1.0f ? score_detail::finite(score_detail::finite(maximum_ * o) * scale)
-                       : score_detail::finite(maximum_ * mask_detail::power(score_detail::finite(o * scale), gamma_));
-    const auto value = mask_detail::quantize<T>(score, m.bits);
+    if (cache.overlap != overlap) {
+      const float o = static_cast<float>(overlap);
+      const float score =
+          gamma_ == 1.0f ? score_detail::finite(score_detail::finite(maximum_ * o) * scale)
+                         : score_detail::finite(maximum_ * mask_detail::power(score_detail::finite(o * scale), gamma_));
+      cache.value = mask_detail::quantize<T>(score, m.bits);
+      cache.overlap = overlap;
+    }
+    const auto value = cache.value;
     if (stride == 1) {
       mask_rows::max_span(output.data() + start + std::size_t(left), std::size_t(right - left + 1), value);
       return;

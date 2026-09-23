@@ -1,5 +1,6 @@
 #include "highway/mask_rows.hpp"
 #include "core/mask/numeric.hpp"
+#include <array>
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway/mask_rows.cpp"
 #include "hwy/foreach_target.h"
@@ -8,13 +9,34 @@ HWY_BEFORE_NAMESPACE();
 namespace neo_mv::simd::mask_rows {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
+
+// Request-local cache for the exact libm result. Coherent motion often repeats
+// a small set of magnitudes; keys are binary values, never approximate bins.
+// The exponent is fixed for the lifetime of each cache.
+template <class F>
+class PowerCache {
+  struct Entry { F base = std::numeric_limits<F>::quiet_NaN(), result = 0; };
+  std::array<Entry, 64> entries_{};
+public:
+  F operator()(F base, F exponent) {
+    std::conditional_t<sizeof(F) == 4, std::uint32_t, std::uint64_t> bits;
+    std::memcpy(&bits, &base, sizeof(base));
+    const auto hash = std::uint64_t(bits) * 0x9e3779b97f4a7c15ULL;
+    auto& entry = entries_[hash >> 58];
+    if (entry.base == base)
+      return entry.result;
+    const auto result = mask_detail::power(base, exponent);
+    entry = {base, result};
+    return result;
+  }
+};
 template <class D, class V>
 void Check(D d, V v) {
   if (!hn::AllTrue(d, hn::IsFinite(v)))
     throw std::overflow_error("non-finite SIMD mask score intermediate");
 }
 template <class D, class V>
-auto Power(D d, V value, hn::TFromD<D> exponent) {
+auto Power(D d, V value, hn::TFromD<D> exponent, PowerCache<hn::TFromD<D>>& cache) {
   // Preserve the approved scalar libm result for general exponents. The common
   // exact exponents need no transcendental approximation.
   if (exponent == 0)
@@ -24,13 +46,13 @@ auto Power(D d, V value, hn::TFromD<D> exponent) {
   HWY_ALIGN hn::TFromD<D> lanes[hn::MaxLanes(d)];
   hn::StoreU(value, d, lanes);
   for (std::size_t i = 0; i < hn::Lanes(d); ++i)
-    lanes[i] = mask_detail::power(lanes[i], exponent);
+    lanes[i] = cache(lanes[i], exponent);
   return hn::LoadU(d, lanes);
 }
 #if HWY_HAVE_FLOAT64
 template <class D>
 void MagnitudeChunk(D d, const double* x, const double* y, int pel, float f2, float exponent, float maximum,
-                    double* out) {
+                    double* out, PowerCache<double>& cache) {
   const auto inv = hn::Set(d, 1.0 / double(pel));
   const auto vx = hn::Mul(hn::LoadU(d, x), inv), vy = hn::Mul(hn::LoadU(d, y), inv);
   const auto xx = hn::Mul(vx, vx), yy = hn::Mul(vy, vy);
@@ -40,7 +62,7 @@ void MagnitudeChunk(D d, const double* x, const double* y, int pel, float f2, fl
   Check(d, q);
   const auto a = hn::Mul(q, hn::Set(d, double(f2)));
   Check(d, a);
-  const auto score = hn::Mul(hn::Set(d, double(maximum)), Power(d, a, double(exponent)));
+  const auto score = hn::Mul(hn::Set(d, double(maximum)), Power(d, a, double(exponent), cache));
   Check(d, score);
   hn::StoreU(score, d, out);
 }
@@ -49,13 +71,14 @@ void Magnitude(const double* x, const double* y, std::size_t count, int pel, flo
                double* out) {
 #if HWY_HAVE_FLOAT64
   const hn::ScalableTag<double> d;
+  PowerCache<double> cache;
   const auto n = hn::Lanes(d);
   std::size_t i = 0;
   for (; count - i >= n; i += n)
-    MagnitudeChunk(d, x + i, y + i, pel, f2, exponent, maximum, out + i);
+    MagnitudeChunk(d, x + i, y + i, pel, f2, exponent, maximum, out + i, cache);
   const hn::CappedTag<double, 1> one;
   for (; i < count; ++i)
-    MagnitudeChunk(one, x + i, y + i, pel, f2, exponent, maximum, out + i);
+    MagnitudeChunk(one, x + i, y + i, pel, f2, exponent, maximum, out + i, cache);
 #else
   // Some SIMD targets have no binary64 lanes. Keep the specified binary64
   // arithmetic here; float32 vector arithmetic would change the mask values.
@@ -74,22 +97,23 @@ void Magnitude(const double* x, const double* y, std::size_t count, int pel, flo
 #endif
 }
 template <class D>
-void SadChunk(D d, const float* samples, float scale, float exponent, float maximum, float* out) {
+void SadChunk(D d, const float* samples, float scale, float exponent, float maximum, float* out, PowerCache<float>& cache) {
   const auto z = hn::Mul(hn::LoadU(d, samples), hn::Set(d, scale));
   Check(d, z);
-  const auto score = hn::Mul(hn::Set(d, maximum), Power(d, z, exponent));
+  const auto score = hn::Mul(hn::Set(d, maximum), Power(d, z, exponent, cache));
   Check(d, score);
   hn::StoreU(score, d, out);
 }
 void Sad(const float* samples, std::size_t count, float scale, float exponent, float maximum, float* out) {
+  PowerCache<float> cache;
   const hn::ScalableTag<float> d;
   const auto n = hn::Lanes(d);
   std::size_t i = 0;
   for (; count - i >= n; i += n)
-    SadChunk(d, samples + i, scale, exponent, maximum, out + i);
+    SadChunk(d, samples + i, scale, exponent, maximum, out + i, cache);
   const hn::CappedTag<float, 1> one;
   for (; i < count; ++i)
-    SadChunk(one, samples + i, scale, exponent, maximum, out + i);
+    SadChunk(one, samples + i, scale, exponent, maximum, out + i, cache);
 }
 #if HWY_HAVE_FLOAT64
 template <class D>

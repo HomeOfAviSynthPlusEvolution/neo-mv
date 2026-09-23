@@ -177,6 +177,30 @@ void zero_and_subnormal() {
     same(a.data, b.data);
   }
 }
+
+void repeated_powers() {
+  // More distinct values than cache slots, followed by exact repeats. Compare
+  // the complete unquantized results to libm, including both vector tails.
+  constexpr std::size_t count = 1025;
+  std::vector<double> x(count), y(count), result(count);
+  std::vector<float> sad(count), sad_result(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    x[i] = double(i % 257);
+    y[i] = double((i / 3) % 131);
+    sad[i] = float(i % 257);
+  }
+  for (float exponent : {0.375f, 0.5f, 1.25f}) {
+    neo_mv::simd::mask_rows::magnitude(x.data(), y.data(), count, 2, 0.125f, exponent, 255, result.data());
+    neo_mv::simd::mask_rows::sad(sad.data(), count, 0.25f, exponent, 255, sad_result.data());
+    for (std::size_t i = 0; i < count; ++i) {
+      const double a = x[i] / 2, b = y[i] / 2;
+      const double expected = 255 * neo_mv::mask_detail::power((a * a + b * b) * 0.125, double(exponent));
+      const float expected_sad = 255 * neo_mv::mask_detail::power(sad[i] * 0.25f, exponent);
+      check(std::memcmp(&expected, &result[i], sizeof(double)) == 0);
+      check(std::memcmp(&expected_sad, &sad_result[i], sizeof(float)) == 0);
+    }
+  }
+}
 template <class T>
 struct EndRow {
   void* memory;
@@ -273,6 +297,7 @@ int main() {
       guarded_rows<std::int16_t>(16);
       guarded_rows<float>(32);
       zero_and_subnormal();
+      repeated_powers();
     }
     hwy::SetSupportedTargetsForTest(0);
     std::cout << "Phase3 exact differentials passed\n";
