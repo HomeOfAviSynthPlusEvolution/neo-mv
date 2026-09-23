@@ -100,10 +100,10 @@ template <class T> void run() {
 }
 #include "boundaries.hpp"
 
-template <class T> void sampled_motion() {
+template <class T> void sampled_motion(int block_width = 8) {
   using namespace neo_mv;
   for (int pel : {1, 2, 4}) {
-    MotionFixture<T> f(16, 16, 8, 8, 4, pel, true);
+    MotionFixture<T> f(2 * block_width, 2 * block_width, block_width, block_width, 4, pel, true);
     for (int k = 0; k < 3; ++k) {
       for (std::size_t i = 0; i < f.source[k].size(); ++i)
         f.source[k][i] = T((i * 13 + k * 7) % 233);
@@ -122,12 +122,12 @@ template <class T> void sampled_motion() {
     }
     const auto same_error = [&](MotionVector v) {
       for (auto metric : {BlockMetric::sad, BlockMetric::satd}) {
-        const auto a = block_error(f.geometry, {0, 0, 8, 8}, f.frames, v, metric);
-        const auto b = simd::block_error(f.geometry, {0, 0, 8, 8}, f.frames, v, metric);
-        auto prepared = simd::PreparedBlockError<T>(f.geometry, {0, 0, 8, 8}, f.frames, metric);
+        const auto a = block_error(f.geometry, {0, 0, block_width, block_width}, f.frames, v, metric);
+        const auto b = simd::block_error(f.geometry, {0, 0, block_width, block_width}, f.frames, v, metric);
+        auto prepared = simd::PreparedBlockError<T>(f.geometry, {0, 0, block_width, block_width}, f.frames, metric);
         const auto c = prepared(v);
         decltype(auto) prepared_frames = HighwayKernels<T>::prepare_frames(f.geometry, f.frames);
-        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, 8, 8}, prepared_frames, metric);
+        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, block_width, block_width}, prepared_frames, metric);
         const auto d = shared(v);
         check(a.luma == b.luma && a.chroma == b.chroma && a.raw == b.raw && a.luma == c.luma &&
                   a.chroma == c.chroma && a.raw == c.raw && a.luma == d.luma && a.chroma == d.chroma &&
@@ -147,7 +147,7 @@ template <class T> void sampled_motion() {
     if constexpr (std::is_integral_v<T>)
       if (pel == 2) {
         decltype(auto) prepared_frames = HighwayKernels<T>::prepare_frames(f.geometry, f.frames);
-        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, 8, 8}, prepared_frames,
+        auto shared = HighwayKernels<T>::prepare_block_error(f.geometry, {0, 0, block_width, block_width}, prepared_frames,
                                                               BlockMetric::sad);
         bool overflow = false;
         try {
@@ -166,10 +166,12 @@ template <class T> void sampled_motion() {
               "motion grid mismatch");
     };
     for (int search = 0; search <= 5; ++search)
-      for (bool satd : {false, true}) {
+      for (bool satd : {false, true})
+        for (int trymany : {0, 1, 2}) {
         AnalyseControls a;
         a.search = search;
         a.satd = satd;
+        a.trymany = trymany;
         same_grid(analyse_vectors<T>(f.metadata, {f.geometry}, {f.frames}, a),
                   analyse_vectors<T, HighwayKernels<T>>(f.metadata, {f.geometry}, {f.frames}, a));
         RecalculateControls r;
@@ -190,7 +192,7 @@ template <class T> void sampled_motion() {
       same_error({0, 0});
       same_error({-3, 3});
     }
-    if (pel == 4) {
+    if (pel == 4 && block_width == 8) {
       for (int k = 0; k < 3; ++k)
         for (int a = 0; a < 16; ++a) {
           auto &extent = f.geometry.planes[k].reference[a];
@@ -249,33 +251,66 @@ template <class T> void integer_metric_extremes() {
     }
 }
 
-void bounded_sad_thresholds() {
+template <class T> void bounded_sad_thresholds() {
   using namespace neo_mv::simd::detail;
   for (int width : {8, 16}) {
-    std::array<std::vector<std::uint8_t>, 3> source, reference;
-    std::array<MetricRequest<std::uint8_t>, 3> requests{};
+    std::array<std::unique_ptr<Buffer<T>>, 3> source;
+    std::array<std::unique_ptr<GuardBuffer<T>>, 3> reference;
+    std::array<MetricRequest<T>, 3> requests{};
     for (int k = 0; k < 3; ++k) {
       const int w = k == 0 ? width : width / 2;
-      source[k].resize(w * w);
-      reference[k].resize(w * w);
-      requests[k] = {source[k].data(), w, reference[k].data(), w, w, w, false};
+      source[k] = std::make_unique<Buffer<T>>(w, w);
+      reference[k] = std::make_unique<GuardBuffer<T>>(w, w);
+      const auto a = source[k]->read(), b = reference[k]->read();
+      requests[k] = {a.data(), a.stride(), b.data(), b.stride(), w, w, false};
     }
-    const auto bounded = width == 16 ? metric_batch_420_bounded_function(static_cast<std::uint8_t*>(nullptr))
-                                     : metric_batch_420_small_bounded_function(static_cast<std::uint8_t*>(nullptr));
+    const auto bounded = width == 16 ? metric_batch_420_bounded_function(static_cast<T*>(nullptr))
+                                     : metric_batch_420_small_bounded_function(static_cast<T*>(nullptr));
+    const auto full = width == 16 ? metric_batch_420_function(static_cast<T*>(nullptr))
+                                  : metric_batch_420_small_function(static_cast<T*>(nullptr));
+    const auto verify = [&] {
+      std::array<std::int64_t, 3> expected{}, complete{};
+      std::int64_t total = 0;
+      for (int k = 0; k < 3; ++k) {
+        expected[k] = neo_mv::block_metric(source[k]->read(), reference[k]->read(), neo_mv::BlockMetric::sad);
+        total += expected[k];
+      }
+      full(requests.data(), 3, complete.data());
+      check(complete == expected, "complete fixed SAD mismatch");
+      for (auto limit : {std::int64_t{-1}, std::int64_t{0}, total / 2, total - 1, total, total + 1, INT64_MAX}) {
+        std::array<std::int64_t, 3> errors{};
+        const bool accepted = bounded(requests.data(), limit, errors.data());
+        check(accepted == (total < limit), "bounded SAD threshold mismatch");
+        if (accepted)
+          check(errors == expected, "bounded SAD complete error mismatch");
+      }
+    };
+    const auto clear = [&] {
+      for (int k = 0; k < 3; ++k)
+        for (int y = 0; y < requests[k].height; ++y)
+          for (int x = 0; x < requests[k].width; ++x) {
+            source[k]->view().row(y)[x] = T(0);
+            reference[k]->view().row(y)[x] = T(0);
+          }
+    };
+    const int maximum = std::numeric_limits<T>::max();
+    for (int value : {0, maximum / 2, maximum / 2 + 1, maximum}) {
+      clear();
+      for (int k = 0; k < 3; ++k)
+        for (int y = 0; y < requests[k].height; ++y)
+          for (int x = 0; x < requests[k].width; ++x) {
+            source[k]->view().row(y)[x] = (x + y) % 2 ? T(value) : T(0);
+            reference[k]->view().row(y)[x] = (x + y) % 2 ? T(0) : T(value);
+          }
+      verify();
+    }
+    // Pulses on both sides of every prefix boundary, including U/V-only errors.
     for (int plane = 0; plane < 3; ++plane)
       for (int row = 0; row < requests[plane].height; ++row) {
-        for (auto& r : reference)
-          std::fill(r.begin(), r.end(), 0);
-        std::fill_n(reference[plane].data() + row * requests[plane].width, requests[plane].width, 255);
-        const std::int64_t total = requests[plane].width * 255;
-        for (auto limit : {std::int64_t{-1}, std::int64_t{0}, total / 2, total, total + 1, INT64_MAX}) {
-          std::array<std::int64_t, 3> errors{};
-          const bool accepted = bounded(requests.data(), limit, errors.data());
-          check(accepted == (total < limit), "bounded SAD threshold mismatch");
-          if (accepted)
-            for (int k = 0; k < 3; ++k)
-              check(errors[k] == (k == plane ? total : 0), "bounded SAD complete error mismatch");
-        }
+        clear();
+        for (int x = 0; x < requests[plane].width; ++x)
+          reference[plane]->view().row(row)[x] = T(maximum);
+        verify();
       }
   }
 }
@@ -289,7 +324,8 @@ int main() {
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();
-      bounded_sad_thresholds();
+      bounded_sad_thresholds<std::uint8_t>();
+      bounded_sad_thresholds<std::uint16_t>();
       integer_metric_extremes<std::uint8_t>();
       integer_metric_extremes<std::uint16_t>();
       boundaries<std::uint8_t>();
@@ -297,6 +333,8 @@ int main() {
       boundaries<float>();
       sampled_motion<std::uint8_t>();
       sampled_motion<std::uint16_t>();
+      sampled_motion<std::uint8_t>(16);
+      sampled_motion<std::uint16_t>(16);
       sampled_motion<float>();
       narrow_reference_motion<std::uint8_t>();
       narrow_reference_motion<std::uint16_t>();
