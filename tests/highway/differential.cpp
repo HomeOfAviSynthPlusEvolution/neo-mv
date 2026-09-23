@@ -107,9 +107,16 @@ template <class T> void sampled_motion(int block_width = 8) {
     for (int k = 0; k < 3; ++k) {
       for (std::size_t i = 0; i < f.source[k].size(); ++i)
         f.source[k][i] = T((i * 13 + k * 7) % 233);
-      for (int a = 0; a < pel * pel; ++a)
-        for (std::size_t i = 0; i < f.reference[k][a].size(); ++i)
-          f.reference[k][a][i] = T((i * 17 + a * 11 + k * 5) % 241);
+      for (int a = 0; a < pel * pel; ++a) {
+        const auto extent = f.geometry.planes[k].reference[a];
+        const int stride = extent.width + 1 + a;
+        auto& storage = f.reference[k][a];
+        storage.resize(std::size_t(stride) * extent.height);
+        f.frames.reference[k][a] = checked_plane<const T>(storage.data(), extent.width, extent.height,
+                                                          stride * sizeof(T), storage.size() * sizeof(T));
+        for (std::size_t i = 0; i < storage.size(); ++i)
+          storage[i] = T((i * 17 + a * 11 + k * 5) % 241);
+      }
     }
     if constexpr (std::is_same_v<T, float>) {
       for (auto &plane : f.source)
@@ -139,6 +146,18 @@ template <class T> void sampled_motion(int block_width = 8) {
         if constexpr (std::is_integral_v<T>)
           if (metric == BlockMetric::sad && a.raw > 0)
             check(!shared.bounded(v, a.raw, {0, 0}, 0, 0), "bounded metric admitted a non-improving candidate");
+        // Bounded rejection must not leave stale references in full evaluation.
+        auto copied = prepared;
+        auto borrowed_copy = shared;
+        (void)copied.bounded(v, a.raw, v, 0, 0);
+        (void)borrowed_copy.bounded(v, a.raw, v, 0, 0);
+        const auto again = copied(v), borrowed_again = borrowed_copy(v);
+        check(again.raw == a.raw && again.luma == a.luma && again.chroma == a.chroma &&
+                  borrowed_again.raw == a.raw && borrowed_again.luma == a.luma &&
+                  borrowed_again.chroma == a.chroma, "interleaved copied evaluator mismatch");
+        const auto copied_bound = copied.bounded(v, a.raw + 1, v, 0, 0);
+        check(copied_bound && copied_bound->raw == a.raw && copied_bound->luma == a.luma &&
+                  copied_bound->chroma == a.chroma, "copied bounded evaluator mismatch");
       }
     };
     for (int y : {-3, -1, 0, 1, 3})
@@ -225,6 +244,36 @@ template <class T> void narrow_reference_motion() {
   const auto fast = prepared(vector);
   check(scalar.luma == highway.luma && scalar.raw == highway.raw && scalar.luma == fast.luma &&
             scalar.raw == fast.raw, "narrow reference mismatch");
+}
+
+template <class T> void bounded_narrow_reference_motion() {
+  using namespace neo_mv;
+  for (int width : {8, 16})
+    for (int pel : {1, 2, 4}) {
+      MotionFixture<T> f(96 + width, width, width, width, 0, pel, true);
+      std::array<std::array<std::unique_ptr<GuardBuffer<T>>, 16>, 3> guarded;
+      for (int k = 0; k < 3; ++k)
+        for (int a = 0; a < pel * pel; ++a) {
+          const int w = (k == 0 ? width : width / 2) + 4;
+          guarded[k][a] = std::make_unique<GuardBuffer<T>>(w, w);
+          for (int y = 0; y < w; ++y)
+            for (int x = 0; x < w; ++x)
+              guarded[k][a]->view().row(y)[x] = T((x + y + a + k) * 7);
+          f.frames.reference[k][a] = guarded[k][a]->read();
+          f.geometry.planes[k].reference[a] = {w, w};
+        }
+      const BlockRegion block{96, 0, width, width};
+      auto prepared = simd::PreparedBlockError<T>(f.geometry, block, f.frames, BlockMetric::sad);
+      for (int y = 0; y < 2 * pel; ++y)
+        for (int x = 0; x < 2 * pel; ++x) {
+          const MotionVector vector{-96 * pel + x, y};
+          const auto expected = block_error<T, true>(f.geometry, block, f.frames, vector, BlockMetric::sad);
+          const auto actual = prepared.bounded(vector, expected.raw + 1, vector, 0, 0);
+          check(actual && actual->luma == expected.luma && actual->chroma == expected.chroma &&
+                    actual->raw == expected.raw, "bounded narrow reference mismatch");
+          check(!prepared.bounded(vector, expected.raw, vector, 0, 0), "bounded narrow reference threshold");
+        }
+    }
 }
 
 template <class T> void integer_metric_extremes() {
@@ -339,6 +388,8 @@ int main() {
       narrow_reference_motion<std::uint8_t>();
       narrow_reference_motion<std::uint16_t>();
       narrow_reference_motion<float>();
+      bounded_narrow_reference_motion<std::uint8_t>();
+      bounded_narrow_reference_motion<std::uint16_t>();
       extra_cases();
       external_base_validation();
       external_float_contract();

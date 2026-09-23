@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 namespace neo_mv::simd::detail {
@@ -13,6 +14,21 @@ template <class T> struct MetricRequest {
   int width, height;
   bool satd;
 };
+// Layer-wide phase tables and block-local source/coordinates. The caller has
+// admitted the complete candidate domain before entering these kernels.
+template <class T> struct MetricReferenceFrames {
+  std::array<std::array<const T*, 16>, 3> references{};
+  std::array<std::array<std::ptrdiff_t, 16>, 3> strides{};
+};
+template <class T> struct MotionMetricRequest {
+  std::array<MetricRequest<T>, 3> planes{};
+  std::array<int, 3> x{}, y{};
+  int pel = 1;
+};
+template <class T>
+using BoundedMotionMetricFunction = bool (*)(const MotionMetricRequest<T>&, const MetricReferenceFrames<T>&,
+                                            int, int, std::int64_t, std::int64_t*);
+
 template <class T>
 using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t *);
 template <class T>
@@ -30,7 +46,8 @@ using BoundedMetricBatchFunction = bool (*)(const MetricRequest<T> *, std::int64
   MetricBatchFunction<T> metric_batch_420_function(T *);                                                                \
   MetricBatchFunction<T> metric_batch_420_small_function(T *);                                                          \
   BoundedMetricBatchFunction<T> metric_batch_420_bounded_function(T *);                                                  \
-  BoundedMetricBatchFunction<T> metric_batch_420_small_bounded_function(T *);
+  BoundedMetricBatchFunction<T> metric_batch_420_small_bounded_function(T *);                                         \
+  BoundedMotionMetricFunction<T> motion_metric_420_bounded_function(T *, int width);
 NEO_DECLARE(std::uint8_t)
 NEO_DECLARE(std::uint16_t)
 NEO_DECLARE(float)

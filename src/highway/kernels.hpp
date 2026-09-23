@@ -298,16 +298,14 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
 
 // Immutable phase pointers and strides are shared by all blocks in one layer.
 template <class T>
-struct PreparedSamplingFrames {
+struct PreparedSamplingFrames : detail::MetricReferenceFrames<T> {
   std::array<span2d::Plane<const T>, 3> current{};
-  std::array<std::array<const T*, 16>, 3> references{};
-  std::array<std::array<std::ptrdiff_t, 16>, 3> strides{};
 
   PreparedSamplingFrames(const SamplingGeometry& g, const SamplingFrames<T>& frames) : current(frames.current) {
     for (int k = 0; k < (g.chroma ? 3 : 1); ++k)
       for (int a = 0; a < g.pel * g.pel; ++a) {
-        references[k][a] = frames.reference[k][a].data();
-        strides[k][a] = frames.reference[k][a].stride();
+        this->references[k][a] = frames.reference[k][a].data();
+        this->strides[k][a] = frames.reference[k][a].stride();
       }
   }
 };
@@ -318,13 +316,12 @@ template <class T, bool OwnsFrames = true>
 class PreparedBlockError {
   using FrameInput = std::conditional_t<OwnsFrames, SamplingFrames<T>, PreparedSamplingFrames<T>>;
   using FrameStorage = std::conditional_t<OwnsFrames, PreparedSamplingFrames<T>, const PreparedSamplingFrames<T>*>;
-  int pel_, ratio_x_, ratio_y_;
+  int ratio_x_, ratio_y_;
   bool chroma_;
-  std::array<int, 3> x_{}, y_{};
   FrameStorage frames_;
-  std::array<detail::MetricRequest<T>, 3> requests_{};
+  detail::MotionMetricRequest<T> block_;
   detail::MetricBatchFunction<T> metric_batch_;
-  detail::BoundedMetricBatchFunction<T> bounded_metric_batch_ = nullptr;
+  detail::BoundedMotionMetricFunction<T> bounded_metric_batch_ = nullptr;
 
   static FrameStorage store_frames(const SamplingGeometry& g, const FrameInput& frames) {
     if constexpr (OwnsFrames)
@@ -340,26 +337,26 @@ class PreparedBlockError {
   }
 
   std::int64_t quotient(std::int64_t value) const {
-    switch (pel_) {
+    switch (block_.pel) {
     case 1: return value;
     case 2: return value >= 0 ? value / 2 : -((-value + 1) / 2);
     case 4: return value >= 0 ? value / 4 : -((-value + 3) / 4);
-    default: return sampling_detail::floor_div(value, pel_);
+    default: return sampling_detail::floor_div(value, block_.pel);
     }
   }
   void reference(int k, std::int64_t qx, std::int64_t qy, std::size_t phase) {
-    requests_[k].reference = frames().references[k][phase] +
-        (std::ptrdiff_t(y_[k]) + qy) * frames().strides[k][phase] + (std::ptrdiff_t(x_[k]) + qx);
-    requests_[k].reference_stride = frames().strides[k][phase];
+    block_.planes[k].reference = frames().references[k][phase] +
+        (std::ptrdiff_t(block_.y[k]) + qy) * frames().strides[k][phase] + (std::ptrdiff_t(block_.x[k]) + qx);
+    block_.planes[k].reference_stride = frames().strides[k][phase];
   }
   void reference_pair(int first, int last, std::int64_t vx, std::int64_t vy) {
     const auto qx = quotient(vx), qy = quotient(vy);
-    const auto phase = std::size_t((vy - pel_ * qy) * pel_ + vx - pel_ * qx);
+    const auto phase = std::size_t((vy - block_.pel * qy) * block_.pel + vx - block_.pel * qx);
     for (int k = first; k < last; ++k)
       reference(k, qx, qy, phase);
   }
   void prepare_references(MotionVector vector) {
-    if (pel_ == 2 && chroma_ && ratio_x_ == 2 && ratio_y_ == 2) {
+    if (block_.pel == 2 && chroma_ && ratio_x_ == 2 && ratio_y_ == 2) {
       const auto qx = (std::int64_t(vector.x) - (vector.x < 0)) / 2;
       const auto qy = (std::int64_t(vector.y) - (vector.y < 0)) / 2;
       reference(0, qx, qy, std::size_t((vector.y - 2 * qy) * 2 + vector.x - 2 * qx));
@@ -380,25 +377,25 @@ class PreparedBlockError {
 
 public:
   PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const FrameInput& frame_input, BlockMetric metric)
-      : pel_(g.pel), ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
+      : ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
         frames_(store_frames(g, frame_input)) {
+    block_.pel = g.pel;
     if constexpr (std::is_same_v<T, float>)
       metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
     else if (chroma_ && ratio_x_ == 2 && ratio_y_ == 2 && metric == BlockMetric::sad && block.width == block.height) {
       metric_batch_ = block.width == 16 ? detail::metric_batch_420_function(static_cast<T *>(nullptr))
                      : block.width == 8 ? detail::metric_batch_420_small_function(static_cast<T *>(nullptr))
                                         : detail::metric_batch_function(static_cast<T *>(nullptr));
-      bounded_metric_batch_ = block.width == 16 ? detail::metric_batch_420_bounded_function(static_cast<T *>(nullptr))
-                              : block.width == 8 ? detail::metric_batch_420_small_bounded_function(static_cast<T *>(nullptr))
-                                                 : nullptr;
+      if (block.width == 16 || block.width == 8)
+        bounded_metric_batch_ = detail::motion_metric_420_bounded_function(static_cast<T *>(nullptr), block.width);
     } else
       metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));
     for (int k = 0; k < (chroma_ ? 3 : 1); ++k) {
       const int rx = k == 0 ? 1 : ratio_x_, ry = k == 0 ? 1 : ratio_y_;
-      x_[k] = g.planes[k].pad_x + block.x / rx;
-      y_[k] = g.planes[k].pad_y + block.y / ry;
-      auto& request = requests_[k];
-      request.source = frames().current[k].row(y_[k]).data() + x_[k];
+      block_.x[k] = g.planes[k].pad_x + block.x / rx;
+      block_.y[k] = g.planes[k].pad_y + block.y / ry;
+      auto& request = block_.planes[k];
+      request.source = frames().current[k].row(block_.y[k]).data() + block_.x[k];
       request.source_stride = frames().current[k].stride();
       request.width = block.width / rx;
       request.height = block.height / ry;
@@ -408,7 +405,7 @@ public:
   BlockError operator()(MotionVector vector) {
     prepare_references(vector);
     std::array<std::int64_t, 3> errors{};
-    metric_batch_(requests_.data(), chroma_ ? 3 : 1, errors.data());
+    metric_batch_(block_.planes.data(), chroma_ ? 3 : 1, errors.data());
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return {errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};
   }
@@ -423,9 +420,8 @@ public:
       return operator()(vector);
     if (limit <= 0)
       return std::nullopt;
-    prepare_references(vector);
     std::array<std::int64_t, 3> errors{};
-    if (!bounded_metric_batch_(requests_.data(), limit, errors.data()))
+    if (!bounded_metric_batch_(block_, frames(), vector.x, vector.y, limit, errors.data()))
       return std::nullopt;
     const auto chroma = metric_detail::accumulate(errors[1], errors[2]);
     return BlockError{errors[0], chroma, metric_detail::accumulate(errors[0], chroma)};

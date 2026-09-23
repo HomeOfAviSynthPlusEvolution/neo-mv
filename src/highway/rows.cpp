@@ -595,57 +595,96 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
     errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);
   }
 }
+template <class T, int Width, bool Bounded>
+HWY_INLINE std::int64_t Sad420Plane(const MetricRequest<T>& r, std::int64_t limit) {
+#if HWY_TARGET != HWY_SCALAR
+  if constexpr (std::is_same_v<T, std::uint16_t>) {
+    if (Width % hn::Lanes(hn::CappedTag<std::uint16_t, Width>{}) == 0)
+      return FixedShortSad<Width, Width, Bounded>(r.source, r.source_stride,
+                                                r.reference, r.reference_stride, limit);
+  }
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    if constexpr (Width == 4)
+      return FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
+    else if constexpr (Bounded) {
+      std::int64_t sum = 0;
+      for (int row = 0; row < Width; row += 4) {
+        sum += FixedByteSad<Width, 4>(r.source + row * r.source_stride, r.source_stride,
+                                     r.reference + row * r.reference_stride, r.reference_stride);
+        if (sum >= limit)
+          return sum;
+      }
+      return sum;
+    } else
+      return FixedByteSad<Width, Width>(r.source, r.source_stride, r.reference, r.reference_stride);
+  }
+#endif
+  return Metric(r.source, r.source_stride, r.reference, r.reference_stride, Width, Width, false);
+}
+
 template <class T, int LumaWidth>
 bool MetricBatch420Bounded(const MetricRequest<T> *requests, std::int64_t limit, std::int64_t *errors) {
-  for (int k = 0; k < 3; ++k) {
-    const auto &r = requests[k];
-#if HWY_TARGET != HWY_SCALAR
-    if constexpr (std::is_same_v<T, std::uint16_t>) {
-      if (LumaWidth % hn::Lanes(hn::CappedTag<std::uint16_t, LumaWidth>{}) == 0) {
-        errors[k] = k == 0
-            ? FixedShortSad<LumaWidth, LumaWidth, true>(r.source, r.source_stride,
-                                                       r.reference, r.reference_stride, limit)
-            : FixedShortSad<LumaWidth / 2, LumaWidth / 2>(r.source, r.source_stride,
-                                                         r.reference, r.reference_stride);
-        if (errors[k] >= limit)
-          return false;
-        limit -= errors[k];
-        continue;
-      }
-    }
-    if constexpr (std::is_same_v<T, std::uint8_t>) {
-      if (k == 0) {
-        std::int64_t sum = 0;
-        for (int row = 0; row < LumaWidth; row += 4) {
-          sum += FixedByteSad<LumaWidth, 4>(r.source + row * r.source_stride, r.source_stride,
-                                           r.reference + row * r.reference_stride, r.reference_stride);
-          if (sum >= limit)
-            return false;
-        }
-        errors[0] = sum;
-        limit -= sum;
-        continue;
-      }
-    }
-#endif
-#if HWY_TARGET != HWY_SCALAR
-    if constexpr (std::is_same_v<T, std::uint8_t>) {
-      if constexpr (LumaWidth == 16)
-        errors[k] = k == 0 ? FixedByteSad<16, 16>(r.source, r.source_stride, r.reference, r.reference_stride)
-                           : FixedByteSad<8, 8>(r.source, r.source_stride, r.reference, r.reference_stride);
-      else
-        errors[k] = k == 0 ? FixedByteSad<8, 8>(r.source, r.source_stride, r.reference, r.reference_stride)
-                           : FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
-    } else
-#endif
-      errors[k] = Metric(r.source, r.source_stride, r.reference, r.reference_stride,
-                         r.width, r.height, false);
+  errors[0] = Sad420Plane<T, LumaWidth, true>(requests[0], limit);
+  if (errors[0] >= limit)
+    return false;
+  limit -= errors[0];
+  for (int k = 1; k < 3; ++k) {
+    errors[k] = Sad420Plane<T, LumaWidth / 2, false>(requests[k], limit);
     if (errors[k] >= limit)
       return false;
     limit -= errors[k];
   }
   return true;
 }
+
+HWY_INLINE std::int64_t MotionQuotient(std::int64_t value, int pel) {
+  switch (pel) {
+  case 1: return value;
+  case 2: return value >= 0 ? value / 2 : -((-value + 1) / 2);
+  default: return value >= 0 ? value / 4 : -((-value + 3) / 4);
+  }
+}
+
+template <class T>
+HWY_INLINE MetricRequest<T> MotionPlane(const MotionMetricRequest<T>& block,
+                                        const MetricReferenceFrames<T>& frames, int k,
+                                        std::int64_t qx, std::int64_t qy, std::size_t phase) {
+  auto r = block.planes[k];
+  r.reference_stride = frames.strides[k][phase];
+  // Combine offsets before forming a pointer: the zero-vector block origin
+  // need not itself be inside the admitted reference view.
+  const auto offset = (std::ptrdiff_t(block.y[k]) + qy) * r.reference_stride +
+                      (std::ptrdiff_t(block.x[k]) + qx);
+  r.reference = frames.references[k][phase] + offset;
+  return r;
+}
+
+template <class T, int LumaWidth>
+bool MotionMetric420Bounded(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
+                            int vx, int vy, std::int64_t limit, std::int64_t* errors) {
+  const auto qx = MotionQuotient(vx, block.pel), qy = MotionQuotient(vy, block.pel);
+  const auto phase = std::size_t((vy - block.pel * qy) * block.pel + vx - block.pel * qx);
+  const auto y = MotionPlane(block, frames, 0, qx, qy, phase);
+  errors[0] = Sad420Plane<T, LumaWidth, true>(y, limit);
+  if (errors[0] >= limit)
+    return false;
+  limit -= errors[0];
+
+  // Chroma truncates the vector before applying the phase floor division.
+  // Defer both its phase and address work until the luma candidate survives.
+  const auto tx = std::int64_t(vx) / 2, ty = std::int64_t(vy) / 2;
+  const auto cx = MotionQuotient(tx, block.pel), cy = MotionQuotient(ty, block.pel);
+  const auto chroma_phase = std::size_t((ty - block.pel * cy) * block.pel + tx - block.pel * cx);
+  for (int k = 1; k < 3; ++k) {
+    const auto r = MotionPlane(block, frames, k, cx, cy, chroma_phase);
+    errors[k] = Sad420Plane<T, LumaWidth / 2, false>(r, limit);
+    if (errors[k] >= limit)
+      return false;
+    limit -= errors[k];
+  }
+  return true;
+}
+
 #define NEO_IMPL(T, S)                                                                                                 \
   void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
     Extract(p, q, n, pel, phase);                                                                                      \
@@ -682,6 +721,14 @@ bool MetricBatch420Bounded(const MetricRequest<T> *requests, std::int64_t limit,
   }                                                                                                                    \
   bool MetricBatch420SmallBounded##S(const MetricRequest<T> *requests, std::int64_t limit, std::int64_t *errors) {      \
     return MetricBatch420Bounded<T, 8>(requests, limit, errors);                                                        \
+  }                                                                                                                    \
+  bool MotionMetric420Bounded##S(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,         \
+                                 int vx, int vy, std::int64_t limit, std::int64_t* errors) {                           \
+    return MotionMetric420Bounded<T, 16>(block, frames, vx, vy, limit, errors);                                         \
+  }                                                                                                                    \
+  bool MotionMetric420SmallBounded##S(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,    \
+                                      int vx, int vy, std::int64_t limit, std::int64_t* errors) {                      \
+    return MotionMetric420Bounded<T, 8>(block, frames, vx, vy, limit, errors);                                          \
   }
 NEO_IMPL(std::uint8_t, U8) NEO_IMPL(std::uint16_t, U16) NEO_IMPL(float, F32)
 #undef NEO_IMPL
@@ -705,6 +752,8 @@ const char *target_name() {
   HWY_EXPORT(MetricBatch420##S);                                                                                       \
   HWY_EXPORT(MetricBatch420Small##S);                                                                                  \
   HWY_EXPORT(MetricBatch420Bounded##S);                                                                                \
+  HWY_EXPORT(MotionMetric420Bounded##S);                                                                             \
+  HWY_EXPORT(MotionMetric420SmallBounded##S);                                                                        \
   HWY_EXPORT(MetricBatch420SmallBounded##S);                                                                           \
   void extract(const T *p, T *q, int n, int pel, int phase) {                                                          \
     HWY_DYNAMIC_DISPATCH(Extract##S)(p, q, n, pel, phase);                                                             \
@@ -741,6 +790,10 @@ const char *target_name() {
   }                                                                                                                    \
   BoundedMetricBatchFunction<T> metric_batch_420_small_bounded_function(T *) {                                         \
     return HWY_DYNAMIC_DISPATCH(MetricBatch420SmallBounded##S);                                                        \
+  }                                                                                                                    \
+  BoundedMotionMetricFunction<T> motion_metric_420_bounded_function(T *, int width) {                                 \
+    return width == 16 ? HWY_DYNAMIC_DISPATCH(MotionMetric420Bounded##S)                                               \
+                       : HWY_DYNAMIC_DISPATCH(MotionMetric420SmallBounded##S);                                       \
   }
 NEO_EXPORT(std::uint8_t, U8) NEO_EXPORT(std::uint16_t, U16) NEO_EXPORT(float, F32)
 #undef NEO_EXPORT
