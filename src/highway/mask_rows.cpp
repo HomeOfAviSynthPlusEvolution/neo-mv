@@ -124,9 +124,10 @@ template <class D, class V>
 auto Interpolate(D d, V s0, V s1, V coefficient) {
   // Biased samples are at most 65535 and complementary Q14 coefficients sum
   // to 16384. The product sum plus 8192 fits signed int32 at either stage.
-  const auto complement = hn::Sub(hn::Set(d, 16384), coefficient);
-  const auto sum = hn::Add(hn::Mul(complement, s0), hn::Mul(coefficient, s1));
-  return hn::ShiftRight<14>(hn::Add(sum, hn::Set(d, 8192)));
+  // Factor out the first sample exactly. The signed difference times Q14,
+  // including rounding bias, stays in int32 and needs only one multiply.
+  const auto delta = hn::Mul(coefficient, hn::Sub(s1, s0));
+  return hn::Add(s0, hn::ShiftRight<14>(hn::Add(delta, hn::Set(d, 8192))));
 }
 template <bool Horizontal, class D, class T>
 void ResizePassChunk(D d, const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,
