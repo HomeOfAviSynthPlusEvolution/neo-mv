@@ -57,6 +57,15 @@ void parent_interpolation() {
   triple(interpolate_predictor(single, 0, 0, g), -6, 6, 7);
   triple(parent.values[0], -1, 1, 1); // parent remains immutable
 
+  const MotionGrid extremes{2, 2, std::vector<MotionTriple>(4, {{INT32_MIN, INT32_MAX}, 7})};
+  for (int ox : {0, 64})
+    for (int oy : {0, 64}) {
+      const PredictionInterpolationPlan plan(extremes, {128, 128, ox, oy, 4, 1});
+      for (int y : {-1, 0, 1, 2, 3, INT32_MAX})
+        for (int x : {-1, 0, 1, 2, 3, INT32_MAX})
+          triple(plan(x, y), -1073741824, 1073741823, 7);
+    }
+
   // Mixed interior weights checked against exact rational arithmetic for
   // small values: numerator truncation precedes floor coordinate division.
   for (int ox : {0, 2, 4})
@@ -73,6 +82,15 @@ void parent_interpolation() {
       const auto y = static_cast<int>(std::floor(double(ny) / 8));
       triple(interpolate_predictor(p, 1, 1, {8, 8, ox, oy, 1, 1}), x, y, ns / 16);
     }
+}
+
+void interpolation_parity() {
+  const MotionGrid p{2, 2, {{{-13, 17}, 5}, {{23, -29}, 11}, {{-31, 37}, 19}, {{41, -43}, 23}}};
+  const PredictionInterpolationPlan plan(p, {8, 8, 2, 2, 1, 1});
+  triple(plan(1, 1), -18, 23, 8);
+  triple(plan(2, 1), 24, -29, 11);
+  triple(plan(1, 2), -30, 37, 15);
+  triple(plan(2, 2), 30, -31, 17);
 }
 
 void global_modes() {
@@ -146,6 +164,7 @@ void invalid_and_overflow() {
 int main() {
   try {
     parent_interpolation();
+    interpolation_parity();
     global_modes();
     spatial_neighbours();
     invalid_and_overflow();

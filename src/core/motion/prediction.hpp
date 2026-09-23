@@ -70,60 +70,85 @@ inline MotionVector clamp(MotionVector v, CandidateDomain omega) {
 }
 } // namespace prediction_detail
 
-// Returns a value, so a query cannot overwrite or alias its parent grid.
+// The parent grid and geometry remain unchanged during one child-layer pass.
+// Query results are values and never alias the parent.
+class PredictionInterpolationPlan {
+  const MotionGrid& parent_;
+  int shift_;
+  bool overlap_;
+  double reciprocal_ = 1;
+  std::array<std::array<std::int64_t, 4>, 4> weights_{};
+public:
+  PredictionInterpolationPlan(const MotionGrid& parent, PredictionGeometry g) : parent_(parent) {
+    using namespace prediction_detail;
+    validate(parent);
+    shift_ = 3 - log_pel(g.child_pel) + log_pel(g.parent_pel);
+    if (!geometry_detail::block_pair(g.block_width, g.block_height) || g.overlap_x < 0 || g.overlap_y < 0 ||
+        g.overlap_x > g.block_width / 2 || g.overlap_y > g.block_height / 2)
+      throw std::invalid_argument("invalid parent interpolation geometry");
+    overlap_ = g.overlap_x != 0 || g.overlap_y != 0;
+    const std::int64_t sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
+    if (overlap_)
+      reciprocal_ = 1.0 / double(sx * sy);
+    for (int y = 0; y < 2; ++y)
+      for (int x = 0; x < 2; ++x) {
+        auto& weights = weights_[2 * y + x];
+        weights = {9, 3, 3, 1};
+        if (overlap_) {
+          const std::int64_t ax = 3 * g.block_width - (x ? 2 : 4) * g.overlap_x;
+          const std::int64_t ay = 3 * g.block_height - (y ? 2 : 4) * g.overlap_y;
+          const auto bx = 4 * sx - ax, by = 4 * sy - ay;
+          weights = {ax * ay, bx * ay, ax * by, bx * by};
+        }
+      }
+  }
+  MotionTriple operator()(std::int32_t child_x, std::int32_t child_y) const {
+    using namespace prediction_detail;
+    const auto xmax = 2 * std::int64_t(parent_.width) - 1, ymax = 2 * std::int64_t(parent_.height) - 1;
+    const auto i = std::clamp(std::int64_t(child_x), std::int64_t{0}, xmax);
+    const auto t = std::clamp(std::int64_t(child_y), std::int64_t{0}, ymax);
+    const int x = static_cast<int>(i / 2), y = static_cast<int>(t / 2);
+    const int dx = 2 * int(i % 2) - 1, dy = 2 * int(t % 2) - 1;
+    const bool edge_x = i == 0 || i == xmax, edge_y = t == 0 || t == ymax;
+    const auto a = at(parent_, x, y);
+    std::array<MotionTriple, 4> values;
+    if (edge_x && edge_y)
+      values = {a, a, a, a};
+    else if (edge_x) {
+      const auto b = at(parent_, x, y + dy);
+      values = {a, a, b, b};
+    } else if (edge_y) {
+      const auto b = at(parent_, x + dx, y);
+      values = {a, a, b, b};
+    } else
+      values = {a, at(parent_, x + dx, y), at(parent_, x, y + dy), at(parent_, x + dx, y + dy)};
+    const auto& weights = weights_[2 * int(dy > 0) + int(dx > 0)];
+    const auto numerator = [&](int component) {
+      std::int64_t sum = 0;
+      for (int n = 0; n < 4; ++n) {
+        const auto value = component == 0   ? std::int64_t(values[n].vector.x)
+                           : component == 1 ? std::int64_t(values[n].vector.y)
+                                            : values[n].error;
+        // Coordinate magnitudes are at most 2^31. Admitted block dimensions
+        // are <=128 and total weights <=16*128*128, so these sums fit int64.
+        if (component < 2)
+          sum += value * weights[n];
+        else
+          sum = add(sum, weight(value, weights[n]));
+      }
+      if (overlap_)
+        return truncate(double(sum) * reciprocal_);
+      return component == 2 ? add(sum, 8) : sum;
+    };
+    // Supported pel ratios make the shift range from 1 through 5.
+    return {{coordinate(sampling_detail::floor_div(numerator(0), 1 << shift_)),
+             coordinate(sampling_detail::floor_div(numerator(1), 1 << shift_))},
+            numerator(2) / 16};
+  }
+};
 inline MotionTriple interpolate_predictor(const MotionGrid& parent, std::int32_t child_x, std::int32_t child_y,
                                           PredictionGeometry g) {
-  using namespace prediction_detail;
-  validate(parent);
-  const int r = 3 - log_pel(g.child_pel) + log_pel(g.parent_pel);
-  if (!geometry_detail::block_pair(g.block_width, g.block_height) || g.overlap_x < 0 || g.overlap_y < 0 ||
-      g.overlap_x > g.block_width / 2 || g.overlap_y > g.block_height / 2)
-    throw std::invalid_argument("invalid parent interpolation geometry");
-  const auto xmax = 2 * std::int64_t(parent.width) - 1, ymax = 2 * std::int64_t(parent.height) - 1;
-  const auto i = std::clamp(std::int64_t(child_x), std::int64_t{0}, xmax);
-  const auto t = std::clamp(std::int64_t(child_y), std::int64_t{0}, ymax);
-  const int x = static_cast<int>(i / 2), y = static_cast<int>(t / 2);
-  const int dx = 2 * int(i % 2) - 1, dy = 2 * int(t % 2) - 1;
-  const bool edge_x = i == 0 || i == xmax, edge_y = t == 0 || t == ymax;
-  const auto a = at(parent, x, y);
-  std::array<MotionTriple, 4> values;
-  if (edge_x && edge_y)
-    values = {a, a, a, a};
-  else if (edge_x) {
-    const auto b = at(parent, x, y + dy);
-    values = {a, a, b, b};
-  } else if (edge_y) {
-    const auto b = at(parent, x + dx, y);
-    values = {a, a, b, b};
-  } else
-    values = {a, at(parent, x + dx, y), at(parent, x, y + dy), at(parent, x + dx, y + dy)};
-  std::array<std::int64_t, 4> weights{9, 3, 3, 1};
-  const bool overlap = g.overlap_x != 0 || g.overlap_y != 0;
-  double reciprocal = 1.0;
-  if (overlap) {
-    const std::int64_t sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
-    const std::int64_t ax = 3 * g.block_width - (dx > 0 ? 2 : 4) * g.overlap_x;
-    const std::int64_t ay = 3 * g.block_height - (dy > 0 ? 2 : 4) * g.overlap_y;
-    const auto bx = 4 * sx - ax, by = 4 * sy - ay;
-    weights = {ax * ay, bx * ay, ax * by, bx * by};
-    reciprocal = 1.0 / double(sx * sy);
-  }
-  const auto numerator = [&](int component) {
-    std::int64_t sum = 0;
-    for (int n = 0; n < 4; ++n) {
-      const auto value = component == 0   ? std::int64_t(values[n].vector.x)
-                         : component == 1 ? std::int64_t(values[n].vector.y)
-                                          : values[n].error;
-      sum = add(sum, weight(value, weights[n]));
-    }
-    if (overlap)
-      return truncate(double(sum) * reciprocal);
-    return component == 2 ? add(sum, 8) : sum;
-  };
-  // Supported pel ratios make r range from 1 through 5.
-  return {{coordinate(sampling_detail::floor_div(numerator(0), 1 << r)),
-           coordinate(sampling_detail::floor_div(numerator(1), 1 << r))},
-          numerator(2) / 16};
+  return PredictionInterpolationPlan(parent, g)(child_x, child_y);
 }
 
 inline MotionVector global_predictor(const MotionGrid& parent, bool enabled = true) {
