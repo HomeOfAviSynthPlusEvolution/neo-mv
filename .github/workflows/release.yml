@@ -52,12 +52,12 @@ jobs:
             arch: arm64
             host_tests: 'OFF'
           - platform: windows-x64
-            runner: windows-2022
+            runner: windows-2025-vs2026
             arch: x64
             vs_arch: x64
             host_tests: 'ON'
           - platform: windows-arm64
-            runner: windows-11-arm
+            runner: windows-11-vs2026-arm
             arch: arm64
             vs_arch: ARM64
             host_tests: 'OFF'
@@ -112,7 +112,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: >-
-          cmake -S source -B build -G "Visual Studio 17 2022" -A ${{ matrix.vs_arch }} -T ClangCL
+          cmake -S source -B build -G "Visual Studio 18 2026" -A ${{ matrix.vs_arch }} -T ClangCL
           -DBUILD_TESTING=ON -DNEO_MV_ENABLE_SIMD=ON -DNEO_MV_BUILD_VAPOURSYNTH=ON -DNEO_MV_BUILD_AVISYNTH=ON
           -DNEO_MV_TEST_VAPOURSYNTH=${{ matrix.host_tests }} -DNEO_MV_TEST_BLACKBOX=OFF
           -DNEO_MV_BUILD_BENCHMARKS=OFF

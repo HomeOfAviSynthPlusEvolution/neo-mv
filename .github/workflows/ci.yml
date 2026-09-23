@@ -21,8 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows x64 / clang-cl
-            os: windows-2022
+          - name: Windows x64 / VS 2026 clang-cl
+            os: windows-2025-vs2026
             arch: x64
             build_type: Release
           - name: Linux x64 / GCC
@@ -99,7 +99,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: >-
-          cmake -S . -B build/ci -G "Visual Studio 17 2022" -A x64 -T ClangCL
+          cmake -S . -B build/ci -G "Visual Studio 18 2026" -A x64 -T ClangCL
           -DBUILD_TESTING=ON
           -DNEO_MV_ENABLE_HIGHWAY=ON -DNEO_MV_HWY_SCALAR_ONLY=OFF
           -DNEO_MV_BUILD_VAPOURSYNTH=ON -DNEO_MV_BUILD_AVISYNTH=ON -DNEO_MV_TEST_VAPOURSYNTH=ON
