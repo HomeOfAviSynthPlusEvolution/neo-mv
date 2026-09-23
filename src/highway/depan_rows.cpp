@@ -47,6 +47,64 @@ bool NativeArithmeticEnvironment() {
 #endif
 }
 
+template <class D>
+auto NeighborDifference(D d, const float* center, std::size_t stride) {
+  auto total = hn::LoadU(d, center - stride - 1);
+  total = hn::Add(total, hn::LoadU(d, center - stride));
+  total = hn::Add(total, hn::LoadU(d, center - stride + 1));
+  total = hn::Add(total, hn::LoadU(d, center - 1));
+  total = hn::Add(total, hn::LoadU(d, center + 1));
+  total = hn::Add(total, hn::LoadU(d, center + stride - 1));
+  total = hn::Add(total, hn::LoadU(d, center + stride));
+  total = hn::Add(total, hn::LoadU(d, center + stride + 1));
+  return hn::Sub(hn::LoadU(d, center), hn::Mul(total, hn::Set(d, 0.125f)));
+}
+template <class D>
+bool AdmissionChunk(D d, const float* dx, const float* dy, std::size_t stride, float wrong, std::int8_t* eligibility) {
+  const auto x = NeighborDifference(d, dx, stride), y = NeighborDifference(d, dy, stride);
+  // Nonfinite intermediates cannot become finite through these additions,
+  // power-of-two scaling and subtraction; preserve lazy errors via fallback.
+  if (!hn::AllTrue(d, hn::And(hn::IsFinite(x), hn::IsFinite(y))))
+    return false;
+  const auto limit = hn::Set(d, wrong);
+  const auto accepted = hn::And(hn::Le(hn::Abs(x), limit), hn::Le(hn::Abs(y), limit));
+  HWY_ALIGN float flags[hn::MaxLanes(d)];
+  hn::Store(hn::IfThenElse(accepted, hn::Set(d, 1), hn::Zero(d)), d, flags);
+  for (std::size_t i = 0; i < hn::Lanes(d); ++i)
+    eligibility[i] &= static_cast<std::int8_t>(flags[i]);
+  return true;
+}
+bool WeightAdmission(const depan::Observations& observations, const float* dx, const float* dy, float wrong,
+                     std::int8_t* eligibility) {
+  if (!NativeArithmeticEnvironment() || !std::isfinite(wrong))
+    return false;
+  const int nx = observations.nx, ny = observations.ny;
+  const int border = observations.masked ? 0 : 4;
+  for (int y = 0; y < ny; ++y)
+    for (int x = 0; x < nx; ++x) {
+      const auto i = std::size_t(y) * nx + x;
+      eligibility[i] = x >= border && x < nx - border && y >= border && y < ny - border &&
+                       observations.values[i].sad <= observations.sad_threshold;
+    }
+  const hn::ScalableTag<float> d;
+  const auto lanes = hn::Lanes(d);
+  const hn::CappedTag<float, 1> one;
+  for (int y = 1; y + 1 < ny; ++y) {
+    std::size_t x = 1;
+    for (; x + lanes < static_cast<std::size_t>(nx); x += lanes) {
+      const auto i = std::size_t(y) * nx + x;
+      if (!AdmissionChunk(d, dx + i, dy + i, nx, wrong, eligibility + i))
+        return false;
+    }
+    for (; x + 1 < static_cast<std::size_t>(nx); ++x) {
+      const auto i = std::size_t(y) * nx + x;
+      if (!AdmissionChunk(one, dx + i, dy + i, nx, wrong, eligibility + i))
+        return false;
+    }
+  }
+  return true;
+}
+
 depan::FitSums AccumulateComponents(const std::vector<float>& weights, const float* ex, const float* ey, bool zoom,
                                     bool rotation, const depan::FitGeometry* geometry) {
   // Lanes hold independent statistics, not partial observation sums. Each
@@ -251,6 +309,11 @@ HWY_EXPORT(NativeFma);
 HWY_EXPORT(Adjust);
 HWY_EXPORT(Accumulate);
 HWY_EXPORT(StrictResiduals);
+HWY_EXPORT(WeightAdmission);
+bool weight_admission(const depan::Observations& observations, const float* dx, const float* dy, float wrong,
+                      std::int8_t* eligibility) {
+  return HWY_DYNAMIC_DISPATCH(WeightAdmission)(observations, dx, dy, wrong, eligibility);
+}
 bool strict_residuals(const float* x, const float* y, const float* dx, const float* dy, std::size_t count,
                       depan::Transform map, float* ex, float* ey) {
   return HWY_DYNAMIC_DISPATCH(StrictResiduals)(x, y, dx, dy, count, map, ex, ey);

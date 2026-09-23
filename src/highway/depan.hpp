@@ -45,6 +45,7 @@ struct FitWorkspace<HighwayResiduals> {
   const Observations& observations;
   std::array<std::vector<float>, 6> rows;
   std::vector<FitGeometry> geometry;
+  bool admission_attempted = false;
   explicit FitWorkspace(const Observations& o) : observations(o), geometry(o.values.size()) {
     for (auto& row : rows)
       row.resize(o.values.size());
@@ -67,6 +68,13 @@ struct FitWorkspace<HighwayResiduals> {
   }
   std::vector<float> select(Transform map, float wrong, float zerow, float global,
                             std::vector<std::int8_t>& eligibility, std::vector<float> weights) {
+    if (eligibility.size() != observations.values.size())
+      throw std::invalid_argument("invalid Depan weight eligibility storage");
+    if (!admission_attempted) {
+      admission_attempted = true;
+      if (!simd::depan_rows::weight_admission(observations, rows[2].data(), rows[3].data(), wrong, eligibility.data()))
+        std::fill(eligibility.begin(), eligibility.end(), std::int8_t{-1});
+    }
     const bool prepared =
         simd::depan_rows::strict_residuals(rows[0].data(), rows[1].data(), rows[2].data(), rows[3].data(),
                                            observations.values.size(), map, rows[4].data(), rows[5].data());

@@ -343,6 +343,15 @@ void strict_weight_admission() {
   for (auto& v : o.values)
     v.sad = o.sad_threshold + 1;
   compare(o, Transform{0, 0, std::numeric_limits<float>::max(), 0, 0, 1}, 1);
+  auto overflowing_neighbors = o;
+  for (auto& v : overflowing_neighbors.values)
+    v.dx = v.dy = std::numeric_limits<float>::max();
+  compare(overflowing_neighbors, {}, 1);
+  {
+    FitWorkspace<HighwayResiduals> workspace(o);
+    std::vector<std::int8_t> short_cache(o.values.size() - 1, -1);
+    CHECK(rejected([&] { workspace.select({}, 5, 1, 1, short_cache, {}); }));
+  }
 #if defined(__SSE2__) || defined(_M_X64)
   for (auto& v : o.values)
     v.sad = 0;
@@ -478,6 +487,31 @@ struct EndRow {
   EndRow(const EndRow&) = delete;
   EndRow& operator=(const EndRow&) = delete;
 };
+void guarded_admission() {
+  const std::array<float, 6> values{0, -0.0f, 0x1p-149f, -0x1p-149f, 0.125f, -2.375f};
+  for (int nx : widths)
+    for (int ny : {1, 2, 3, 9}) {
+      auto o = observations(nx, ny);
+      const auto count = o.values.size();
+      EndRow<float> dx(count), dy(count);
+      EndRow<std::int8_t> eligibility(count);
+      for (std::size_t i = 0; i < count; ++i) {
+        dx.data[i] = o.values[i].dx = values[i % values.size()];
+        dy.data[i] = o.values[i].dy = values[(i + 2) % values.size()];
+        o.values[i].base = 1;
+        o.values[i].sad = i % 3 ? 0 : o.sad_threshold + 1;
+      }
+      for (bool masked : {false, true}) {
+        o.masked = masked;
+        for (float wrong : {-1.0f, 0.0f, 0.125f, 4.0f}) {
+          const auto expected = select_weights(o, {}, wrong, 1, std::numeric_limits<float>::max());
+          if (simd::depan_rows::weight_admission(o, dx.data, dy.data, wrong, eligibility.data))
+            for (std::size_t i = 0; i < count; ++i)
+              CHECK(eligibility.data[i] == expected[i]);
+        }
+      }
+    }
+}
 void guarded_weighted() {
   std::mt19937 random(94711);
   for (const int width : widths)
@@ -710,6 +744,7 @@ int main() {
       guarded_linear<std::uint16_t>();
       strict_weight_admission();
       component_accumulation();
+      guarded_admission();
       guarded_residuals();
       guarded_adjustments();
       guarded_accumulation();

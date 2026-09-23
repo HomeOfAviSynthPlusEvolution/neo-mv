@@ -7,6 +7,10 @@ namespace neo_mv::simd::depan_rows {
 // Only native-FMA targets fuse floating residual, accumulation and fit-update operations.
 // Other targets retain separate rounding. Inputs and products remain finite.
 bool native_fma();
+// Prepare fixed weight admission with the original eight-neighbor sum order.
+// On false, discard all entries and use scalar lazy admission.
+bool weight_admission(const depan::Observations& observations, const float* dx, const float* dy, float wrong,
+                      std::int8_t* eligibility);
 // Separate binary32 operations for weight admission, never FMA. Returns false
 // if the environment or any result requires the lazy scalar fallback; output
 // must then be ignored. Speculative work never throws for rejected blocks.
