@@ -74,9 +74,18 @@ struct Integer {
   }
 };
 inline float integer32(std::uint64_t value) {
+  if (value <= (std::uint64_t{1} << 24))
+    return static_cast<float>(value);
+  if (value <= (std::uint64_t{1} << 53))
+    return f32(static_cast<double>(value));
   return Integer::product(value, 1).rounded();
 }
 inline float square32(std::uint64_t value) {
+  if (value <= 4096)
+    return static_cast<float>(value * value);
+  // The integer product and its binary64 conversion are exact in this range.
+  if (value <= (std::uint64_t{1} << 26))
+    return f32(static_cast<double>(value * value));
   return Integer::product(value, value).rounded();
 }
 inline void validate(const Observations& observations) {

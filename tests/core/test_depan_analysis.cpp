@@ -149,7 +149,7 @@ void current_metadata() {
   const auto read = [&](const std::string& name) -> IntegerPropertyView {
     const auto found = properties.find(name);
     return found == properties.end() ? IntegerPropertyView{}
-                                    : IntegerPropertyView{true, found->second.size(), found->second.data()};
+                                     : IntegerPropertyView{true, found->second.size(), found->second.data()};
   };
   properties.erase("MVUtensilsAnalysisDeltaFrame");
   CHECK(plan.read(read).eligible && plan.vector_index(2) == 2);
@@ -323,6 +323,12 @@ int main() {
     current_metadata();
     metadata_only_creation();
     exact_centers();
+    for (std::uint64_t limit :
+         {std::uint64_t{4096}, std::uint64_t{1} << 24, std::uint64_t{1} << 26, std::uint64_t{1} << 53})
+      for (std::uint64_t value = limit - 8; value <= limit + 8; ++value) {
+        CHECK(analysis_detail::integer32(value) == analysis_detail::Integer::product(value, 1).rounded());
+        CHECK(analysis_detail::square32(value) == analysis_detail::Integer::product(value, value).rounded());
+      }
     weight_rules();
     fitting();
     complete_example();

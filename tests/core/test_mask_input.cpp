@@ -1,6 +1,8 @@
 #include "core/mask/input.hpp"
 
 #include <iostream>
+#include <random>
+#include <cfenv>
 
 namespace {
 using namespace neo_mv;
@@ -85,6 +87,62 @@ void creation_and_fallback() {
   cropped = m;
   cropped.blocks_x = INT32_MAX;
   rejects([&] { MaskInputPlan<std::uint8_t> bad(cropped, 1); });
+}
+
+void conversion_differential() {
+  // Independent arithmetic oracle: scale, round to an even integer, rescale.
+  auto reference = [](double value) {
+    const double magnitude = std::abs(value);
+    if (magnitude == 0)
+      return static_cast<float>(value);
+    int exponent;
+    std::frexp(magnitude, &exponent);
+    const int shift = (std::max)(exponent - 24, -149);
+    const double scaled = std::ldexp(magnitude, -shift);
+    double rounded = std::floor(scaled);
+    const auto remainder = scaled - rounded;
+    if (remainder > 0.5 || (remainder == 0.5 && std::fmod(rounded, 2.0) != 0))
+      ++rounded;
+    const float result = static_cast<float>(std::ldexp(rounded, shift));
+    return std::signbit(value) ? -result : result;
+  };
+  std::mt19937_64 random(20260922);
+  std::vector<std::pair<double, float>> samples;
+  for (int i = 0; i < 30000; ++i) {
+    const auto bits = random();
+    double value;
+    std::memcpy(&value, &bits, sizeof(value));
+    if (std::isfinite(value) && std::abs(value) < 0x1.ffffffp127)
+      samples.emplace_back(value, reference(value));
+  }
+  for (int exponent = -149; exponent <= 127; ++exponent) {
+    const double midpoint = std::ldexp(1.0, exponent) + std::ldexp(1.0, (std::max)(exponent - 24, -150));
+    for (double value : {std::nextafter(midpoint, 0.0), midpoint, std::nextafter(midpoint, INFINITY)})
+      for (double sign : {-1.0, 1.0})
+        samples.emplace_back(sign * value, reference(sign * value));
+  }
+  const int saved = std::fegetround();
+  bool equal = true;
+  for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+    if (std::fesetround(mode) != 0)
+      continue;
+    for (const auto& sample : samples) {
+      const float actual = mask_detail::binary32(sample.first);
+      equal = equal && std::memcmp(&actual, &sample.second, sizeof(actual)) == 0;
+    }
+  }
+  std::fesetround(saved);
+  CHECK(equal);
+#if defined(__SSE2__) || defined(_M_X64)
+  const auto saved_csr = _mm_getcsr();
+  _mm_setcsr((saved_csr & ~0x6000u) | 0x8040u); // Nearest, with FTZ and DAZ enabled.
+  for (const auto& sample : samples) {
+    const float actual = mask_detail::binary32(sample.first);
+    equal = equal && std::memcmp(&actual, &sample.second, sizeof(actual)) == 0;
+  }
+  _mm_setcsr(saved_csr);
+  CHECK(equal);
+#endif
 }
 
 void parameter_rounding() {
@@ -217,6 +275,7 @@ int main() {
   try {
     creation_and_fallback();
     parameter_rounding();
+    conversion_differential();
     eligibility();
     scores_and_power();
     std::cout << "Scalar mask input and numeric checks passed\n";

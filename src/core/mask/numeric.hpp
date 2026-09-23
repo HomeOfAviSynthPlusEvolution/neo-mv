@@ -3,9 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <cfenv>
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
 
 namespace neo_mv::mask_detail {
 
@@ -13,23 +18,46 @@ namespace neo_mv::mask_detail {
 // interval above FLT_MAX that still rounds to FLT_MAX. Casting an out-of-range
 // binary64 value directly to float need not have defined C++ behavior.
 inline float binary32(double value) {
-  if (!std::isfinite(value))
+  static_assert(sizeof(double) == 8 && sizeof(float) == 4 && std::numeric_limits<double>::is_iec559 &&
+                std::numeric_limits<float>::is_iec559);
+  std::uint64_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  const auto exponent = static_cast<int>((bits >> 52) & 0x7ff);
+  if (exponent == 0x7ff)
     throw std::invalid_argument("mask parameter must be finite");
-  const double magnitude = std::abs(value);
-  if (magnitude >= 0x1.ffffffp127)
+  const int e = exponent - 1023;
+  if (e > 127)
     throw std::invalid_argument("mask parameter rounds outside finite binary32");
-  if (magnitude == 0)
-    return std::signbit(value) ? -0.0f : 0.0f;
-  int exponent = 0;
-  std::frexp(magnitude, &exponent);
-  const int shift = std::max(exponent - 24, -149);
-  const double scaled = std::ldexp(magnitude, -shift);
-  double rounded = std::floor(scaled);
-  const double remainder = scaled - rounded;
-  if (remainder > 0.5 || (remainder == 0.5 && std::fmod(rounded, 2.0) != 0))
-    rounded += 1;
-  const float result = static_cast<float>(std::ldexp(rounded, shift));
-  return std::signbit(value) ? -result : result;
+  // Both the input and result are normal and the conversion is in range.
+  // FTZ/DAZ cannot affect this path; other rounding modes use the exact path.
+  if (e >= -126 && e < 127) {
+#if defined(__SSE2__) || defined(_M_X64)
+    if ((_mm_getcsr() & 0x6000u) == 0)
+      return _mm_cvtss_f32(_mm_cvtsd_ss(_mm_setzero_ps(), _mm_set_sd(value)));
+#else
+    if (std::fegetround() == FE_TONEAREST)
+      return static_cast<float>(value);
+#endif
+  }
+  std::uint32_t encoded = static_cast<std::uint32_t>(bits >> 32) & 0x80000000u;
+  if (e >= -150) {
+    // Round the significand directly. This also handles subnormal results and
+    // does not depend on the host rounding mode or flush-to-zero settings.
+    const auto significand = (bits & 0xfffffffffffffull) | (std::uint64_t{1} << 52);
+    const int shift = e >= -126 ? 29 : -e - 97;
+    auto rounded = significand >> shift;
+    const auto remainder = significand & ((std::uint64_t{1} << shift) - 1);
+    const auto half = std::uint64_t{1} << (shift - 1);
+    rounded += remainder > half || (remainder == half && (rounded & 1));
+    const auto magnitude =
+        static_cast<std::uint32_t>(rounded) + (e >= -126 ? static_cast<std::uint32_t>(e + 126) << 23 : 0);
+    if (magnitude >= 0x7f800000u)
+      throw std::invalid_argument("mask parameter rounds outside finite binary32");
+    encoded |= magnitude;
+  }
+  float result;
+  std::memcpy(&result, &encoded, sizeof(result));
+  return result;
 }
 
 template <class T>
