@@ -43,6 +43,12 @@ auto Power(D d, V value, hn::TFromD<D> exponent, PowerCache<hn::TFromD<D>>& cach
     return hn::Set(d, hn::TFromD<D>(1));
   if (exponent == 1)
     return hn::IfThenElse(hn::Eq(value, hn::Zero(d)), hn::Zero(d), value);
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  // Native x86 square root is correctly rounded and satisfies the power
+  // contract without a per-lane libm call or cache lookup.
+  if (exponent == hn::TFromD<D>(0.5))
+    return hn::IfThenElse(hn::Eq(value, hn::Zero(d)), hn::Zero(d), hn::Sqrt(value));
+#endif
   HWY_ALIGN hn::TFromD<D> lanes[hn::MaxLanes(d)];
   hn::StoreU(value, d, lanes);
   for (std::size_t i = 0; i < hn::Lanes(d); ++i)

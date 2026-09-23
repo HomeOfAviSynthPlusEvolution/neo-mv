@@ -201,6 +201,28 @@ void repeated_powers() {
     }
   }
 }
+
+void square_root_scores() {
+  // Independent rounded square roots, including signed zero and a non-square.
+  constexpr std::size_t count = 65;
+  std::array<double, count> x{}, y{}, result{};
+  std::array<float, count> sad{}, sad_result{};
+  for (std::size_t i = 0; i < count; ++i) {
+    x[i] = i % 3 == 0 ? -0.0 : 1.0;
+    y[i] = i % 3 == 2 ? 1.0 : 0.0;
+    sad[i] = float(i % 3);
+  }
+  neo_mv::simd::mask_rows::magnitude(x.data(), y.data(), count, 1, 1, 0.5f, 1, result.data());
+  neo_mv::simd::mask_rows::sad(sad.data(), count, 1, 0.5f, 1, sad_result.data());
+  constexpr double roots64[] = {0.0, 1.0, 0x1.6a09e667f3bcdp+0};
+  constexpr float roots32[] = {0.0f, 1.0f, 0x1.6a09e6p+0f};
+  for (std::size_t i = 0; i < count; ++i) {
+    check(std::memcmp(&result[i], &roots64[i % 3], sizeof(double)) == 0);
+    check(std::memcmp(&sad_result[i], &roots32[i % 3], sizeof(float)) == 0);
+  }
+  check(neo_mv::mask_detail::power(0x1p-1074, 0.5) == 0x1p-537);
+  check(neo_mv::mask_detail::power(0x1p-148f, 0.5f) == 0x1p-74f);
+}
 template <class T>
 struct EndRow {
   void* memory;
@@ -317,6 +339,7 @@ int main() {
       guarded_rows<float>(32);
       zero_and_subnormal();
       repeated_powers();
+      square_root_scores();
       guarded_vertical<std::uint8_t>();
       guarded_vertical<std::uint16_t>();
       guarded_vertical<std::int16_t>();

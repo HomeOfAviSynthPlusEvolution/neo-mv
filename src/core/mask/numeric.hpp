@@ -99,6 +99,8 @@ F checked_power(F base, F exponent) {
     return F{0};
   if (exponent == 1)
     return base;
+  if (exponent == F{0.5})
+    return std::sqrt(base);
   const F result = std::pow(base, exponent);
   if (!std::isfinite(result) || result < 0)
     throw std::overflow_error("mask power result is not finite");
