@@ -308,6 +308,7 @@ void ComposeDirectQuadByte(const BlockCompositionGeometry& g, const SampledRende
 }
 #endif
 
+#if HWY_TARGET == HWY_AVX2 || HWY_TARGET == HWY_AVX3_SPR
 template <int Tiles>
 void ComposeDirectPackedChromaByte(const BlockCompositionGeometry& g,
                                    const SampledRenderBlock<std::uint8_t>* blocks,
@@ -431,6 +432,8 @@ void ComposeDirectPackedChromaWord(const BlockCompositionGeometry& g,
     }
   }
 }
+
+#endif
 
 template <class T, int Half>
 void ComposeDirectTiledHalf(const BlockCompositionGeometry& g, const SampledRenderBlock<T>* blocks,
