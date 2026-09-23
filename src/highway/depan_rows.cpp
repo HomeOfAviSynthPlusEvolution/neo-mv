@@ -47,11 +47,11 @@ struct FitArithmetic {
   }
 };
 depan::FitSums Accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
-                          const float* ey, bool zoom, bool rotation) {
+                          const float* ey, bool zoom, bool rotation, const depan::FitGeometry* geometry) {
   const depan::ArithmeticContext arithmetic;
   return depan::accumulate_fit<FitArithmetic>(
       observations, weights, [ex, ey](std::size_t i) { return std::array<float, 2>{ex[i], ey[i]}; }, zoom, rotation,
-      &arithmetic);
+      &arithmetic, geometry);
 }
 template <class D>
 void AdjustChunk(D d, const float* values, const float* scales, const float* gradients, float* output) {
@@ -149,8 +149,8 @@ HWY_EXPORT(NativeFma);
 HWY_EXPORT(Adjust);
 HWY_EXPORT(Accumulate);
 depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
-                          const float* ey, bool zoom, bool rotation) {
-  return HWY_DYNAMIC_DISPATCH(Accumulate)(observations, weights, ex, ey, zoom, rotation);
+                          const float* ey, bool zoom, bool rotation, const depan::FitGeometry* geometry) {
+  return HWY_DYNAMIC_DISPATCH(Accumulate)(observations, weights, ex, ey, zoom, rotation, geometry);
 }
 bool native_fma() {
   return HWY_DYNAMIC_DISPATCH(NativeFma)();

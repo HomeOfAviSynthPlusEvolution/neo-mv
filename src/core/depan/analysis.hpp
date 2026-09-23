@@ -231,7 +231,8 @@ struct FitUpdate {
 
 template <bool Validated = false>
 inline std::vector<float> select_weights(const Observations& observations, const Transform& map, float wrong,
-                                         float zerow, float global, std::vector<std::int8_t>* eligibility = nullptr) {
+                                         float zerow, float global, std::vector<std::int8_t>* eligibility = nullptr,
+                                         std::vector<float> weights = {}) {
   if constexpr (!Validated)
     analysis_detail::validate(observations);
   f32(wrong);
@@ -242,7 +243,7 @@ inline std::vector<float> select_weights(const Observations& observations, const
   // order as the uncached path, and reused only within this fit invocation.
   if (eligibility && eligibility->size() != observations.values.size())
     throw std::invalid_argument("invalid Depan weight eligibility storage");
-  std::vector<float> weights(observations.values.size(), 0.0f);
+  weights.assign(observations.values.size(), 0.0f);
   for (int by = 0; by < observations.ny; ++by)
     for (int bx = 0; bx < observations.nx; ++bx) {
       const auto index = std::size_t(by) * observations.nx + bx;
@@ -281,6 +282,9 @@ struct FitSums {
   float n = 0.1f, x2 = 0.1f, y2 = 0.1f, residual = 0.1f;
   float gx = 0, gy = 0, gxx = 0, gyy = 0, gxy = 0, gyx = 0;
 };
+struct FitGeometry {
+  float x2, y2, twice_x, twice_y;
+};
 struct ScalarFitArithmetic {
   static float multiply_add(float a, float b, float c) { return add(c, mul(a, b)); }
 };
@@ -289,7 +293,7 @@ struct ScalarFitArithmetic {
 template <class Arithmetic = ScalarFitArithmetic, class Residuals>
 inline FitSums accumulate_fit(const Observations& observations, const std::vector<float>& weights,
                               Residuals&& residuals, bool zoom, bool rotation,
-                              const ArithmeticContext* context = nullptr) {
+                              const ArithmeticContext* context = nullptr, const FitGeometry* geometry = nullptr) {
   const auto sum = [context](float a, float b) {
     return context ? context->add(a, b) : add(a, b);
   };
@@ -304,22 +308,32 @@ inline FitSums accumulate_fit(const Observations& observations, const std::vecto
     const auto errors = residuals(i);
     const float ex = errors[0], ey = errors[1];
     n = sum(n, weight);
-    x2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight, x2);
-    y2 = Arithmetic::multiply_add(analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight, y2);
+    x2 = Arithmetic::multiply_add(
+        geometry ? geometry[i].x2 : analysis_detail::square32(static_cast<std::uint64_t>(value.x)), weight, x2);
+    y2 = Arithmetic::multiply_add(
+        geometry ? geometry[i].y2 : analysis_detail::square32(static_cast<std::uint64_t>(value.y)), weight, y2);
     residual = Arithmetic::multiply_add(sum(product(ex, ex), product(ey, ey)), weight, residual);
     gx = Arithmetic::multiply_add(product(2.0f, ex), weight, gx);
     gy = Arithmetic::multiply_add(product(2.0f, ey), weight, gy);
     if (zoom) {
-      gxx = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ex),
-                                     weight, gxx);
-      gyy = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ey),
-                                     weight, gyy);
+      gxx = Arithmetic::multiply_add(
+          product(geometry ? geometry[i].twice_x : analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)),
+                  ex),
+          weight, gxx);
+      gyy = Arithmetic::multiply_add(
+          product(geometry ? geometry[i].twice_y : analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)),
+                  ey),
+          weight, gyy);
     }
     if (rotation) {
-      gxy = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)), ex),
-                                     weight, gxy);
-      gyx = Arithmetic::multiply_add(product(analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)), ey),
-                                     weight, gyx);
+      gxy = Arithmetic::multiply_add(
+          product(geometry ? geometry[i].twice_y : analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.y)),
+                  ex),
+          weight, gxy);
+      gyx = Arithmetic::multiply_add(
+          product(geometry ? geometry[i].twice_x : analysis_detail::integer32(2 * static_cast<std::uint64_t>(value.x)),
+                  ey),
+          weight, gyx);
     }
   }
   return sums;
@@ -343,9 +357,20 @@ struct ScalarResiduals {
     return accumulate_fit(observations, weights, prepare(observations, map), zoom, rotation);
   }
 };
+// A workspace belongs to one fit with immutable observations. Backend
+// specializations may prepare invariant data and reuse iteration scratch.
+template <class Residuals>
+struct FitWorkspace {
+  const Observations& observations;
+  explicit FitWorkspace(const Observations& o) : observations(o) {}
+  FitSums accumulate(const std::vector<float>& weights, Transform map, bool zoom, bool rotation) {
+    return Residuals::accumulate(observations, weights, map, zoom, rotation);
+  }
+};
 template <class Residuals = ScalarResiduals, bool Validated = false>
 inline FitUpdate fit_update(const Observations& observations, const std::vector<float>& weights, const Transform& map,
-                            float aspect, float step, bool zoom, bool rotation) {
+                            float aspect, float step, bool zoom, bool rotation,
+                            FitWorkspace<Residuals>* workspace = nullptr) {
   if constexpr (!Validated)
     analysis_detail::validate(observations);
   if (weights.size() != observations.values.size() || !std::isfinite(aspect) || aspect <= 0)
@@ -355,7 +380,8 @@ inline FitUpdate fit_update(const Observations& observations, const std::vector<
     throw std::invalid_argument("zero Depan squared aspect");
   f32(step);
   auto [n, x2, y2, residual, gx, gy, gxx, gyy, gxy, gyx] =
-      Residuals::accumulate(observations, weights, map, zoom, rotation);
+      workspace ? workspace->accumulate(weights, map, zoom, rotation)
+                : Residuals::accumulate(observations, weights, map, zoom, rotation);
   gx = div(gx, mul(n, 2.0f));
   gy = div(gy, mul(n, 2.0f));
   gxx = div(gxx, mul(mul(x2, 2.0f), 1.5f));
@@ -389,16 +415,19 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
   FitResult result{Transform{}, mul(2.0f, p.error), 0, false};
   if (observations.eligible) {
     analysis_detail::validate(observations);
+    FitWorkspace<Residuals> workspace(observations);
     std::vector<float> weights;
     std::vector<std::int8_t> eligibility(observations.values.size(), -1);
     weights.reserve(observations.values.size());
     for (const auto& value : observations.values)
       weights.push_back(value.base);
     for (int k = 0; k < 5; ++k) {
-      const auto next = fit_update<Residuals, true>(observations, weights, result.map, p.aspect, 0.3f, false, false);
+      const auto next =
+          fit_update<Residuals, true>(observations, weights, result.map, p.aspect, 0.3f, false, false, &workspace);
       result.map = next.map;
       result.error = next.error;
-      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f, &eligibility);
+      weights =
+          select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f, &eligibility, std::move(weights));
     }
     result.iteration = 100;
     for (int k = 5; k < 100; ++k) {
@@ -407,14 +436,15 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
                                                     k < 8    ? 0.3f
                                                     : k < 10 ? 0.6f
                                                              : 1.0f,
-                                                    p.zoom, p.rotation);
+                                                    p.zoom, p.rotation, &workspace);
       result.map = next.map;
       result.error = next.error;
       if ((sub(old_error, result.error) < mul(0.01f, 0.5f) && k > 9) || result.error < 0.01f) {
         result.iteration = k;
         break;
       }
-      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f), &eligibility);
+      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f), &eligibility,
+                                     std::move(weights));
     }
   }
   result.good = result.error < p.error;

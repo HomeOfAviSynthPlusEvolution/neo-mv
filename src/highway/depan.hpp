@@ -40,6 +40,32 @@ struct HighwayResiduals {
     return simd::depan_rows::accumulate(observations, weights, rows.ex.data(), rows.ey.data(), zoom, rotation);
   }
 };
+template <>
+struct FitWorkspace<HighwayResiduals> {
+  const Observations& observations;
+  std::array<std::vector<float>, 6> rows;
+  std::vector<FitGeometry> geometry;
+  explicit FitWorkspace(const Observations& o) : observations(o), geometry(o.values.size()) {
+    for (auto& row : rows)
+      row.resize(o.values.size());
+    for (std::size_t i = 0; i < o.values.size(); ++i) {
+      const auto& v = o.values[i];
+      const auto x = static_cast<std::uint64_t>(v.x), y = static_cast<std::uint64_t>(v.y);
+      rows[0][i] = analysis_detail::integer32(x);
+      rows[1][i] = analysis_detail::integer32(y);
+      rows[2][i] = v.dx;
+      rows[3][i] = v.dy;
+      geometry[i] = {analysis_detail::square32(x), analysis_detail::square32(y), analysis_detail::integer32(2 * x),
+                     analysis_detail::integer32(2 * y)};
+    }
+  }
+  FitSums accumulate(const std::vector<float>& weights, Transform map, bool zoom, bool rotation) {
+    simd::depan_rows::residuals(rows[0].data(), rows[1].data(), rows[2].data(), rows[3].data(),
+                                observations.values.size(), map, rows[4].data(), rows[5].data());
+    return simd::depan_rows::accumulate(observations, weights, rows[4].data(), rows[5].data(), zoom, rotation,
+                                        geometry.data());
+  }
+};
 class HighwaySamplingPlan : public SamplingPlan {
 public:
   using SamplingPlan::SamplingPlan;
