@@ -576,6 +576,22 @@ bool MetricBatch420Bounded(const MetricRequest<T> *requests, std::int64_t limit,
     const auto &r = requests[k];
 #if HWY_TARGET != HWY_SCALAR
     if constexpr (std::is_same_v<T, std::uint8_t>) {
+      if (k == 0) {
+        std::int64_t sum = 0;
+        for (int row = 0; row < LumaWidth; row += 4) {
+          sum += FixedByteSad<LumaWidth, 4>(r.source + row * r.source_stride, r.source_stride,
+                                           r.reference + row * r.reference_stride, r.reference_stride);
+          if (sum >= limit)
+            return false;
+        }
+        errors[0] = sum;
+        limit -= sum;
+        continue;
+      }
+    }
+#endif
+#if HWY_TARGET != HWY_SCALAR
+    if constexpr (std::is_same_v<T, std::uint8_t>) {
       if constexpr (LumaWidth == 16)
         errors[k] = k == 0 ? FixedByteSad<16, 16>(r.source, r.source_stride, r.reference, r.reference_stride)
                            : FixedByteSad<8, 8>(r.source, r.source_stride, r.reference, r.reference_stride);

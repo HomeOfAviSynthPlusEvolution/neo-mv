@@ -421,6 +421,8 @@ public:
     if (!bounded_metric_batch_ || lambda < 0 || lambda > INT32_MAX || penalty < 0 || penalty > 256 ||
         dx < -32767 || dx > 32767 || dy < -32767 || dy > 32767)
       return operator()(vector);
+    if (limit <= 0)
+      return std::nullopt;
     prepare_references(vector);
     std::array<std::int64_t, 3> errors{};
     if (!bounded_metric_batch_(requests_.data(), limit, errors.data()))

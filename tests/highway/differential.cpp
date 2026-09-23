@@ -249,6 +249,37 @@ template <class T> void integer_metric_extremes() {
     }
 }
 
+void bounded_sad_thresholds() {
+  using namespace neo_mv::simd::detail;
+  for (int width : {8, 16}) {
+    std::array<std::vector<std::uint8_t>, 3> source, reference;
+    std::array<MetricRequest<std::uint8_t>, 3> requests{};
+    for (int k = 0; k < 3; ++k) {
+      const int w = k == 0 ? width : width / 2;
+      source[k].resize(w * w);
+      reference[k].resize(w * w);
+      requests[k] = {source[k].data(), w, reference[k].data(), w, w, w, false};
+    }
+    const auto bounded = width == 16 ? metric_batch_420_bounded_function(static_cast<std::uint8_t*>(nullptr))
+                                     : metric_batch_420_small_bounded_function(static_cast<std::uint8_t*>(nullptr));
+    for (int plane = 0; plane < 3; ++plane)
+      for (int row = 0; row < requests[plane].height; ++row) {
+        for (auto& r : reference)
+          std::fill(r.begin(), r.end(), 0);
+        std::fill_n(reference[plane].data() + row * requests[plane].width, requests[plane].width, 255);
+        const std::int64_t total = requests[plane].width * 255;
+        for (auto limit : {std::int64_t{-1}, std::int64_t{0}, total / 2, total, total + 1, INT64_MAX}) {
+          std::array<std::int64_t, 3> errors{};
+          const bool accepted = bounded(requests.data(), limit, errors.data());
+          check(accepted == (total < limit), "bounded SAD threshold mismatch");
+          if (accepted)
+            for (int k = 0; k < 3; ++k)
+              check(errors[k] == (k == plane ? total : 0), "bounded SAD complete error mismatch");
+        }
+      }
+  }
+}
+
 int main() {
   try {
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
@@ -258,6 +289,7 @@ int main() {
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();
+      bounded_sad_thresholds();
       integer_metric_extremes<std::uint8_t>();
       integer_metric_extremes<std::uint16_t>();
       boundaries<std::uint8_t>();
