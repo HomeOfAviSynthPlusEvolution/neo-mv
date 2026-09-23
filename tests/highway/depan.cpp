@@ -281,6 +281,44 @@ void fit_pair(const Observations& o, FitParameters p = {}, bool bounded = false)
     }
   }
 }
+void strict_weight_admission() {
+  auto o = observations(17, 9);
+  o.masked = true;
+  for (std::size_t i = 0; i < o.values.size(); ++i) {
+    o.values[i].dx = float(int(i % 7) - 3) * 0.125f;
+    o.values[i].dy = float(int(i % 5) - 2) * 0.0625f;
+  }
+  const auto compare = [&](const Observations& input, Transform map, float global) {
+    FitWorkspace<HighwayResiduals> workspace(input);
+    std::vector<std::int8_t> eligibility(input.values.size(), -1);
+    std::vector<float> expected, actual;
+    CHECK(rejected([&] { expected = select_weights(input, map, 5, 0.5f, global); }) ==
+          rejected([&] { actual = workspace.select(map, 5, 0.5f, global, eligibility, {}); }));
+    CHECK(expected == actual);
+  };
+  for (auto map : {Transform{}, Transform{0.137f, -1.3f, 1.001f, 0.15f, -0.17f, 0.98f},
+                   Transform{0, 0, std::numeric_limits<float>::max(), 0, 0, 1}})
+    for (float global : {0.0f, 0.125f, std::nextafter(0.125f, 0.0f), 1.0f, 1000.0f})
+      compare(o, map, global);
+  // Speculative overflow must not reject observations skipped by admission.
+  // X fails the threshold, so an overflowing Y must remain unevaluated.
+  compare(o, Transform{100, 0, 1, 0, 0, std::numeric_limits<float>::max()}, 1);
+  for (auto& v : o.values)
+    v.sad = o.sad_threshold + 1;
+  compare(o, Transform{0, 0, std::numeric_limits<float>::max(), 0, 0, 1}, 1);
+#if defined(__SSE2__) || defined(_M_X64)
+  for (auto& v : o.values)
+    v.sad = 0;
+  const auto saved = _mm_getcsr();
+  for (unsigned mode : {0x2000u, 0x4000u, 0x6000u, 0x8040u}) {
+    _mm_setcsr(saved | mode);
+    float v = 1, ex = 0, ey = 0;
+    CHECK(!simd::depan_rows::strict_residuals(&v, &v, &v, &v, 1, {}, &ex, &ey));
+    compare(o, {}, 1);
+  }
+  _mm_setcsr(saved);
+#endif
+}
 void fitting() {
   std::mt19937 random(9217);
   for (const int nx : {1, 3, 8, 9, 17, 33}) {
@@ -536,6 +574,12 @@ void guarded_residuals() {
         same_float(ex.data[i], expected[0]);
         same_float(ey.data[i], expected[1]);
       }
+      if (simd::depan_rows::strict_residuals(x.data, y.data, dx.data, dy.data, width, map, ex.data, ey.data))
+        for (int i = 0; i < width; ++i) {
+          const Observation value{std::int64_t(x.data[i]), std::int64_t(y.data[i]), dx.data[i], dy.data[i], 0, 1};
+          same_float(ex.data[i], analysis_detail::residual_x(value, map));
+          same_float(ey.data[i], analysis_detail::residual_y(value, map));
+        }
     }
     for (const float invalid : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
       dx.data[width - 1] = invalid;
@@ -627,6 +671,7 @@ int main() {
       guarded_weighted();
       guarded_linear<std::uint8_t>();
       guarded_linear<std::uint16_t>();
+      strict_weight_admission();
       guarded_residuals();
       guarded_adjustments();
       guarded_accumulation();

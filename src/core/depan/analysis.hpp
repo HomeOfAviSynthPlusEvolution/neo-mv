@@ -232,7 +232,8 @@ struct FitUpdate {
 template <bool Validated = false>
 inline std::vector<float> select_weights(const Observations& observations, const Transform& map, float wrong,
                                          float zerow, float global, std::vector<std::int8_t>* eligibility = nullptr,
-                                         std::vector<float> weights = {}) {
+                                         std::vector<float> weights = {}, const float* residual_x = nullptr,
+                                         const float* residual_y = nullptr) {
   if constexpr (!Validated)
     analysis_detail::validate(observations);
   f32(wrong);
@@ -269,9 +270,9 @@ inline std::vector<float> select_weights(const Observations& observations, const
       }
       if (!admitted)
         continue;
-      if (std::abs(analysis_detail::residual_x(value, map)) > global)
+      if (std::abs(residual_x ? residual_x[index] : analysis_detail::residual_x(value, map)) > global)
         continue;
-      if (std::abs(analysis_detail::residual_y(value, map)) > global)
+      if (std::abs(residual_y ? residual_y[index] : analysis_detail::residual_y(value, map)) > global)
         continue;
       weights[index] = value.dx == 0 && value.dy == 0 ? mul(zerow, value.base) : value.base;
     }
@@ -366,6 +367,10 @@ struct FitWorkspace {
   FitSums accumulate(const std::vector<float>& weights, Transform map, bool zoom, bool rotation) {
     return Residuals::accumulate(observations, weights, map, zoom, rotation);
   }
+  std::vector<float> select(Transform map, float wrong, float zerow, float global,
+                            std::vector<std::int8_t>& eligibility, std::vector<float> weights) {
+    return select_weights<true>(observations, map, wrong, zerow, global, &eligibility, std::move(weights));
+  }
 };
 template <class Residuals = ScalarResiduals, bool Validated = false>
 inline FitUpdate fit_update(const Observations& observations, const std::vector<float>& weights, const Transform& map,
@@ -426,8 +431,7 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
           fit_update<Residuals, true>(observations, weights, result.map, p.aspect, 0.3f, false, false, &workspace);
       result.map = next.map;
       result.error = next.error;
-      weights =
-          select_weights<true>(observations, result.map, p.wrong, p.zerow, 1000.0f, &eligibility, std::move(weights));
+      weights = workspace.select(result.map, p.wrong, p.zerow, 1000.0f, eligibility, std::move(weights));
     }
     result.iteration = 100;
     for (int k = 5; k < 100; ++k) {
@@ -443,8 +447,8 @@ inline FitResult fit(const Observations& observations, FitParameters parameters 
         result.iteration = k;
         break;
       }
-      weights = select_weights<true>(observations, result.map, p.wrong, p.zerow, mul(result.error, 2.0f), &eligibility,
-                                     std::move(weights));
+      weights =
+          workspace.select(result.map, p.wrong, p.zerow, mul(result.error, 2.0f), eligibility, std::move(weights));
     }
   }
   result.good = result.error < p.error;

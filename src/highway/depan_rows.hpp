@@ -7,6 +7,11 @@ namespace neo_mv::simd::depan_rows {
 // Only native-FMA targets fuse floating residual, accumulation and fit-update operations.
 // Other targets retain separate rounding. Inputs and products remain finite.
 bool native_fma();
+// Separate binary32 operations for weight admission, never FMA. Returns false
+// if the environment or any result requires the lazy scalar fallback; output
+// must then be ignored. Speculative work never throws for rejected blocks.
+bool strict_residuals(const float* x, const float* y, const float* dx, const float* dy, std::size_t count,
+                      depan::Transform map, float* ex, float* ey);
 // Accumulate in observation order; arrays contain one residual per observation.
 // Inputs have been validated by fit_update before dispatch.
 depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,

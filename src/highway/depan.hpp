@@ -65,6 +65,14 @@ struct FitWorkspace<HighwayResiduals> {
     return simd::depan_rows::accumulate(observations, weights, rows[4].data(), rows[5].data(), zoom, rotation,
                                         geometry.data());
   }
+  std::vector<float> select(Transform map, float wrong, float zerow, float global,
+                            std::vector<std::int8_t>& eligibility, std::vector<float> weights) {
+    const bool prepared =
+        simd::depan_rows::strict_residuals(rows[0].data(), rows[1].data(), rows[2].data(), rows[3].data(),
+                                           observations.values.size(), map, rows[4].data(), rows[5].data());
+    return select_weights<true>(observations, map, wrong, zerow, global, &eligibility, std::move(weights),
+                                prepared ? rows[4].data() : nullptr, prepared ? rows[5].data() : nullptr);
+  }
 };
 class HighwaySamplingPlan : public SamplingPlan {
 public:

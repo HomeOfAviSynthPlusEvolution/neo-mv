@@ -99,6 +99,50 @@ void Residuals(const float* x, const float* y, const float* dx, const float* dy,
     ResidualChunk(one, x + i, y + i, dx + i, dy + i, t, ex + i, ey + i);
 }
 template <class D>
+bool StrictResidualChunk(D d, const float* x, const float* y, const float* dx, const float* dy, depan::Transform t,
+                         float* ex, float* ey) {
+  const auto X = hn::LoadU(d, x), Y = hn::LoadU(d, y);
+  // These operations must not contract: weight admission uses separate
+  // rounding even on native-FMA targets (-ffp-contract=off / fp:strict).
+  const auto a =
+      hn::Sub(hn::Sub(hn::Add(hn::Add(hn::Set(d, t.tx), hn::Mul(hn::Set(d, t.u), X)), hn::Mul(hn::Set(d, t.v), Y)), X),
+              hn::LoadU(d, dx));
+  const auto b =
+      hn::Sub(hn::Sub(hn::Add(hn::Add(hn::Set(d, t.ty), hn::Mul(hn::Set(d, t.w), X)), hn::Mul(hn::Set(d, t.h), Y)), Y),
+              hn::LoadU(d, dy));
+  // With only additions/subtractions after each product, a nonfinite
+  // intermediate cannot become finite again. Check the batch once at the end.
+  if (!hn::AllTrue(d, hn::And(hn::IsFinite(a), hn::IsFinite(b))))
+    return false;
+  hn::StoreU(a, d, ex);
+  hn::StoreU(b, d, ey);
+  return true;
+}
+bool StrictResiduals(const float* x, const float* y, const float* dx, const float* dy, std::size_t count,
+                     depan::Transform t, float* ex, float* ey) {
+#if HWY_ARCH_X86 && HWY_TARGET != HWY_SCALAR && HWY_TARGET != HWY_EMU128
+  // Nearest rounding, gradual underflow, and masked FP exceptions are needed
+  // for speculative evaluation of blocks that scalar admission may skip.
+  if ((_mm_getcsr() & 0xffc0u) != 0x1f80u)
+    return false;
+#else
+  // Until a target-specific environment check is available, preserve the
+  // scalar semantics rather than assume the host's underflow mode.
+  return false;
+#endif
+  const hn::ScalableTag<float> d;
+  const auto lanes = hn::Lanes(d);
+  std::size_t i = 0;
+  for (; i + lanes <= count; i += lanes)
+    if (!StrictResidualChunk(d, x + i, y + i, dx + i, dy + i, t, ex + i, ey + i))
+      return false;
+  const hn::CappedTag<float, 1> one;
+  for (; i < count; ++i)
+    if (!StrictResidualChunk(one, x + i, y + i, dx + i, dy + i, t, ex + i, ey + i))
+      return false;
+  return true;
+}
+template <class D>
 void WeightedChunk(D d, const std::int64_t* samples, const std::int64_t* weights, std::size_t count, int taps,
                    int shift, bool round, std::int64_t maximum, std::int64_t* out) {
   auto total = hn::Zero(d);
@@ -148,6 +192,11 @@ HWY_EXPORT(Weighted);
 HWY_EXPORT(NativeFma);
 HWY_EXPORT(Adjust);
 HWY_EXPORT(Accumulate);
+HWY_EXPORT(StrictResiduals);
+bool strict_residuals(const float* x, const float* y, const float* dx, const float* dy, std::size_t count,
+                      depan::Transform map, float* ex, float* ey) {
+  return HWY_DYNAMIC_DISPATCH(StrictResiduals)(x, y, dx, dy, count, map, ex, ey);
+}
 depan::FitSums accumulate(const depan::Observations& observations, const std::vector<float>& weights, const float* ex,
                           const float* ey, bool zoom, bool rotation, const depan::FitGeometry* geometry) {
   return HWY_DYNAMIC_DISPATCH(Accumulate)(observations, weights, ex, ey, zoom, rotation, geometry);
