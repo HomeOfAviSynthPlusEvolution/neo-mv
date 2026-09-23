@@ -182,6 +182,23 @@ void ResizePassChunk(D d, const std::int32_t* top, const std::int32_t* bottom, c
     hn::StoreU(hn::DemoteTo(narrow, value), narrow, output + x);
   }
 }
+
+void ResizeIntervals(const std::int32_t* input, const HorizontalInterval* intervals, std::size_t count,
+                     const std::int32_t* weights, std::uint16_t* output) {
+  const hn::CappedTag<std::int32_t, 8> d;
+  const hn::Rebind<std::uint16_t, decltype(d)> narrow;
+  const int lanes = int(hn::Lanes(d));
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto& interval = intervals[i];
+    const auto left = input[interval.left], right = input[interval.right];
+    const auto a = hn::Set(d, left), b = hn::Set(d, right);
+    int x = interval.begin;
+    for (; x <= interval.end - lanes; x += lanes)
+      hn::StoreU(hn::DemoteTo(narrow, Interpolate(d, a, b, hn::LoadU(d, weights + x))), narrow, output + x);
+    for (; x < interval.end; ++x)
+      output[x] = std::uint16_t(((16384 - weights[x]) * left + weights[x] * right + 8192) >> 14);
+  }
+}
 template <bool Horizontal, class T>
 void ResizePass(const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,
                 const std::int32_t* right, const std::int32_t* weights, int width, std::int32_t vertical, T* output) {
@@ -311,12 +328,17 @@ NEO_VERTICAL_EXPORT(std::uint16_t, U16)
 NEO_VERTICAL_EXPORT(std::uint8_t, U8)
 #undef NEO_VERTICAL_EXPORT
 HWY_EXPORT(Magnitude);
+HWY_EXPORT(ResizeIntervals);
 HWY_EXPORT(Sad);
 HWY_EXPORT(MaxU8);
 HWY_EXPORT(MaxU16);
 HWY_EXPORT(MaxF32);
 void magnitude(const double* x, const double* y, std::size_t n, int p, float f, float e, float m, double* o) {
   HWY_DYNAMIC_DISPATCH(Magnitude)(x, y, n, p, f, e, m, o);
+}
+void resize_intervals(const std::int32_t* input, const HorizontalInterval* intervals, std::size_t count,
+                      const std::int32_t* weights, std::uint16_t* output) {
+  HWY_DYNAMIC_DISPATCH(ResizeIntervals)(input, intervals, count, weights, output);
 }
 void sad(const float* p, std::size_t n, float s, float e, float m, float* o) {
   HWY_DYNAMIC_DISPATCH(Sad)(p, n, s, e, m, o);

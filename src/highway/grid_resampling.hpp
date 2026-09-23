@@ -11,6 +11,7 @@ class GridResamplingPlan {
   std::vector<std::int32_t> left_, right_, weights_, vertical_weights_;
   std::vector<double> fractions_;
   std::vector<grid_detail::Axis> vertical_;
+  std::vector<mask_rows::HorizontalInterval> intervals_;
 
 public:
   explicit GridResamplingPlan(GridResamplingGeometry g) : geometry_(g) {
@@ -35,6 +36,10 @@ public:
       right_.push_back(a.second);
       weights_.push_back(static_cast<std::int32_t>(grid_detail::coefficient(a.remainder, a.denominator)));
       fractions_.push_back(double(a.remainder) / double(a.denominator));
+      if (intervals_.empty() || intervals_.back().left != a.first || intervals_.back().right != a.second)
+        intervals_.push_back({x, x + 1, a.first, a.second});
+      else
+        intervals_.back().end = x + 1;
     }
     for (int y = 0; y < g.height; ++y) {
       const auto a = grid_detail::axis(y, g.blocks_y, covered_height_);
@@ -87,8 +92,11 @@ public:
         };
         const auto expand = [&](int y, auto& row) {
           load(y, small);
-          mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
-                                 row.data());
+          if (intervals_.size() <= std::size_t(g.width) / 4)
+            mask_rows::resize_intervals(small.data(), intervals_.data(), intervals_.size(), weights_.data(), row.data());
+          else
+            mask_rows::resize_pass(small.data(), nullptr, left_.data(), right_.data(), weights_.data(), g.width, 0,
+                                   row.data());
         };
         int first = -1, second = -1;
         for (int y = 0; y < g.height; ++y) {

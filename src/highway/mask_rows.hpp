@@ -2,6 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 namespace neo_mv::simd::mask_rows {
+struct HorizontalInterval { int begin, end, left, right; };
+void resize_intervals(const std::int32_t* input, const HorizontalInterval* intervals, std::size_t count,
+                      const std::int32_t* weights, std::uint16_t* output);
 // One Q14 pass; null indices select contiguous vertical interpolation.
 #define NEO_MASK_PASS(T)                                                                                               \
   void resize_pass(const std::int32_t* top, const std::int32_t* bottom, const std::int32_t* left,                      \
