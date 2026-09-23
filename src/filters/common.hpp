@@ -72,10 +72,10 @@ std::vector<T> property_array(const ds::FrameProperties& props, const std::strin
   auto value = props.find(key);
   if (!value)
     throw std::invalid_argument("missing required property: " + key);
-  const auto* array = std::get_if<std::vector<T>>(&*value);
+  auto* array = std::get_if<std::vector<T>>(&*value);
   if (!array)
     throw std::invalid_argument("incorrect property type: " + key);
-  return *array;
+  return std::move(*array);
 }
 inline std::int64_t scalar(const ds::FrameProperties& props, const std::string& key) {
   const auto a = property_array<std::int64_t>(props, key);
