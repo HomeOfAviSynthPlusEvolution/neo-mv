@@ -107,48 +107,47 @@ public:
       }
       return;
     }
-    const auto count = static_cast<std::size_t>(width());
-    constexpr int taps = 16;
+    // Coefficients depend only on a quantized fraction, not on the frame.
+    static const auto table = [] {
+      std::array<std::array<std::int64_t, 4>, 257> result{};
+      for (int a = 0; a <= 256; ++a)
+        result[a] = cubic_coefficients(a);
+      return result;
+    }();
     const bool translation = sampling_class() == SamplingClass::translation;
-    std::vector<std::int64_t> samples, weights, results;
-    if (count > samples.max_size() / static_cast<std::size_t>(taps))
-      throw std::length_error("Depan SIMD tap storage is unrepresentable");
-    samples.resize(count * taps);
-    weights.resize(count * taps);
-    results.resize(count);
-    std::vector<int> columns;
+    const auto maximum = std::int64_t((1u << bits()) - 1);
     for (int y = 0; y < height(); ++y) {
-      columns.clear();
-      auto visit = [&](int x, SamplingCoordinates q) {
-        const bool complete = q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2;
-        if (!complete) {
-          write_sample(source, output.row(y)[x], q, preserve);
-          return;
-        }
-        const auto index = columns.size();
-        columns.push_back(x);
-        const int ix = static_cast<int>(q.i), iy = static_cast<int>(q.j);
-        const auto cx = cubic_coefficients(static_cast<int>(mul(256, q.fx))),
-                   cy = cubic_coefficients(static_cast<int>(mul(256, q.fy)));
-        for (int f = 0; f < 4; ++f)
-          for (int e = 0; e < 4; ++e) {
-            const auto pos = std::size_t(f * 4 + e) * count + index;
-            samples[pos] = source.row(iy + f - 1)[ix + e - 1];
-            weights[pos] = translation ? cx[e] * cy[f] / 2048 : cx[e] * cy[f];
-          }
-      };
       simd::depan_rows::coordinates(*this, y, coordinates.data());
-      for (int x = 0; x < width(); ++x)
-        visit(x, coordinates[x]);
-      const auto used = columns.size();
-      if (!used)
-        continue;
-      // The admitted footprints already occupy the start of each tap row.
-      // Read with the original row spacing instead of compacting every row.
-      simd::depan_rows::weighted(samples.data(), weights.data(), used, taps, translation ? 11 : 22, translation,
-                                 (1 << bits()) - 1, results.data(), count);
-      for (std::size_t i = 0; i < used; ++i)
-        output.row(y)[columns[i]] = static_cast<T>(results[i]);
+      auto* out = output.row(y).data();
+      for (int x = 0; x < width(); ++x) {
+        const auto q = coordinates[x];
+        if (!(q.i >= 1 && q.i < width() - 2 && q.j >= 1 && q.j < height() - 2)) {
+          write_sample(source, out[x], q, preserve);
+          continue;
+        }
+        // Fractions are in [0,1]; scaling by 256 is exact. A subnormal
+        // fraction truncates to zero even when the host enables DAZ.
+        const auto& cx = table[static_cast<int>(double(q.fx) * 256)];
+        const auto& cy = table[static_cast<int>(double(q.fy) * 256)];
+        const int ix = static_cast<int>(q.i), iy = static_cast<int>(q.j);
+        std::int64_t sum = 0;
+        for (int f = 0; f < 4; ++f) {
+          const auto* row = source.row(iy + f - 1).data() + ix - 1;
+          if (translation) {
+            // Per-tap truncation makes the translation rule nonseparable.
+            for (int e = 0; e < 4; ++e)
+              sum += (cx[e] * cy[f] / 2048) * row[e];
+          } else {
+            const auto horizontal = cx[0] * row[0] + cx[1] * row[1] + cx[2] * row[2] + cx[3] * row[3];
+            sum += horizontal * cy[f];
+          }
+        }
+        if (translation)
+          sum += 1024;
+        const auto divisor = translation ? 2048 : 4194304;
+        const auto value = sum >= 0 ? sum / divisor : -1 - ((-1 - sum) / divisor);
+        out[x] = static_cast<T>(std::clamp(value, std::int64_t{0}, maximum));
+      }
     }
   }
 };

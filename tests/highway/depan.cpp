@@ -624,6 +624,34 @@ void guarded_linear() {
     }
   }
 }
+template <class T>
+void guarded_cubic() {
+  for (const int width : widths) {
+    constexpr int height = 5;
+    EndRow<T> input(width * height), output(width * height);
+    for (int i = 0; i < width * height; ++i)
+      input.data[i] = i % 3 ? std::numeric_limits<T>::max() : T(0);
+    const auto source = checked_plane(static_cast<const T*>(input.data), width, height,
+                                       std::ptrdiff_t(width) * sizeof(T), width * height * sizeof(T));
+    const auto dest = checked_plane(output.data, width, height, std::ptrdiff_t(width) * sizeof(T),
+                                     width * height * sizeof(T));
+    for (int a = 0; a <= 256; ++a)
+      for (bool translation : {false, true}) {
+        const Transform map{a / 256.0f, ((a * 73) % 257) / 256.0f, 1, translation ? 0.0f : 0.03125f, 0, 1};
+        const SamplingPlan reference(width, height, sizeof(T) * 8, 2, 15, 3, 7, map);
+        const HighwaySamplingPlan optimized(width, height, sizeof(T) * 8, 2, 15, 3, 7, map);
+        std::vector<T> expected(width * height, T(173));
+        const bool preserve = a % 2;
+        std::fill_n(output.data, width * height, T(173));
+        for (int y = 0; y < height; ++y)
+          reference.row_coordinates(y, [&](int x, SamplingCoordinates q) {
+            reference.write_sample(source, expected[y * width + x], q, preserve);
+          });
+        optimized.render(source, dest, preserve);
+        CHECK(std::equal(expected.begin(), expected.end(), output.data));
+      }
+  }
+}
 void guarded_residuals() {
   const float tiny = std::numeric_limits<float>::denorm_min();
   const std::array<float, 8> values{0.0f, -0.0f, tiny, -tiny, 0.125f, -3.375f, 0x1p24f, -0x1p24f};
@@ -742,6 +770,8 @@ int main() {
       guarded_weighted();
       guarded_linear<std::uint8_t>();
       guarded_linear<std::uint16_t>();
+      guarded_cubic<std::uint8_t>();
+      guarded_cubic<std::uint16_t>();
       strict_weight_admission();
       component_accumulation();
       guarded_admission();
