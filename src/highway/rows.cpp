@@ -401,6 +401,22 @@ std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const s
 }
 #endif
 
+template <class D, class V> HWY_INLINE V SatdAbs(D d, V value) {
+  auto magnitude = hn::Abs(value);
+#if defined(__clang__) && __clang_major__ == 22 && HWY_ARCH_ARM_A64 && \
+    (HWY_TARGET == HWY_NEON || HWY_TARGET == HWY_NEON_WITHOUT_AES || HWY_TARGET == HWY_NEON_BF16)
+  if constexpr (std::is_same_v<hn::TFromD<D>, std::int32_t> && hn::MaxLanes(d) <= 2) {
+    // LLVM 22's AArch64 MachineCombiner maps SABAv2i32 to itself instead of
+    // SABDv2i32 in getAccumulationStartOpcode, emitting a missing operand.
+    // Keep ABS separate from ADD for 64-bit NEON SATD vectors (also used by
+    // one-lane capped tags); wider vectors and other targets are unaffected.
+    // This register barrier emits no instruction and does not clobber memory.
+    asm("" : "+w"(magnitude.raw));
+  }
+#endif
+  return magnitude;
+}
+
 template <class T, class D>
 std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
   const hn::Rebind<T, D> narrow;
@@ -482,7 +498,7 @@ std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::
 #define NEO_COL(I, A0, A1, A2, A3)                                                                                     \
   Hadamard(A0, A1, A2, A3);                                                                                            \
   {                                                                                                                    \
-    auto s = hn::Add(hn::Add(hn::Add(hn::Abs(A0), hn::Abs(A1)), hn::Abs(A2)), hn::Abs(A3));                            \
+    auto s = hn::Add(hn::Add(hn::Add(SatdAbs(d, A0), SatdAbs(d, A1)), SatdAbs(d, A2)), SatdAbs(d, A3));                \
     finite(d, s);                                                                                                      \
     if constexpr (std::is_same_v<T, float> || hn::MaxLanes(d) > 128)                                                   \
       hn::StoreU(s, d, sums[I]);                                                                                       \

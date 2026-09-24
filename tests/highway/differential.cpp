@@ -480,12 +480,32 @@ template <class T> void bounded_sad_thresholds() {
   }
 }
 
+void two_cell_satd_regression() {
+  // Two parallel 4x4 cells exposed LLVM 22's malformed SABAv2i32 combine.
+  const std::uint16_t source[4][8] = {
+      {28485, 20687, 16622, 46544, 29867, 60073, 14842, 30593},
+      {48506, 750, 14615, 61340, 10989, 8379, 46092, 20164},
+      {9567, 42302, 26237, 15047, 25526, 54647, 63266, 13928},
+      {18429, 45048, 27830, 23276, 7561, 8779, 44225, 52162}};
+  const std::uint16_t reference[4][8] = {
+      {42186, 17863, 869, 10821, 21498, 28436, 11454, 57579},
+      {56067, 34234, 25305, 35249, 27877, 58980, 37408, 56278},
+      {7178, 7516, 60739, 1429, 28259, 14369, 62507, 33895},
+      {52971, 29431, 10720, 21646, 37809, 823, 65155, 54919}};
+  const auto a = neo_mv::checked_plane(&source[0][0], 8, 4, sizeof(source[0]), sizeof(source));
+  const auto b = neo_mv::checked_plane(&reference[0][0], 8, 4, sizeof(reference[0]), sizeof(reference));
+  constexpr std::int64_t expected = 605417 + 636145;
+  check(neo_mv::block_metric(a, b, neo_mv::BlockMetric::satd) == expected, "two-cell scalar SATD mismatch");
+  check(neo_mv::simd::block_metric(a, b, neo_mv::BlockMetric::satd) == expected, "two-cell SIMD SATD mismatch");
+}
+
 int main() {
   try {
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
       hwy::SetSupportedTargetsForTest(target);
       std::cout << "Testing " << hwy::TargetName(target) << std::endl;
       check(std::strcmp(neo_mv::simd::detail::target_name(), hwy::TargetName(target)) == 0, "dispatch target mismatch");
+      two_cell_satd_regression();
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();
