@@ -63,7 +63,7 @@ template <class T> void run() {
             for (auto* buffer : {&src, &ref}) {
               std::cerr << (buffer == &src ? "source\n" : "reference\n");
               for (int y = 0; y < height; ++y) {
-                const auto* p = buffer->read().row(y);
+                const auto* p = &buffer->read().row(y)[0];
                 for (int x = 0; x < width; ++x) std::cerr << p[x] << ' ';
                 std::cerr << "\nloaded: ";
                 auto a = hn::Zero(narrow), b = a, c = a, e = a;
