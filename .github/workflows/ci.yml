@@ -28,6 +28,7 @@ jobs:
           -DNEO_MV_BUILD_VAPOURSYNTH=OFF -DNEO_MV_BUILD_AVISYNTH=OFF
           -DNEO_MV_TEST_VAPOURSYNTH=OFF -DNEO_MV_TEST_BLACKBOX=OFF
           -DNEO_MV_BUILD_BENCHMARKS=OFF
+          "-DCMAKE_CXX_FLAGS=-mllvm -aarch64-enable-mcr=false"
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DDS_MSVC_RUNTIME_LIBRARY=MultiThreaded
       - name: Build metric test
         run: cmake --build build/ci --config Release --target neo_mv_highway_tests --parallel 4
