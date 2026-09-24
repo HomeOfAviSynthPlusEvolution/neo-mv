@@ -42,7 +42,7 @@ Write Boolean values as `True`/`False` in VapourSynth scripts and `true`/`false`
 
 **An empty array is different from an omitted argument.** You must still supply `blksize` and `overlap`, even though explicit empty arrays have fallback values.
 
-Supported block sizes are `4×4`, `8×4`, `8×8`, `16×2`, `16×8`, `16×16`, `32×16`, `32×32`, `64×32`, `64×64`, `128×64`, and `128×128`. Width and height are not interchangeable.
+Supported block sizes are `4×4`, `8×4`, `8×8`, `12×12`, `16×2`, `16×8`, `16×16`, `24×24`, `32×16`, `32×32`, `48×48`, `64×32`, `64×64`, `128×64`, and `128×128`. Width and height are not interchangeable.
 
 The input width and height must be at least the corresponding block dimensions. YUV image dimensions, block dimensions, and overlaps must be divisible by the chroma subsampling ratio on each axis. For example, YUV420 requires even block dimensions and overlaps on both axes. Image dimensions do not have to be multiples of the block dimensions.
 

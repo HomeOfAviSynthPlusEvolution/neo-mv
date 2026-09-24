@@ -499,6 +499,38 @@ void two_cell_satd_regression() {
   check(neo_mv::simd::block_metric(a, b, neo_mv::BlockMetric::satd) == expected, "two-cell SIMD SATD mismatch");
 }
 
+template <class T> void additional_square_metrics() {
+  std::mt19937 rng(9137);
+  for (int b : {12, 24, 48}) {
+    Buffer<T> source(b, b), reference(b, b);
+    for (int y = 0; y < b; ++y)
+      for (int x = 0; x < b; ++x) {
+        source.view().row(y)[x] = T(1);
+        reference.view().row(y)[x] = T(0);
+      }
+    for (auto metric : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd}) {
+      // Constant residual: only the DC coefficient of each 4x4 cell survives.
+      const std::int64_t expected = (metric == neo_mv::BlockMetric::sad ? b * b : b * b / 2) *
+                                    (std::is_same_v<T, float> ? 65535LL : 1LL);
+      check(neo_mv::block_metric(source.read(), reference.read(), metric) == expected, "square scalar constant");
+      check(neo_mv::simd::block_metric(source.read(), reference.read(), metric) == expected, "square SIMD constant");
+    }
+    for (int y = 0; y < b; ++y)
+      for (int x = 0; x < b; ++x) {
+        if constexpr (std::is_same_v<T, float>) {
+          source.view().row(y)[x] = float(rng() % 65536) / 65535;
+          reference.view().row(y)[x] = float(rng() % 65536) / 65535;
+        } else {
+          source.view().row(y)[x] = T(rng());
+          reference.view().row(y)[x] = T(rng());
+        }
+      }
+    for (auto metric : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd})
+      check(neo_mv::block_metric(source.read(), reference.read(), metric) ==
+                neo_mv::simd::block_metric(source.read(), reference.read(), metric), "square random metric");
+  }
+}
+
 int main() {
   try {
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
@@ -506,6 +538,9 @@ int main() {
       std::cout << "Testing " << hwy::TargetName(target) << std::endl;
       check(std::strcmp(neo_mv::simd::detail::target_name(), hwy::TargetName(target)) == 0, "dispatch target mismatch");
       two_cell_satd_regression();
+      additional_square_metrics<std::uint8_t>();
+      additional_square_metrics<std::uint16_t>();
+      additional_square_metrics<float>();
       run<std::uint8_t>();
       run<std::uint16_t>();
       run<float>();

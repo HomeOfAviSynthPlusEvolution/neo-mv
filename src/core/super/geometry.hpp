@@ -45,8 +45,8 @@ inline std::int32_t dimension(std::int64_t value) {
 }
 
 inline bool block_pair(std::int32_t x, std::int32_t y) {
-  constexpr std::int32_t pairs[][2] = {{4, 4},   {8, 4},   {8, 8},   {16, 2},  {16, 8},   {16, 16},
-                                       {32, 16}, {32, 32}, {64, 32}, {64, 64}, {128, 64}, {128, 128}};
+  constexpr std::int32_t pairs[][2] = {{4, 4},   {8, 4},   {8, 8},   {12, 12}, {16, 2},   {16, 8},  {16, 16}, {24, 24},
+                                      {32, 16}, {32, 32}, {48, 48}, {64, 32}, {64, 64}, {128, 64}, {128, 128}};
   for (const auto& pair : pairs)
     if (pair[0] == x && pair[1] == y)
       return true;

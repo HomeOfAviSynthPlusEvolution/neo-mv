@@ -209,6 +209,41 @@ void analysis_integration() {
       analyse_vectors<std::uint8_t>(super_analysis_metadata(plan, 1), moving_geometry, moving_frames, controls);
   CHECK(motion.values[0].vector.x == 1 && motion.values[0].vector.y == 0 && motion.values[0].error == 0);
 }
+template <class T>
+void additional_squares() {
+  const int bits = std::is_same_v<T, float> ? 32 : int(sizeof(T) * 8);
+  for (int b : {12, 24, 48})
+    for (int overlap : {0, b / 2})
+      for (int pel : {1, 2}) {
+        // Partial edge blocks and multiple pyramid levels, with nonconstant pixels.
+        SuperGeometryParams p{4 * b + 2, 4 * b + 3, b, b, overlap, overlap, 16, 16, 1, 1, pel};
+        Input<T> input(p, T(0));
+        for (int y = 0; y < p.height; ++y)
+          for (int x = 0; x < p.width; ++x)
+            input.data[0][std::size_t(y) * (p.width + 1) + x] = T((x * 17 + y * 29 + x * y) % 251);
+        const SuperPlan<T> plan(p, bits);
+        const SuperPyramid<T> current(plan, input.views), reference(plan, input.views);
+        const auto geometry = super_sampling_geometry(plan);
+        const auto frames = borrow_super_frames(current, reference);
+        const auto metadata = super_analysis_metadata(plan, 1);
+        CHECK(geometry.size() >= 2);
+        CHECK(plan.geometry().blocks_x == (p.width - overlap + b - overlap - 1) / (b - overlap));
+        for (bool satd : {false, true}) {
+          AnalyseControls controls;
+          controls.satd = satd;
+          const auto grid = analyse_vectors<T>(metadata, geometry, frames, controls);
+          CHECK(grid.values.size() == std::size_t(metadata.blocks_x) * metadata.blocks_y);
+          for (const auto& v : grid.values)
+            CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+          RecalculateControls refine;
+          refine.satd = satd;
+          const auto result = recalculate_vectors(AnalysisField{metadata, FieldState::complete, grid},
+                                                  metadata, geometry[0], frames[0], refine);
+          for (const auto& v : result.values)
+            CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+        }
+      }
+}
 } // namespace
 int main() {
   try {
@@ -218,6 +253,9 @@ int main() {
     borders_reduction_and_lifetime();
     external_and_errors();
     analysis_integration();
+    additional_squares<std::uint8_t>();
+    additional_squares<std::uint16_t>();
+    additional_squares<float>();
     std::cout << "Scalar Super composition checks passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

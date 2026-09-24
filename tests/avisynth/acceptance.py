@@ -146,4 +146,15 @@ for pixel in ("Y8", "YUV420P10", "YUV420P16", "Y32", "YUV444PS"):
     # Global compensation is integer-only; it is not used in these graphs.
     setup = setup[:setup.index("d = ")]
     run("format-" + pixel, "return neo_mv_Compensate(c,s,b)", prefix=setup)
+# Non-power-of-two square blocks through the public analysis/recalculation chain.
+for block in (12, 24, 48):
+    for overlap in (0, block // 2):
+        for satd in (False, True):
+            setup = temporal[:temporal.index("s=neo_mv_Super")].replace("width=32,height=32", "width=192,height=192")
+            setup += (f"s=neo_mv_Super(c,blksize={block},overlap={overlap},pad=32,pel=1)\n"
+                      f"v=neo_mv_AnalyseMany(s,radius=1,badrange=0,satd={str(satd).lower()})\n"
+                      f"r=neo_mv_Recalculate(s,v,thsad=0,satd={str(satd).lower()})\n")
+            run(f"square-{block}-{overlap}-{satd}",
+                "return neo_mv_Compensate(c,s,r[0],thsad=16320,thscd1=16320)",
+                frame=0, prefix=setup, extra=("--expect-y8-sum", str(192 * 192 * 30)))
 print(f"AviSynth {a.backend}: {count} cases passed; all 44 functions registered.")

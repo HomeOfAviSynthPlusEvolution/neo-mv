@@ -39,7 +39,7 @@ std::array<float, 3> permitted_axis(int b, int o, int n, int k, int i) {
   return values;
 }
 void windows() {
-  for (int b : {2, 4, 8, 16, 128})
+  for (int b : {2, 4, 8, 12, 16, 24, 48, 128})
     for (int o : {0, 1, b / 2})
       for (int n : {1, 2, 3}) {
         const int cover = n * (b - o) + o;

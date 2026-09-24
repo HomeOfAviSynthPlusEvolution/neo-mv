@@ -516,7 +516,7 @@ Int32 values saturate to signed 32-bit range before validation. Booleans use the
 | `satd` | false; unavailable for `16×2` | Luma metric; chroma stays SAD |
 | `prefix` | `MVUtensils` | Select Super data and name analysis properties |
 
-One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,8×4,8×8,16×2,16×8,16×16,32×16,32×32,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.
+One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,8×4,8×8,12×12,16×2,16×8,16×16,24×24,32×16,32×32,48×48,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.
 
 ## 7. Boundaries, missing data, and errors
 
