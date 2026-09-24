@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/motion/block_sampling.hpp"
+#include "core/motion/prediction.hpp"
 #include "core/super/border_extension.hpp"
 #include "core/super/pyramid_reduction.hpp"
 #include "core/super/subpixel.hpp"
@@ -9,6 +10,7 @@ namespace neo_mv {
 // Compile-time pixel operations; control flow and search stay in the core.
 template <class T>
 struct ScalarKernels {
+  static constexpr auto interpolate_predictions = &neo_mv::interpolate_predictions;
   static const SamplingFrames<T>& prepare_frames(const SamplingGeometry&, const SamplingFrames<T>& frames) {
     return frames;
   }

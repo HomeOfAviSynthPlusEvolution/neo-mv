@@ -5,6 +5,7 @@
 #include "core/super/pyramid_reduction.hpp"
 #include "core/super/subpixel.hpp"
 #include "highway/rows.hpp"
+#include "highway/prediction.hpp"
 
 #include <optional>
 
@@ -518,6 +519,7 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 namespace neo_mv {
 template <class T>
 struct HighwayKernels {
+  static constexpr auto interpolate_predictions = &simd::interpolate_predictions;
   static decltype(auto) prepare_frames(const SamplingGeometry& geometry, const SamplingFrames<T>& frames) {
     if constexpr (std::is_same_v<T, std::uint8_t>)
       return simd::PreparedSamplingFrames<T>{geometry, frames};

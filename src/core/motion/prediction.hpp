@@ -106,6 +106,11 @@ public:
         }
       }
   }
+  int shift() const { return shift_; }
+  bool overlap() const { return overlap_; }
+  double reciprocal() const { return reciprocal_; }
+  std::int64_t error_limit() const { return error_limit_; }
+  const std::array<std::int64_t, 4>& weights(int parity) const { return weights_[parity]; }
   MotionTriple operator()(std::int32_t child_x, std::int32_t child_y) const {
     using namespace prediction_detail;
     const auto xmax = 2 * std::int64_t(parent_.width) - 1, ymax = 2 * std::int64_t(parent_.height) - 1;
@@ -152,6 +157,15 @@ public:
             numerator(2) / 16};
   }
 };
+inline void interpolate_predictions(const MotionGrid& parent, PredictionGeometry g, MotionGrid& child) {
+  prediction_detail::validate(child);
+  if (&parent == &child)
+    throw std::invalid_argument("prediction output aliases parent");
+  const PredictionInterpolationPlan plan(parent, g);
+  for (int y = 0; y < child.height; ++y)
+    for (int x = 0; x < child.width; ++x)
+      child.values[std::size_t(y) * child.width + x] = plan(x, y);
+}
 inline MotionTriple interpolate_predictor(const MotionGrid& parent, std::int32_t child_x, std::int32_t child_y,
                                           PredictionGeometry g) {
   return PredictionInterpolationPlan(parent, g)(child_x, child_y);

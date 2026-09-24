@@ -157,11 +157,8 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
     MotionGrid current{m.blocks_x, m.blocks_y, {}};
     current.values.resize(static_cast<std::size_t>(field_detail::count(m)));
     if (!coarsest) {
-      const PredictionInterpolationPlan interpolation(
-          parent, {m.block_width, m.block_height, m.overlap_x, m.overlap_y, parent_pel, m.pel});
-      for (int y = 0; y < m.blocks_y; ++y)
-        for (int x = 0; x < m.blocks_x; ++x)
-          current.values[std::size_t(y) * m.blocks_x + x] = interpolation(x, y);
+      Kernels::interpolate_predictions(
+          parent, {m.block_width, m.block_height, m.overlap_x, m.overlap_y, parent_pel, m.pel}, current);
     }
     const auto global =
         enter_global_level(coarsest ? MotionVector{0, 0} : global_predictor(parent, controls.globalmv), m.pel, f);
