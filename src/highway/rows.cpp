@@ -347,17 +347,16 @@ HWY_INLINE std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, c
     return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
 }
 HWY_INLINE std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
-  const hn::CappedTag<std::uint8_t, 8> d;
+  const hn::CappedTag<std::uint8_t, 16> d;
   const hn::Repartition<std::uint64_t, decltype(d)> wide;
-  auto sum = hn::Zero(wide);
+  // Read exactly four bytes per row; packing allows one SAD for the block.
+  HWY_ALIGN std::uint8_t packed_a[16], packed_b[16];
   for (int y = 0; y < 4; ++y) {
-    sum = hn::Add(sum, hn::SumsOf8AbsDiff(hn::LoadN(d, a, 4), hn::LoadN(d, b, 4)));
-    if (y + 1 < 4) {
-      a += as;
-      b += bs;
-    }
+    hwy::CopyBytes<4>(a + y * as, packed_a + 4 * y);
+    hwy::CopyBytes<4>(b + y * bs, packed_b + 4 * y);
   }
-  return static_cast<std::int64_t>(hn::ReduceSum(wide, sum));
+  return static_cast<std::int64_t>(hn::ReduceSum(wide,
+      hn::SumsOf8AbsDiff(hn::LoadU(d, packed_a), hn::LoadU(d, packed_b))));
 }
 template <class D>
 std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b,
