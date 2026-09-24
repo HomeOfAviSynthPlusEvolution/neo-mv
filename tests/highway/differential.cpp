@@ -596,6 +596,7 @@ int main() {
       for (int width : {4, 6, 8, 16})
         fused_analyse_block<std::uint8_t>(width);
       fused_analyse_block<std::uint16_t>();
+      fused_analyse_block<std::uint16_t>(0, 8);
       fused_analyse_block<std::uint8_t>(0, 6);
       fused_analyse_block<std::uint16_t>(0, 6);
       fused_analyse_block<std::uint16_t>(6);
