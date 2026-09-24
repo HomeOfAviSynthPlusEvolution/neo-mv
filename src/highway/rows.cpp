@@ -852,7 +852,8 @@ struct AnalyseSad {
       const auto qx = MotionQuotient(vector.x, Pel), qy = MotionQuotient(vector.y, Pel);
       const auto phase = std::size_t((vector.y - Pel * qy) * Pel + vector.x - Pel * qx);
       const auto r = MotionPlane(block, frames, 0, qx, qy, phase);
-      errors[0] = Sad420Plane<T, GrayWidth, Bounded>(r, limit);
+      // For 8x8, one final reduction is cheaper than checking a four-row prefix.
+      errors[0] = Sad420Plane<T, GrayWidth, (Bounded && GrayWidth != 8)>(r, limit);
       errors[1] = errors[2] = 0;
       return !Bounded || errors[0] < limit;
     } else {
