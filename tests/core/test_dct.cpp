@@ -54,6 +54,26 @@ auto view(const std::vector<std::uint16_t>& x, int w, int h) {
   return checked_plane<const std::uint16_t>(x.data(), w, h, w * sizeof(std::uint16_t),
                                             x.size() * sizeof(std::uint16_t));
 }
+// A one-level impulse has |AC| <= 2*sqrt(2)/area < 0.5 here.
+// Consequently this pair differs only in DC, whose exact mean lies immediately
+// below an integer boundary. Large 16-bit blocks lose that impulse in float.
+void dc_boundary() {
+  for (auto size : {std::pair{4, 4}, {6, 6}, {8, 4}, {8, 8}, {12, 12},
+                    {16, 2}, {16, 8}, {16, 16}, {24, 24}, {32, 16},
+                    {32, 32}, {48, 48}, {64, 32}, {64, 64}, {128, 64}, {128, 128}}) {
+    const auto [w, h] = size;
+    for (int bits : {8, 10, 12, 14, 16}) {
+      std::vector<std::uint16_t> a(w * h, (1 << bits) - 2), b = a;
+      --a.back();
+      DctWorkspace dct(w, h, bits);
+      dct.set_source(view(a, w, h));
+      const auto expected = 2LL * int(std::sqrt(float(w * h)) + 0.5f);
+      check(dct.compare(view(b, w, h)) == expected, "DC lost a one-level impulse below integer boundary");
+      dct.set_source(view(b, w, h));
+      check(dct.compare(view(a, w, h)) == expected, "DC boundary symmetry");
+    }
+  }
+}
 void numeric() {
   std::mt19937 random(729);
   for (auto size : {std::pair{4, 4},
@@ -204,6 +224,7 @@ int main() {
     backend_equivalence<std::uint8_t>();
     backend_equivalence<std::uint16_t>();
 #endif
+    dc_boundary();
     numeric();
     sampling_and_search();
     std::vector<std::future<void>> workers;

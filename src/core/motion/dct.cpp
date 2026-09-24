@@ -29,21 +29,23 @@ void DctWorkspace::transform(std::vector<int>& output) {
   const pf::stride_t strides{std::ptrdiff_t(width_) * std::ptrdiff_t(sizeof(float)), std::ptrdiff_t(sizeof(float))};
   pf::dct(shape, strides, strides, axes, 2, input_.data(), transformed_.data(), 1.0f, false, 1);
   const float ac = 0.7071067811865475244f / float(width_ * height_);
-  const float dc = 0.125f / float(width_ * height_);
-  for (std::size_t i = 0; i < output.size(); ++i) {
-    const float value = transformed_[i] * (i == 0 ? dc : ac);
-    // All intermediates are finite and bounded by 4 * 16384 * 65535.
-    // AC rounds to nearest, ties to even, independent of the host FP mode;
-    // DC truncates towards zero, as in the upstream FFT implementation.
-    int quantized;
-    if (i == 0)
-      quantized = int(value);
-    else {
-      const float low = std::floor(value), fraction = value - low;
-      quantized = int(low);
-      if (fraction > 0.5f || (fraction == 0.5f && quantized % 2 != 0))
-        ++quantized;
-    }
+  // Unnormalized 2-D DC is 4 * sum(input), so its quantizer is
+  // trunc(sum(input) / (2 * area)). Integer samples are exactly represented
+  // in input_; the sum is at most 128 * 128 * 65535 < 2^30.
+  // Computing DC through float can lose a one-level pixel difference and
+  // incorrectly cross an integer boundary before truncation.
+  std::int64_t sum = 0;
+  for (const auto sample : input_)
+    sum += static_cast<std::int64_t>(sample);
+  output[0] = std::clamp(int(sum / (2 * width_ * height_)) + midpoint_, 0, maximum_);
+  for (std::size_t i = 1; i < output.size(); ++i) {
+    const float value = transformed_[i] * ac;
+    // Round the computed AC coefficient to nearest, ties to even. The FFT
+    // approximation itself can still cross an exact rounding boundary.
+    const float low = std::floor(value), fraction = value - low;
+    int quantized = int(low);
+    if (fraction > 0.5f || (fraction == 0.5f && quantized % 2 != 0))
+      ++quantized;
     output[i] = std::clamp(quantized + midpoint_, 0, maximum_);
   }
 }
