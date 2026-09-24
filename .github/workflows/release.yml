@@ -35,8 +35,6 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      # Keep aggregate build/test concurrency within four workers.
-      max-parallel: 1
       matrix:
         include:
           - platform: linux-arm64
