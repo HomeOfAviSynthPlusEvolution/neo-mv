@@ -20,6 +20,17 @@ SearchResult refine_impl(SearchResult initial, const SearchParams& p, Evaluator&
     return consider(std::int64_t(center.x) + x, std::int64_t(center.y) + y);
   };
   const auto ring = [&](MotionVector center, std::int64_t radius) NEO_MV_MOTION_ATTR {
+    if (radius == 1) {
+      offset(center, 0, -1);
+      offset(center, 0, 1);
+      offset(center, -1, 0);
+      offset(center, 1, 0);
+      offset(center, -1, -1);
+      offset(center, -1, 1);
+      offset(center, 1, -1);
+      offset(center, 1, 1);
+      return;
+    }
     for (auto i = -radius + 1; i < radius; ++i) {
       offset(center, i, -radius);
       offset(center, i, radius);
