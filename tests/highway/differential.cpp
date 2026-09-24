@@ -3,6 +3,7 @@
 #include "core/motion/recalculate.hpp"
 #include "highway/kernels.hpp"
 #include "hwy/targets.h"
+#include "hwy/highway.h"
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -54,6 +55,35 @@ template <class T> void run() {
                     << " width=" << width << " height=" << height
                     << " metric=" << (op == neo_mv::BlockMetric::sad ? "SAD" : "SATD")
                     << " scalar=" << expected << " simd=" << actual << '\n';
+#if defined(_M_ARM64)
+          if constexpr (std::is_same_v<T, std::uint16_t>) {
+            namespace hn = hwy::HWY_NAMESPACE;
+            const hn::CappedTag<std::int32_t, 2> d;
+            const hn::Rebind<T, decltype(d)> narrow;
+            for (auto* buffer : {&src, &ref}) {
+              std::cerr << (buffer == &src ? "source\n" : "reference\n");
+              for (int y = 0; y < height; ++y) {
+                const auto* p = buffer->read().row(y);
+                for (int x = 0; x < width; ++x) std::cerr << p[x] << ' ';
+                std::cerr << "\nloaded: ";
+                auto a = hn::Zero(narrow), b = a, c = a, e = a;
+                hn::LoadInterleaved4(narrow, p, a, b, c, e);
+                for (auto v : {a, b, c, e}) {
+                  std::int32_t lanes[2];
+                  hn::StoreU(hn::PromoteTo(d, v), d, lanes);
+                  std::cerr << '[' << lanes[0] << ',' << lanes[1] << "] ";
+                }
+                std::cerr << '\n';
+              }
+            }
+            for (int x = 0; x < width; x += 4) {
+              const auto a = src.read().subplane(x, 0, 4, 4);
+              const auto b = ref.read().subplane(x, 0, 4, 4);
+              std::cerr << "cell " << x << " scalar=" << neo_mv::block_metric(a, b, op)
+                        << " simd=" << neo_mv::simd::block_metric(a, b, op) << '\n';
+            }
+          }
+#endif
           throw std::runtime_error("metric mismatch");
         }
       }
