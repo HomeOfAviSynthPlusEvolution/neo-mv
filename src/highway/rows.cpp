@@ -346,7 +346,7 @@ HWY_INLINE std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, c
   else
     return static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
 }
-std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
+HWY_INLINE std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs) {
   const hn::CappedTag<std::uint8_t, 8> d;
   const hn::Repartition<std::uint64_t, decltype(d)> wide;
   auto sum = hn::Zero(wide);
@@ -398,6 +398,59 @@ std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const s
     }
   }
   return tail + static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
+}
+#endif
+
+#if HWY_TARGET != HWY_SCALAR
+template <class D, class V> HWY_INLINE V ByteSatdHorizontal(D d, V row) {
+  const hn::Repartition<std::int32_t, D> pairs;
+  const auto adjacent = hn::Reverse2(d, row);
+  row = hn::OddEven(hn::Sub(row, adjacent), hn::Add(row, adjacent));
+  const auto opposite = hn::Reverse4(d, hn::Reverse2(d, row));
+  return hn::BitCast(d, hn::OddEven(hn::BitCast(pairs, hn::Sub(row, opposite)),
+                                   hn::BitCast(pairs, hn::Add(row, opposite))));
+}
+
+template <class D>
+HWY_INLINE auto ByteSatdRow(D d, const std::uint8_t* a, const std::uint8_t* b) {
+  const hn::Rebind<std::uint8_t, D> bytes;
+  return ByteSatdHorizontal(d, hn::Sub(hn::PromoteTo(d, hn::LoadU(bytes, a)),
+                                      hn::PromoteTo(d, hn::LoadU(bytes, b))));
+}
+
+// Keep adjacent pixels together instead of deinterleaving four byte streams.
+// A byte residual is at most 255, a 4x4 coefficient at most 4080, and
+// four absolute coefficients sum to at most 16320: signed 16-bit is enough.
+// Widen each pair before accumulating across cells. For a 128x128 block,
+// even the conservative bound 128*128*4080 fits signed 32-bit.
+template <class D>
+std::int64_t ByteSatd(D d, const std::uint8_t *a, std::ptrdiff_t as,
+                      const std::uint8_t *b, std::ptrdiff_t bs, int w, int h) {
+  const hn::Repartition<std::int32_t, D> wide;
+  const int n = int(hn::Lanes(d));
+  const int end = w / n * n;
+  auto sum = hn::Zero(wide);
+  for (int y = 0; y < h; y += 4) {
+    for (int x = 0; x < end; x += n) {
+      auto r0 = ByteSatdRow(d, a + y * as + x, b + y * bs + x);
+      auto r1 = ByteSatdRow(d, a + (y + 1) * as + x, b + (y + 1) * bs + x);
+      auto r2 = ByteSatdRow(d, a + (y + 2) * as + x, b + (y + 2) * bs + x);
+      auto r3 = ByteSatdRow(d, a + (y + 3) * as + x, b + (y + 3) * bs + x);
+      Hadamard(r0, r1, r2, r3);
+      const auto absolute = hn::Add(hn::Add(hn::Abs(r0), hn::Abs(r1)), hn::Add(hn::Abs(r2), hn::Abs(r3)));
+      sum = hn::Add(sum, hn::WidenMulPairwiseAdd(wide, absolute, hn::Set(d, 1)));
+    }
+  }
+  // Every integer 4x4 cell has an even absolute sum, so division may be
+  // deferred until after the vector reduction without changing rounding.
+  std::int64_t total = hn::ReduceSum(wide, sum) / 2;
+  if constexpr (hn::MaxLanes(d) > 4) {
+    if (end != w) {
+      const hn::Half<D> half;
+      total += ByteSatd(half, a + end, as, b + end, bs, w - end, h);
+    }
+  }
+  return total;
 }
 #endif
 
@@ -555,10 +608,25 @@ std::int64_t MetricWithTag(D d, const T *a, std::ptrdiff_t as, const T *b, std::
 }
 template <class T>
 std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs, int w, int h, bool satd) {
+#if HWY_TARGET != HWY_SCALAR
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    if (satd && w <= 128 && h <= 128) {
+      if (w < 8)
+        return ByteSatd(hn::CappedTag<std::int16_t, 4>{}, a, as, b, bs, w, h);
+      if (w < 16)
+        return ByteSatd(hn::CappedTag<std::int16_t, 8>{}, a, as, b, bs, w, h);
+      if (w < 32)
+        return ByteSatd(hn::CappedTag<std::int16_t, 16>{}, a, as, b, bs, w, h);
+      return ByteSatd(hn::CappedTag<std::int16_t, 32>{}, a, as, b, bs, w, h);
+    }
+  }
+#endif
   if constexpr (!std::is_same_v<T, float>) {
     if (!satd && w <= 128 && h <= 128) {
 #if HWY_TARGET != HWY_SCALAR
       if constexpr (std::is_same_v<T, std::uint8_t>) {
+        if (w == 4 && h == 4)
+          return FixedByteSad4(a, as, b, bs);
         if (w == 16 && h == 16)
           return FixedByteSad<16, 16>(a, as, b, bs);
         if (w == 8 && h == 8)
@@ -774,14 +842,27 @@ namespace fused_motion {
 #include "core/motion/analyse-block-inl.hpp"
 #undef NEO_MV_MOTION_ATTR
 
-template <class T, int Pel>
-struct Analyse420 {
+template <class T, int Pel, int GrayWidth = 0>
+struct AnalyseSad {
   const MotionMetricRequest<T>& block;
   const MetricReferenceFrames<T>& frames;
 
+  template <bool Bounded>
+  HWY_INLINE bool metric(MotionVector vector, std::int64_t limit, std::int64_t* errors) const {
+    if constexpr (GrayWidth != 0) {
+      const auto qx = MotionQuotient(vector.x, Pel), qy = MotionQuotient(vector.y, Pel);
+      const auto phase = std::size_t((vector.y - Pel * qy) * Pel + vector.x - Pel * qx);
+      const auto r = MotionPlane(block, frames, 0, qx, qy, phase);
+      errors[0] = Sad420Plane<T, GrayWidth, Bounded>(r, limit);
+      errors[1] = errors[2] = 0;
+      return !Bounded || errors[0] < limit;
+    } else {
+      return MotionMetric420Bounded<T, 16, Bounded, Pel>(block, frames, vector.x, vector.y, limit, errors);
+    }
+  }
   HWY_INLINE BlockError operator()(MotionVector vector) const {
     std::int64_t errors[3];
-    MotionMetric420Bounded<T, 16, false, Pel>(block, frames, vector.x, vector.y, INT64_MAX, errors);
+    metric<false>(vector, INT64_MAX, errors);
     const auto chroma = errors[1] + errors[2];
     return {errors[0], chroma, errors[0] + chroma};
   }
@@ -789,7 +870,7 @@ struct Analyse420 {
     if (best.cost <= 0)
       return false;
     std::int64_t errors[3];
-    if (!MotionMetric420Bounded<T, 16, true, Pel>(block, frames, vector.x, vector.y, best.cost, errors))
+    if (!metric<true>(vector, best.cost, errors))
       return false;
     const auto luma = errors[0], chroma = errors[1] + errors[2], raw = luma + chroma;
     const auto dx = std::int64_t(vector.x) - p.predictor.x, dy = std::int64_t(vector.y) - p.predictor.y;
@@ -816,7 +897,7 @@ SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricRe
                              MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
                              CandidateDomain omega, int layer, std::int64_t lambda,
                              std::int64_t bad_threshold, AnalyseControls controls) {
-  fused_motion::Analyse420<T, Pel> execution{block, frames};
+  fused_motion::AnalyseSad<T, Pel> execution{block, frames};
   return fused_motion::block_impl(predictor, spatial, zero, omega, layer, Pel, lambda, bad_threshold,
                                   controls, execution);
 }
@@ -840,6 +921,38 @@ SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricRe
 NEO_ANALYSE_IMPL(std::uint8_t, U8)
 NEO_ANALYSE_IMPL(std::uint16_t, U16)
 #undef NEO_ANALYSE_IMPL
+
+template <int Width, int Pel>
+SearchResult AnalyseBlockGray(const MotionMetricRequest<std::uint8_t>& block,
+    const MetricReferenceFrames<std::uint8_t>& frames, MotionTriple predictor,
+    const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
+    std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
+  fused_motion::AnalyseSad<std::uint8_t, Pel, Width> execution{block, frames};
+  return fused_motion::block_impl(predictor, spatial, zero, omega, layer, Pel, lambda,
+                                  bad_threshold, controls, execution);
+}
+template <int Width>
+SearchResult AnalyseBlockGrayPel(const MotionMetricRequest<std::uint8_t>& block,
+    const MetricReferenceFrames<std::uint8_t>& frames, MotionTriple predictor,
+    const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
+    std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
+  if (block.pel == 1)
+    return AnalyseBlockGray<Width, 1>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  if (block.pel == 2)
+    return AnalyseBlockGray<Width, 2>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  return AnalyseBlockGray<Width, 4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+}
+
+SearchResult AnalyseBlockGrayU8(const MotionMetricRequest<std::uint8_t>& block,
+    const MetricReferenceFrames<std::uint8_t>& frames, MotionTriple predictor,
+    const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
+    std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
+  if (block.planes[0].width == 4)
+    return AnalyseBlockGrayPel<4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  if (block.planes[0].width == 8)
+    return AnalyseBlockGrayPel<8>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  return AnalyseBlockGrayPel<16>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+}
 
 #define NEO_IMPL(T, S)                                                                                                 \
   void Extract##S(const T *p, T *q, int n, int pel, int phase) {                                                       \
@@ -899,6 +1012,10 @@ const char *target_name() {
 }
 HWY_EXPORT(AnalyseBlock420U8);
 HWY_EXPORT(AnalyseBlock420U16);
+HWY_EXPORT(AnalyseBlockGrayU8);
+AnalyseBlockFunction<std::uint8_t> analyse_block_gray_function() {
+  return HWY_DYNAMIC_DISPATCH(AnalyseBlockGrayU8);
+}
 AnalyseBlockFunction<std::uint8_t> analyse_block_420_function(std::uint8_t*) {
   return HWY_DYNAMIC_DISPATCH(AnalyseBlock420U8);
 }

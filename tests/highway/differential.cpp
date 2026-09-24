@@ -253,18 +253,20 @@ template <class T> void sampled_motion(int block_width = 8) {
     }
   }
 }
-template <class T> void fused_analyse_block() {
+template <class T> void fused_analyse_block(int gray_width = 0) {
   using namespace neo_mv;
   for (int pel : {1, 2, 4}) {
-    MotionFixture<T> f(32, 32, 16, 16, 16, pel, true);
-    const BlockRegion region{0, 0, 16, 16};
+    const bool gray = gray_width != 0;
+    const int width = gray ? gray_width : 16;
+    MotionFixture<T> f(32, 32, width, width, 16, pel, !gray);
+    const BlockRegion region{0, 0, width, width};
     const CandidateDomain omega{-3, -3, 4, 4};
     const MotionTriple predictor{{1, -1}, 0};
     const MotionVector zero{-4, 0}; // Safe seed outside Omega remains eligible.
     const SpatialPredictors spatial{{{{{-1, 0}, 0}, {{1, 0}, 0}, {{0, 1}, 0}, {{0, -1}, 0}}}, {2, -2}};
     validate_sampling_domain(f.geometry, region, omega, {zero});
     for (int pattern = 0; pattern < 3; ++pattern) {
-      for (int k = 0; k < 3; ++k) {
+      for (int k = 0; k < (gray ? 1 : 3); ++k) {
         for (std::size_t i = 0; i < f.source[k].size(); ++i)
           f.source[k][i] = pattern == 0 ? T(0) : T((i * 997 + k * 113) & std::numeric_limits<T>::max());
         for (int a = 0; a < pel * pel; ++a) {
@@ -395,7 +397,7 @@ template <class T> void bounded_narrow_reference_motion() {
 template <class T> void integer_metric_extremes() {
   // Exercise bounded SAD accumulation, both fallback dimensions, and SATD
   // reductions with full-range differences (not only random small blocks).
-  for (int w : {4, 8, 16, 32, 64, 128, 129, 132})
+  for (int w : {4, 8, 12, 16, 24, 28, 32, 48, 60, 64, 124, 128, 129, 132})
     for (int h : {4, 128, 129, 512}) {
       Buffer<T> a(w, h), b(w, h);
       for (int pattern = 0; pattern < 3; ++pattern) {
@@ -480,6 +482,23 @@ template <class T> void bounded_sad_thresholds() {
   }
 }
 
+void byte_satd_tails() {
+  std::mt19937 rng(72819);
+  for (int w : {4, 8, 12, 16, 20, 24, 28, 32, 36, 48, 60, 64, 124, 128, 132}) {
+    GuardBuffer<std::uint8_t> a(w, 12), b(w, 12);
+    for (int trial = 0; trial < 8; ++trial) {
+      for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < w; ++x) {
+          a.view().row(y)[x] = std::uint8_t(rng());
+          b.view().row(y)[x] = std::uint8_t(rng());
+        }
+      check(neo_mv::block_metric(a.read(), b.read(), neo_mv::BlockMetric::satd) ==
+                neo_mv::simd::block_metric(a.read(), b.read(), neo_mv::BlockMetric::satd),
+            "byte SATD guarded tail mismatch");
+    }
+  }
+}
+
 void two_cell_satd_regression() {
   // Two parallel 4x4 cells exposed LLVM 22's malformed SABAv2i32 combine.
   const std::uint16_t source[4][8] = {
@@ -538,6 +557,7 @@ int main() {
       std::cout << "Testing " << hwy::TargetName(target) << std::endl;
       check(std::strcmp(neo_mv::simd::detail::target_name(), hwy::TargetName(target)) == 0, "dispatch target mismatch");
       two_cell_satd_regression();
+      byte_satd_tails();
       additional_square_metrics<std::uint8_t>();
       additional_square_metrics<std::uint16_t>();
       additional_square_metrics<float>();
@@ -558,6 +578,8 @@ int main() {
       sampled_motion<std::uint16_t>(16);
       sampled_motion<float>();
       fused_analyse_block<std::uint8_t>();
+      for (int width : {4, 8, 16})
+        fused_analyse_block<std::uint8_t>(width);
       fused_analyse_block<std::uint16_t>();
       narrow_reference_motion<std::uint8_t>();
       narrow_reference_motion<std::uint16_t>();

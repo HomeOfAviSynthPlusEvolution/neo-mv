@@ -43,6 +43,7 @@ using AnalyseBlockFunction = SearchResult (*)(const MotionMetricRequest<T>&, con
     AnalyseControls);
 AnalyseBlockFunction<std::uint8_t> analyse_block_420_function(std::uint8_t*);
 AnalyseBlockFunction<std::uint16_t> analyse_block_420_function(std::uint16_t*);
+AnalyseBlockFunction<std::uint8_t> analyse_block_gray_function();
 
 template <class T>
 using MetricBatchFunction = void (*)(const MetricRequest<T> *, int, std::int64_t *);
