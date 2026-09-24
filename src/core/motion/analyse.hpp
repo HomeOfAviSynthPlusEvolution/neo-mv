@@ -19,8 +19,10 @@ struct AnalysisLayer {
 inline void validate_analyse_controls(AnalyseControls c, int block_width, int block_height) {
   if (c.search < 0 || c.search > 5 || c.pelsearch <= 0 || c.mvlambda < 0 || c.plevel < 0 || c.plevel > 2 ||
       c.pnew < 0 || c.pnew > 256 || c.pzero < 0 || c.pzero > 256 || c.pglobal < 0 || c.pglobal > 256 || c.trymany < 0 ||
-      c.trymany > 2 || (c.satd && (block_width % 4 || block_height % 4)))
+      c.trymany > 2)
     throw std::invalid_argument("invalid Analyse controls");
+  if (c.satd && (block_width % 4 || block_height % 4))
+    throw std::invalid_argument("SATD requires block width and height divisible by 4");
 }
 
 // Supply logical Super geometries finest first, without reading frame samples.

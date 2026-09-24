@@ -212,7 +212,7 @@ void analysis_integration() {
 template <class T>
 void additional_squares() {
   const int bits = std::is_same_v<T, float> ? 32 : int(sizeof(T) * 8);
-  for (int b : {12, 24, 48})
+  for (int b : {6, 12, 24, 48})
     for (int overlap : {0, b / 2})
       for (int pel : {1, 2}) {
         // Partial edge blocks and multiple pyramid levels, with nonconstant pixels.
@@ -229,6 +229,12 @@ void additional_squares() {
         CHECK(geometry.size() >= 2);
         CHECK(plan.geometry().blocks_x == (p.width - overlap + b - overlap - 1) / (b - overlap));
         for (bool satd : {false, true}) {
+          if (b == 6 && satd) {
+            AnalyseControls invalid;
+            invalid.satd = true;
+            rejects([&] { plan_analysis(metadata, geometry, invalid); });
+            continue;
+          }
           AnalyseControls controls;
           controls.satd = satd;
           const auto grid = analyse_vectors<T>(metadata, geometry, frames, controls);
@@ -244,6 +250,45 @@ void additional_squares() {
         }
       }
 }
+
+template <class T>
+void six_chroma() {
+  const int bits = std::is_same_v<T, float> ? 32 : int(sizeof(T) * 8);
+  for (int overlap : {0, 2})
+    for (int pel : {1, 2, 4}) {
+      SuperGeometryParams p{32, 26, 6, 6, overlap, overlap, 16, 16, 2, 2, pel, true};
+      Input<T> input(p, T(0)), reference(p, T(0));
+      for (int plane = 0; plane < 3; ++plane) {
+        const int w = p.width / (plane ? 2 : 1), h = p.height / (plane ? 2 : 1);
+        for (int y = 0; y < h; ++y)
+          for (int x = 0; x < w; ++x) {
+            const auto i = std::size_t(y) * (w + 1) + x;
+            reference.data[plane][i] = T((x * 17 + y * 29 + plane * 13) % 127);
+            input.data[plane][i] = reference.data[plane][i] + T(1);
+          }
+      }
+      const SuperPlan<T> plan(p, bits);
+      const SuperPyramid<T> current(plan, input.views), other(plan, reference.views);
+      const auto geometry = super_sampling_geometry(plan);
+      const auto frames = borrow_super_frames(current, other);
+      // 36 luma + two 9-sample chroma blocks, each sample differing by one.
+      CHECK(block_error(geometry[0], {0, 0, 6, 6}, frames[0], {0, 0}, BlockMetric::sad).raw ==
+            54 * (std::is_same_v<T, float> ? 65535LL : 1LL));
+      const auto same = borrow_super_frames(current, current);
+      const auto metadata = super_analysis_metadata(plan, 1);
+      const auto grid = analyse_vectors<T>(metadata, geometry, same);
+      for (const auto& v : grid.values)
+        CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+      const auto refined = recalculate_vectors(AnalysisField{metadata, FieldState::complete, grid},
+                                               metadata, geometry[0], same[0]);
+      for (const auto& v : refined.values)
+        CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
+      RecalculateControls invalid;
+      invalid.satd = true;
+      rejects([&] { recalculate_vectors(AnalysisField{metadata, FieldState::complete, grid},
+                                       metadata, geometry[0], same[0], invalid); });
+    }
+}
 } // namespace
 int main() {
   try {
@@ -256,6 +301,9 @@ int main() {
     additional_squares<std::uint8_t>();
     additional_squares<std::uint16_t>();
     additional_squares<float>();
+    six_chroma<std::uint8_t>();
+    six_chroma<std::uint16_t>();
+    six_chroma<float>();
     std::cout << "Scalar Super composition checks passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

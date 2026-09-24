@@ -252,5 +252,45 @@ for spec in fixtures.SEARCH0_CASES:
         actual = [x, y, errors[expected["index"]]]
         assert actual == expected["result"], (spec["id"], actual, expected["result"])
 
+# 6x6 SAD: all supported sample types, chroma grids, and downstream consumers.
+for fmt in (vs.GRAY8, vs.GRAY16, vs.GRAYS, vs.YUV420P8, vs.YUV420P16,
+            vs.YUV420PS, vs.YUV422P8, vs.YUV444P8):
+    gray = core.get_video_format(fmt).color_family == vs.GRAY
+    overlaps = (0, 1, 2, 3) if gray or fmt == vs.YUV444P8 else (0, 2)
+    for overlap in overlaps:
+        if fmt in (vs.GRAYS, vs.YUV420PS):
+            color = [0.25] if gray else [0.25, 0.0, 0.0]
+        else:
+            color = [17] if gray else [17, 128, 128]
+        c6 = blank(fmt, width=32, height=26, length=5, color=color)
+        s6 = super_clip(c6, blksize=[6], overlap=[overlap], pad=[16])
+        v6 = outputs(mv.AnalyseMany(s6, radius=1, badrange=0))
+        r6 = outputs(mv.Recalculate(s6, v6, thsad=0))
+        for node in v6 + r6:
+            vectors, errors = analysis(node.get_frame(2))
+            assert all(x == 0 for x in vectors + errors)
+        for node in (mv.Compensate(c6, s6, r6[0]), mv.Degrain(c6, s6, r6),
+                     mv.Flow(c6, s6, r6[0]), mv.FlowInter(c6, s6, r6),
+                     mv.FlowFPS(c6, s6, r6, num=48, den=1), mv.FlowBlur(c6, s6, r6)):
+            assert pixels(node.get_frame(2)) == pixels(c6.get_frame(2))
+        for node in (mv.VectorLengthMask(r6[0]), mv.SADMask(r6[0]), mv.OcclusionMask(r6[0])):
+            node.get_frame(2)
+        # No frame request: these must fail when the filter is constructed.
+        fails(lambda: mv.Analyse(s6, satd=True), "divisible by 4")
+        fails(lambda: mv.AnalyseMany(s6, satd=True), "divisible by 4")
+        fails(lambda: mv.Recalculate(s6, v6, satd=True), "divisible by 4")
+# A block-size override must be validated against the requested size, not the Super size.
+c8 = blank(width=48, height=48)
+s8 = super_clip(c8, blksize=[8], overlap=[0], pad=[16])
+v8 = mv.Analyse(s8)
+fails(lambda: mv.Analyse(s8, blksize=[6], satd=True), "divisible by 4")
+fails(lambda: mv.AnalyseMany(s8, blksize=[6], satd=True), "divisible by 4")
+fails(lambda: mv.Recalculate(s8, v8, blksize=[6], satd=True), "divisible by 4")
+r6 = outputs(mv.Recalculate(s8, v8, blksize=[6], overlap=[0], thsad=0))[0]
+assert r6.get_frame(1).props[P + "AnalysisBlkSizeX"] == 6
+for overlap in (1, 3):
+    fails(lambda: super_clip(blank(vs.YUV420P8, width=32, height=26, color=[0, 128, 128]),
+                             blksize=[6], overlap=[overlap]), "chroma aligned")
+
 print("neo-mv VS acceptance passed: five entry points, ownership, motion, parameters, errors, search=0 fixtures")
 blank(length=1).set_output()

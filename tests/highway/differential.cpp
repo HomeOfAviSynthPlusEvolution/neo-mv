@@ -253,11 +253,11 @@ template <class T> void sampled_motion(int block_width = 8) {
     }
   }
 }
-template <class T> void fused_analyse_block(int gray_width = 0) {
+template <class T> void fused_analyse_block(int gray_width = 0, int chroma_width = 16) {
   using namespace neo_mv;
   for (int pel : {1, 2, 4}) {
     const bool gray = gray_width != 0;
-    const int width = gray ? gray_width : 16;
+    const int width = gray ? gray_width : chroma_width;
     MotionFixture<T> f(32, 32, width, width, 16, pel, !gray);
     const BlockRegion region{0, 0, width, width};
     const CandidateDomain omega{-3, -3, 4, 4};
@@ -520,19 +520,33 @@ void two_cell_satd_regression() {
 
 template <class T> void additional_square_metrics() {
   std::mt19937 rng(9137);
-  for (int b : {12, 24, 48}) {
-    Buffer<T> source(b, b), reference(b, b);
+  for (int b : {3, 6, 12, 24, 48}) {
+    GuardBuffer<T> source(b, b), reference(b, b);
     for (int y = 0; y < b; ++y)
       for (int x = 0; x < b; ++x) {
         source.view().row(y)[x] = T(1);
         reference.view().row(y)[x] = T(0);
       }
     for (auto metric : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd}) {
+      if (b % 4 != 0 && metric == neo_mv::BlockMetric::satd) {
+        rejects([&] { neo_mv::simd::block_metric(source.read(), reference.read(), metric); });
+        continue;
+      }
       // Constant residual: only the DC coefficient of each 4x4 cell survives.
       const std::int64_t expected = (metric == neo_mv::BlockMetric::sad ? b * b : b * b / 2) *
                                     (std::is_same_v<T, float> ? 65535LL : 1LL);
       check(neo_mv::block_metric(source.read(), reference.read(), metric) == expected, "square scalar constant");
       check(neo_mv::simd::block_metric(source.read(), reference.read(), metric) == expected, "square SIMD constant");
+    }
+    if constexpr (!std::is_same_v<T, float>) {
+      for (int y = 0; y < b; ++y)
+        for (int x = 0; x < b; ++x)
+          source.view().row(y)[x] = std::numeric_limits<T>::max();
+      const auto expected = std::int64_t(b) * b * std::numeric_limits<T>::max();
+      check(neo_mv::simd::block_metric(source.read(), reference.read(), neo_mv::BlockMetric::sad) == expected,
+            "square maximum SAD");
+      check(neo_mv::simd::block_metric(reference.read(), source.read(), neo_mv::BlockMetric::sad) == expected,
+            "square reversed maximum SAD");
     }
     for (int y = 0; y < b; ++y)
       for (int x = 0; x < b; ++x) {
@@ -545,8 +559,9 @@ template <class T> void additional_square_metrics() {
         }
       }
     for (auto metric : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd})
-      check(neo_mv::block_metric(source.read(), reference.read(), metric) ==
-                neo_mv::simd::block_metric(source.read(), reference.read(), metric), "square random metric");
+      if (b % 4 == 0 || metric == neo_mv::BlockMetric::sad)
+        check(neo_mv::block_metric(source.read(), reference.read(), metric) ==
+                  neo_mv::simd::block_metric(source.read(), reference.read(), metric), "square random metric");
   }
 }
 
@@ -578,9 +593,12 @@ int main() {
       sampled_motion<std::uint16_t>(16);
       sampled_motion<float>();
       fused_analyse_block<std::uint8_t>();
-      for (int width : {4, 8, 16})
+      for (int width : {4, 6, 8, 16})
         fused_analyse_block<std::uint8_t>(width);
       fused_analyse_block<std::uint16_t>();
+      fused_analyse_block<std::uint8_t>(0, 6);
+      fused_analyse_block<std::uint16_t>(0, 6);
+      fused_analyse_block<std::uint16_t>(6);
       narrow_reference_motion<std::uint8_t>();
       narrow_reference_motion<std::uint16_t>();
       narrow_reference_motion<float>();

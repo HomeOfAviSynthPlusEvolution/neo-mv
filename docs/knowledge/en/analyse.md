@@ -150,7 +150,7 @@ $$SAD(S,R)=\sum_j\sum_i|S_{j,i}-R_{j,i}|.$$
 
 No area division or automatic 8-bit conversion occurs. An `8×8` block differing by 2 at every sample gives 128, whether storage is 8-bit or 10-bit, provided the numeric difference is 2.
 
-Call luma error eY. With chroma enabled, sum separate U/V SADs into eC without compensating for subsampling area; otherwise eC=0. Raw error is `s=eY+eC`. A YUV420 `8×8` luma block with differences 1 on all planes gives `64+16+16=96`.
+Call luma error eY. With chroma enabled, sum separate U/V SADs into eC without compensating for subsampling area; otherwise eC=0. Raw error is `s=eY+eC`. A YUV420 `8×8` luma block with differences 1 on all planes gives `64+16+16=96`. For a `6×6` block, the two chroma blocks are `3×3`; integer samples differing by 1 give `36+9+9=54`.
 
 #### Luma SATD
 
@@ -164,7 +164,7 @@ $$e_Y=\sum_{cells}\left\lfloor\frac{\sum_{a,b}|F_{a,b}|}{2}\right\rfloor.$$
 
 A `4×4` cell of differences all 1 has SAD 16 and only one nonzero transform coefficient, 16, giving SATD 8. One isolated difference of 1 has SAD 1 and sixteen absolute coefficients of 1, also giving SATD 8. SATD is not a fixed scaling of SAD.
 
-Larger blocks do not use one large transform. `16×2` cannot be tiled this way and disallows SATD. U/V always use SAD. The property remains named `AnalysisSAD` even when luma uses SATD.
+Larger blocks do not use one large transform. `6×6` and `16×2` cannot be tiled this way and disallow SATD. U/V always use SAD. The property remains named `AnalysisSAD` even when luma uses SATD.
 
 #### Encoding float32 errors
 
@@ -513,10 +513,10 @@ Int32 values saturate to signed 32-bit range before validation. Booleans use the
 | `trymany` | 0; 0, 1, 2 | Independent seed searches |
 | `fields` | false | Field-shift geometry and calculation |
 | `tff` | Omitted reads `_Field` | Parity when needed |
-| `satd` | false; unavailable for `16×2` | Luma metric; chroma stays SAD |
+| `satd` | false; unavailable for `6×6` and `16×2` | Luma metric; chroma stays SAD |
 | `prefix` | `MVUtensils` | Select Super data and name analysis properties |
 
-One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,8×4,8×8,12×12,16×2,16×8,16×16,24×24,32×16,32×32,48×48,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.
+One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,6×6,8×4,8×8,12×12,16×2,16×8,16×16,24×24,32×16,32×32,48×48,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.
 
 ## 7. Boundaries, missing data, and errors
 

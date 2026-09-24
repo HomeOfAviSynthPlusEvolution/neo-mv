@@ -65,9 +65,10 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
     validate_owned_field(old);
   validate_analysis_precision<T>(target.bits);
   if (old.metadata.bits != target.bits || controls.mvlambda < 0 || controls.search < 0 || controls.search > 5 ||
-      controls.pnew < 0 || controls.pnew > 256 ||
-      (controls.satd && (target.block_width % 4 || target.block_height % 4)))
+      controls.pnew < 0 || controls.pnew > 256)
     throw std::invalid_argument("invalid Recalculate controls or input precision");
+  if (controls.satd && (target.block_width % 4 || target.block_height % 4))
+    throw std::invalid_argument("SATD requires block width and height divisible by 4");
   if constexpr (!GeometryValidated)
     validate_motion_layer(target, geometry, true);
   validate_sampling_frames(geometry, frames);

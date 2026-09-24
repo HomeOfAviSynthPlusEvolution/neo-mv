@@ -358,6 +358,32 @@ HWY_INLINE std::int64_t FixedByteSad4(const std::uint8_t *a, std::ptrdiff_t as, 
   return static_cast<std::int64_t>(hn::ReduceSum(wide,
       hn::SumsOf8AbsDiff(hn::LoadU(d, packed_a), hn::LoadU(d, packed_b))));
 }
+// Pack narrow rows without reading padding. Zero lanes contribute no SAD.
+template <class T, int Width>
+HWY_INLINE std::int64_t PackedSmallSad(const T* a, std::ptrdiff_t as, const T* b, std::ptrdiff_t bs) {
+  constexpr int stride = Width == 6 ? 8 : 4;
+  constexpr int count = Width == 6 ? 48 : 16;
+  HWY_ALIGN T pa[count] = {}, pb[count] = {};
+  for (int y = 0; y < Width; ++y) {
+    hwy::CopyBytes<Width * sizeof(T)>(a + y * as, pa + y * stride);
+    hwy::CopyBytes<Width * sizeof(T)>(b + y * bs, pb + y * stride);
+  }
+  if constexpr (std::is_same_v<T, std::uint8_t>) {
+    const hn::CappedTag<T, 16> d;
+    const hn::Repartition<std::uint64_t, decltype(d)> wide;
+    auto sum = hn::Zero(wide);
+    for (int x = 0; x < count; x += int(hn::Lanes(d)))
+      sum = hn::Add(sum, hn::SumsOf8AbsDiff(hn::LoadU(d, pa + x), hn::LoadU(d, pb + x)));
+    return static_cast<std::int64_t>(hn::ReduceSum(wide, sum));
+  } else {
+    const hn::CappedTag<T, 8> d;
+    const hn::Repartition<std::int32_t, decltype(d)> wide;
+    auto sum = hn::Zero(wide);
+    for (int x = 0; x < count; x += int(hn::Lanes(d)))
+      sum = hn::Add(sum, ShortSadPairs(d, pa + x, pb + x));
+    return hn::ReduceSum(wide, sum) + std::int64_t(count) * 32768;
+  }
+}
 template <class D>
 std::int64_t SmallByteSad(D d, const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b,
                           std::ptrdiff_t bs, int w, int h) {
@@ -623,6 +649,10 @@ std::int64_t Metric(const T *a, std::ptrdiff_t as, const T *b, std::ptrdiff_t bs
   if constexpr (!std::is_same_v<T, float>) {
     if (!satd && w <= 128 && h <= 128) {
 #if HWY_TARGET != HWY_SCALAR
+      if (w == 6 && h == 6)
+        return PackedSmallSad<T, 6>(a, as, b, bs);
+      if (w == 3 && h == 3)
+        return PackedSmallSad<T, 3>(a, as, b, bs);
       if constexpr (std::is_same_v<T, std::uint8_t>) {
         if (w == 4 && h == 4)
           return FixedByteSad4(a, as, b, bs);
@@ -734,12 +764,14 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
 template <class T, int Width, bool Bounded, bool LateCheck = false>
 HWY_INLINE std::int64_t Sad420Plane(const MetricRequest<T>& r, std::int64_t limit) {
 #if HWY_TARGET != HWY_SCALAR
-  if constexpr (std::is_same_v<T, std::uint16_t>) {
+  if constexpr (Width == 3 || Width == 6) {
+    return PackedSmallSad<T, Width>(r.source, r.source_stride, r.reference, r.reference_stride);
+  } else if constexpr (std::is_same_v<T, std::uint16_t>) {
     if (Width % hn::Lanes(hn::CappedTag<std::uint16_t, Width>{}) == 0)
       return FixedShortSad<Width, Width, Bounded>(r.source, r.source_stride,
                                                 r.reference, r.reference_stride, limit);
   }
-  if constexpr (std::is_same_v<T, std::uint8_t>) {
+  else if constexpr (std::is_same_v<T, std::uint8_t>) {
     if constexpr (Width == 4)
       return FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
     else
@@ -841,7 +873,7 @@ namespace fused_motion {
 #include "core/motion/analyse-block-inl.hpp"
 #undef NEO_MV_MOTION_ATTR
 
-template <class T, int Pel, int GrayWidth = 0>
+template <class T, int Pel, int GrayWidth = 0, int LumaWidth = 16>
 struct AnalyseSad {
   const MotionMetricRequest<T>& block;
   const MetricReferenceFrames<T>& frames;
@@ -858,7 +890,7 @@ struct AnalyseSad {
       errors[1] = errors[2] = 0;
       return !Bounded || errors[0] < limit;
     } else {
-      return MotionMetric420Bounded<T, 16, Bounded, Pel>(block, frames, vector.x, vector.y, limit, errors);
+      return MotionMetric420Bounded<T, LumaWidth, Bounded, Pel>(block, frames, vector.x, vector.y, limit, errors);
     }
   }
   HWY_INLINE BlockError operator()(MotionVector vector) const {
@@ -893,12 +925,12 @@ struct AnalyseSad {
 };
 } // namespace fused_motion
 
-template <class T, int Pel>
+template <class T, int Pel, int Width = 16>
 SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricReferenceFrames<T>& frames,
                              MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
                              CandidateDomain omega, int layer, std::int64_t lambda,
                              std::int64_t bad_threshold, AnalyseControls controls) {
-  fused_motion::AnalyseSad<T, Pel> execution{block, frames};
+  fused_motion::AnalyseSad<T, Pel, 0, Width> execution{block, frames};
   return fused_motion::block_impl(predictor, spatial, zero, omega, layer, Pel, lambda, bad_threshold,
                                   controls, execution);
 }
@@ -907,6 +939,13 @@ SearchResult AnalyseBlock420(const MotionMetricRequest<T>& block, const MetricRe
                              MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero,
                              CandidateDomain omega, int layer, std::int64_t lambda,
                              std::int64_t bad_threshold, AnalyseControls controls) {
+  if (block.planes[0].width == 6) {
+    if (block.pel == 1)
+      return AnalyseBlock420<T, 1, 6>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    if (block.pel == 2)
+      return AnalyseBlock420<T, 2, 6>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    return AnalyseBlock420<T, 4, 6>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  }
   if (block.pel == 1)
     return AnalyseBlock420<T, 1>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
   if (block.pel == 2)
@@ -923,25 +962,25 @@ NEO_ANALYSE_IMPL(std::uint8_t, U8)
 NEO_ANALYSE_IMPL(std::uint16_t, U16)
 #undef NEO_ANALYSE_IMPL
 
-template <int Width, int Pel>
-SearchResult AnalyseBlockGray(const MotionMetricRequest<std::uint8_t>& block,
-    const MetricReferenceFrames<std::uint8_t>& frames, MotionTriple predictor,
+template <class T, int Width, int Pel>
+SearchResult AnalyseBlockGray(const MotionMetricRequest<T>& block,
+    const MetricReferenceFrames<T>& frames, MotionTriple predictor,
     const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
     std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
-  fused_motion::AnalyseSad<std::uint8_t, Pel, Width> execution{block, frames};
+  fused_motion::AnalyseSad<T, Pel, Width> execution{block, frames};
   return fused_motion::block_impl(predictor, spatial, zero, omega, layer, Pel, lambda,
                                   bad_threshold, controls, execution);
 }
-template <int Width>
-SearchResult AnalyseBlockGrayPel(const MotionMetricRequest<std::uint8_t>& block,
-    const MetricReferenceFrames<std::uint8_t>& frames, MotionTriple predictor,
+template <class T, int Width>
+SearchResult AnalyseBlockGrayPel(const MotionMetricRequest<T>& block,
+    const MetricReferenceFrames<T>& frames, MotionTriple predictor,
     const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
     std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
   if (block.pel == 1)
-    return AnalyseBlockGray<Width, 1>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    return AnalyseBlockGray<T, Width, 1>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
   if (block.pel == 2)
-    return AnalyseBlockGray<Width, 2>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
-  return AnalyseBlockGray<Width, 4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    return AnalyseBlockGray<T, Width, 2>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  return AnalyseBlockGray<T, Width, 4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
 }
 
 SearchResult AnalyseBlockGrayU8(const MotionMetricRequest<std::uint8_t>& block,
@@ -949,10 +988,20 @@ SearchResult AnalyseBlockGrayU8(const MotionMetricRequest<std::uint8_t>& block,
     const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
     std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
   if (block.planes[0].width == 4)
-    return AnalyseBlockGrayPel<4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    return AnalyseBlockGrayPel<std::uint8_t, 4>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  if (block.planes[0].width == 6)
+    return AnalyseBlockGrayPel<std::uint8_t, 6>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
   if (block.planes[0].width == 8)
-    return AnalyseBlockGrayPel<8>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
-  return AnalyseBlockGrayPel<16>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+    return AnalyseBlockGrayPel<std::uint8_t, 8>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+  return AnalyseBlockGrayPel<std::uint8_t, 16>(block, frames, predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
+}
+
+SearchResult AnalyseBlockGrayU16(const MotionMetricRequest<std::uint16_t>& block,
+    const MetricReferenceFrames<std::uint16_t>& frames, MotionTriple predictor,
+    const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega, int layer,
+    std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls) {
+  return AnalyseBlockGrayPel<std::uint16_t, 6>(block, frames, predictor, spatial, zero, omega, layer,
+                                               lambda, bad_threshold, controls);
 }
 
 #define NEO_IMPL(T, S)                                                                                                 \
@@ -1014,8 +1063,12 @@ const char *target_name() {
 HWY_EXPORT(AnalyseBlock420U8);
 HWY_EXPORT(AnalyseBlock420U16);
 HWY_EXPORT(AnalyseBlockGrayU8);
-AnalyseBlockFunction<std::uint8_t> analyse_block_gray_function() {
+HWY_EXPORT(AnalyseBlockGrayU16);
+AnalyseBlockFunction<std::uint8_t> analyse_block_gray_function(std::uint8_t*) {
   return HWY_DYNAMIC_DISPATCH(AnalyseBlockGrayU8);
+}
+AnalyseBlockFunction<std::uint16_t> analyse_block_gray_function(std::uint16_t*) {
+  return HWY_DYNAMIC_DISPATCH(AnalyseBlockGrayU16);
 }
 AnalyseBlockFunction<std::uint8_t> analyse_block_420_function(std::uint8_t*) {
   return HWY_DYNAMIC_DISPATCH(AnalyseBlock420U8);

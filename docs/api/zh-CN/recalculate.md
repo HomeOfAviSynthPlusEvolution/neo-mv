@@ -30,7 +30,7 @@ Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlam
 | `meander` | 布尔 | `true` | 相邻块行交替左右遍历方向。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 16×2 块。 |
+| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 6×6 和 16×2 块。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
 
 ### 搜索模式

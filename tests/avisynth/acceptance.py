@@ -157,4 +157,27 @@ for block in (12, 24, 48):
             run(f"square-{block}-{overlap}-{satd}",
                 "return neo_mv_Compensate(c,s,r[0],thsad=16320,thscd1=16320)",
                 frame=0, prefix=setup, extra=("--expect-y8-sum", str(192 * 192 * 30)))
+# 6x6 SAD: exercise 3x3 chroma and overlap normalization through the AVS bridge.
+for pixel in ("Y8", "Y16", "Y32", "YV12", "YUV420P16", "YUV420PS", "YV16", "YV24"):
+    for overlap in ((0, 1, 2, 3) if pixel in ("Y8", "Y16", "Y32", "YV24") else (0, 2)):
+        setup = (f'c=BlankClip(width=32,height=26,length=5,pixel_type="{pixel}")\n'
+                 f's=neo_mv_Super(c,blksize=6,overlap={overlap},pad=16,pel=2)\n'
+                 'v=neo_mv_AnalyseMany(s,radius=1,badrange=0)\n'
+                 'r=neo_mv_Recalculate(s,v,thsad=0)\n'
+                 'b=r[0]\nf=r[1]\n')
+        for name in ("compensate", "degrain", "flow", "inter", "fps", "blur",
+                     "vector-mask", "sad-mask", "occlusion-mask"):
+            run(f"six-{pixel}-{overlap}-{name}", "return " + paths[name], frame=2, prefix=setup)
+for expression in ('neo_mv_Analyse(s,satd=true)', 'neo_mv_AnalyseMany(s,satd=true)[0]',
+                   'neo_mv_Recalculate(s,v,satd=true)[0]'):
+    run("six-satd-" + str(count), "return " + expression, prefix=setup, error="divisible by 4")
+for overlap in (1, 3):
+    run(f"six-420-overlap-{overlap}",
+        f"return neo_mv_Super(c,blksize=6,overlap={overlap})", error="chroma aligned")
+# A distinct reference must actually be read, rather than simply copying the input.
+for overlap in range(4):
+    setup = temporal.replace('blksize=8,overlap=4', f'blksize=6,overlap={overlap}')
+    run(f"six-reference-{overlap}",
+        "return neo_mv_Compensate(c,s,b,thsad=16320,thscd1=16320).Prefetch(4)",
+        frame=0, prefix=setup, extra=("--expect-y8-sum", str(32 * 32 * 30)))
 print(f"AviSynth {a.backend}: {count} cases passed; all 44 functions registered.")

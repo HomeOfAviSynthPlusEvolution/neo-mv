@@ -432,7 +432,7 @@ public:
                        std::int64_t bad_threshold, AnalyseControls controls) {
     if constexpr (std::is_integral_v<T>) {
       // Prove the cost bound once for all candidates, including out-of-domain
-      // seeds. Integer 16x16 420 SAD and byte 4/8/16-square gray SAD are at most
+      // seeds. Integer 6/16-square 420 SAD, integer 6-square gray SAD and byte 4/8/16-square gray SAD are at most
       // 384*65535; with these vector and lambda bounds the distance product
       // is below 2^62. Penalties and
       // their sum cannot overflow. Other cases retain checked evaluation.
@@ -440,10 +440,13 @@ public:
         const auto dx = x - predictor.vector.x, dy = y - predictor.vector.y;
         return dx >= -32767 && dx <= 32767 && dy >= -32767 && dy <= 32767;
       };
-      const bool gray = std::is_same_v<T, std::uint8_t> && !chroma_ &&
+      const bool gray = !chroma_ &&
           !block_.planes[0].satd && block_.planes[0].width == block_.planes[0].height &&
-          (block_.planes[0].width == 4 || block_.planes[0].width == 8 || block_.planes[0].width == 16);
-      bool admitted = (gray || (bounded_metric_batch_ && block_.planes[0].width == 16)) &&
+          (block_.planes[0].width == 6 || (std::is_same_v<T, std::uint8_t> &&
+           (block_.planes[0].width == 4 || block_.planes[0].width == 8 || block_.planes[0].width == 16)));
+      const bool six420 = chroma_ && ratio_x_ == 2 && ratio_y_ == 2 &&
+          !block_.planes[0].satd && block_.planes[0].width == 6 && block_.planes[0].height == 6;
+      bool admitted = (gray || six420 || (bounded_metric_batch_ && block_.planes[0].width == 16)) &&
           pel == block_.pel && lambda >= 0 && lambda <= INT32_MAX &&
           omega.left >= INT32_MIN && omega.top >= INT32_MIN && omega.right <= std::int64_t(INT32_MAX) + 1 &&
           omega.bottom <= std::int64_t(INT32_MAX) + 1 && omega.left < omega.right && omega.top < omega.bottom &&
@@ -454,11 +457,9 @@ public:
       for (const auto& p : spatial.p)
         admitted = admitted && near(p.vector.x, p.vector.y);
       if (admitted) {
-        if constexpr (std::is_same_v<T, std::uint8_t>) {
-          if (gray) {
-            const auto execute = detail::analyse_block_gray_function();
-            return execute(block_, frames(), predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
-          }
+        if (gray) {
+          const auto execute = detail::analyse_block_gray_function(static_cast<T*>(nullptr));
+          return execute(block_, frames(), predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);
         }
         const auto execute = detail::analyse_block_420_function(static_cast<T*>(nullptr));
         return execute(block_, frames(), predictor, spatial, zero, omega, layer, lambda, bad_threshold, controls);

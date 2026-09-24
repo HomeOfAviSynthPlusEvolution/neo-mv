@@ -30,7 +30,7 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `meander` | Boolean | `true` | Alternate horizontal block traversal on successive rows. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 16×2 blocks. |
+| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 6×6 and 16×2 blocks. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
 
 ### Search modes

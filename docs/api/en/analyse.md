@@ -38,7 +38,7 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `trymany` | Integer | `0` | 0 searches from the selected seed; 1 tries multiple seeds on coarse levels; 2 does so on all levels. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 16×2 blocks. |
+| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 6×6 and 16×2 blocks. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
 
 ### Search modes
@@ -93,7 +93,7 @@ return result
 
 ## Restrictions and common errors
 
-Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 16×2. Changed frame metadata or nonfinite calculations fail at evaluation.
+Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2. Changed frame metadata or nonfinite calculations fail at evaluation.
 
 ## Computation
 

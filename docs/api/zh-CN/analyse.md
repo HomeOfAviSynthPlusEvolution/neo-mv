@@ -38,7 +38,7 @@ Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chro
 | `trymany` | 整数 | `0` | 0 从选定初始候选搜索；1 在粗层分别尝试多个候选；2 在所有层尝试。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 16×2 块。 |
+| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 6×6 和 16×2 块。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
 
 ### 搜索模式
@@ -93,7 +93,7 @@ return result
 
 ## 限制与常见错误
 
-缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 16×2。取帧时元数据变化或非有限计算会报错。
+缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 6×6 和 16×2。取帧时元数据变化或非有限计算会报错。
 
 ## 计算原理
 
