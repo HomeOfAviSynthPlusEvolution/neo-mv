@@ -46,9 +46,16 @@ template <class T> void run() {
       for (auto op : {neo_mv::BlockMetric::sad, neo_mv::BlockMetric::satd}) {
         if (op == neo_mv::BlockMetric::satd && (width % 4 || height % 4))
           continue;
-        check(neo_mv::block_metric(src.read(), ref.read(), op) ==
-                  neo_mv::simd::block_metric(src.read(), ref.read(), op),
-              "metric mismatch");
+        const auto expected = neo_mv::block_metric(src.read(), ref.read(), op);
+        const auto actual = neo_mv::simd::block_metric(src.read(), ref.read(), op);
+        if (expected != actual) {
+          std::cerr << "metric mismatch: type="
+                    << (std::is_same_v<T, float> ? "float" : sizeof(T) == 1 ? "uint8" : "uint16")
+                    << " width=" << width << " height=" << height
+                    << " metric=" << (op == neo_mv::BlockMetric::sad ? "SAD" : "SATD")
+                    << " scalar=" << expected << " simd=" << actual << '\n';
+          throw std::runtime_error("metric mismatch");
+        }
       }
       Buffer<T> a(width + 7, height + 5), b(width + 7, height + 5);
       neo_mv::extend_border(src.read(), a.view(), width + 3, height + 1, 2, 2);
