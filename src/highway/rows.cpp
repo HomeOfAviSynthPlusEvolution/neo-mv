@@ -319,7 +319,7 @@ HWY_INLINE std::int64_t FixedShortSad(const std::uint16_t *a, std::ptrdiff_t as,
            std::int64_t(Height) * Width * 32768;
 }
 
-template <int Width, int Height, bool Bounded = false>
+template <int Width, int Height, bool Bounded = false, bool LateCheck = false>
 HWY_INLINE std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, const std::uint8_t *b, std::ptrdiff_t bs,
                                     std::int64_t limit = INT64_MAX) {
   const hn::CappedTag<std::uint8_t, Width> d;
@@ -334,7 +334,7 @@ HWY_INLINE std::int64_t FixedByteSad(const std::uint8_t *a, std::ptrdiff_t as, c
     sum2 = hn::Add(sum2, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 2 * as), hn::LoadU(d, br + 2 * bs)));
     sum3 = hn::Add(sum3, hn::SumsOf8AbsDiff(hn::LoadU(d, ar + 3 * as), hn::LoadU(d, br + 3 * bs)));
     if constexpr (Bounded) {
-      if (Height != 16 || y != 0) {
+      if (Height != 16 || (LateCheck ? y >= 8 : y != 0)) {
         total = static_cast<std::int64_t>(hn::ReduceSum(wide, hn::Add(hn::Add(sum0, sum1), hn::Add(sum2, sum3))));
         if (total >= limit)
           return total;
@@ -731,7 +731,7 @@ void MetricBatch420Small(const MetricRequest<T> *requests, int, std::int64_t *er
     errors[i] = Metric(r.source, r.source_stride, r.reference, r.reference_stride, r.width, r.height, r.satd);
   }
 }
-template <class T, int Width, bool Bounded>
+template <class T, int Width, bool Bounded, bool LateCheck = false>
 HWY_INLINE std::int64_t Sad420Plane(const MetricRequest<T>& r, std::int64_t limit) {
 #if HWY_TARGET != HWY_SCALAR
   if constexpr (std::is_same_v<T, std::uint16_t>) {
@@ -743,7 +743,7 @@ HWY_INLINE std::int64_t Sad420Plane(const MetricRequest<T>& r, std::int64_t limi
     if constexpr (Width == 4)
       return FixedByteSad4(r.source, r.source_stride, r.reference, r.reference_stride);
     else
-      return FixedByteSad<Width, Width, Bounded>(r.source, r.source_stride,
+      return FixedByteSad<Width, Width, Bounded, LateCheck>(r.source, r.source_stride,
                                                 r.reference, r.reference_stride, limit);
   }
 #endif
@@ -853,7 +853,8 @@ struct AnalyseSad {
       const auto phase = std::size_t((vector.y - Pel * qy) * Pel + vector.x - Pel * qx);
       const auto r = MotionPlane(block, frames, 0, qx, qy, phase);
       // For 8x8, one final reduction is cheaper than checking a four-row prefix.
-      errors[0] = Sad420Plane<T, GrayWidth, (Bounded && GrayWidth != 8)>(r, limit);
+      // Gray 16x16 first checks at 12 rows; 420 keeps its earlier checks.
+      errors[0] = Sad420Plane<T, GrayWidth, (Bounded && GrayWidth != 8), true>(r, limit);
       errors[1] = errors[2] = 0;
       return !Bounded || errors[0] < limit;
     } else {
