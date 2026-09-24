@@ -196,8 +196,7 @@ struct RecalculateRuntime final : Runtime {
     require(controls.mvlambda >= 0 && controls.search >= 0 && controls.search <= 5 && controls.pnew >= 0 &&
                 controls.pnew <= 256,
             "invalid Recalculate controls");
-    require(controls.metric != BlockMetric::satd || (target.block_width % 4 == 0 && target.block_height % 4 == 0),
-            "SATD requires block width and height divisible by 4");
+    validate_motion_metric(controls.metric, target.block_width, target.block_height, target.bits);
     fields = args.boolean("fields", false);
     tff = args.tff();
     require(!fields || old_metadata.pel > 1, "fields requires old pel > 1");

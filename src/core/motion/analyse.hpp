@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/motion/composition.hpp"
+#include "core/motion/dct.hpp"
 
 namespace neo_mv {
 
@@ -31,6 +32,7 @@ inline void validate_analyse_controls(AnalyseControls c, int block_width, int bl
 inline std::vector<AnalysisLayer> plan_analysis(AnalysisMetadata finest, const std::vector<SamplingGeometry>& super,
                                                 AnalyseControls controls = {}) {
   validate_analyse_controls(controls, finest.block_width, finest.block_height);
+  validate_motion_metric(controls.metric, finest.block_width, finest.block_height, finest.bits);
   if (!geometry_detail::block_pair(finest.block_width, finest.block_height) || finest.overlap_x < 0 ||
       finest.overlap_y < 0 || finest.overlap_x > finest.block_width / 2 || finest.overlap_y > finest.block_height / 2 ||
       super.empty() || super.size() > INT32_MAX || finest.delta == 0)
@@ -136,6 +138,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
     throw std::invalid_argument("missing analysis plan layers");
   const auto& finest = layers.front().metadata;
   validate_analysis_precision<T>(finest.bits);
+  validate_motion_metric(controls.metric, finest.block_width, finest.block_height, finest.bits);
   if (frames.size() < layers.size())
     throw std::invalid_argument("missing analysis frame levels");
   const bool field = controls.fields && finest.pel > 1 && finest.delta % 2 != 0;
@@ -182,10 +185,16 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         if (coarsest)
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
-        auto evaluate = Kernels::prepare_block_error(layer.sampling, block, prepared_frames,
-                                                     controls.metric);
-        const auto result = analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
-                                                  badsad, controls, evaluate, 0);
+        SearchResult result;
+        if (controls.metric == BlockMetric::dct) {
+          DctBlockError<T> evaluate(layer.sampling, block, frames[index], m.bits);
+          result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
+                                         badsad, controls, evaluate);
+        } else {
+          auto evaluate = Kernels::prepare_block_error(layer.sampling, block, prepared_frames, controls.metric);
+          result = analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
+                                                 badsad, controls, evaluate, 0);
+        }
         current.values[std::size_t(y) * m.blocks_x + x] = {result.vector, result.raw};
       }
     }

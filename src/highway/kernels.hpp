@@ -43,6 +43,8 @@ void extend_border(span2d::Plane<const T> src, span2d::Plane<T> dst, int ww, int
 }
 template <class T, bool Validated = false>
 std::int64_t block_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric op) {
+  if (op == BlockMetric::dct)
+    throw std::invalid_argument("DCT requires a bit-depth-aware workspace");
   if constexpr (!Validated) {
     validate_plane(a);
     validate_plane(b);
@@ -243,6 +245,8 @@ SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, in
 template <class T, bool Validated = false>
 BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
                        BlockMetric metric) {
+  if (metric == BlockMetric::dct)
+    throw std::invalid_argument("DCT requires a bit-depth-aware workspace");
   if constexpr (!Validated) {
     validate_sampling_domain(g, b, sampling_detail::singleton(vector));
     if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
@@ -381,6 +385,8 @@ public:
   PreparedBlockError(const SamplingGeometry& g, BlockRegion block, const FrameInput& frame_input, BlockMetric metric)
       : ratio_x_(g.ratio_x), ratio_y_(g.ratio_y), chroma_(g.chroma),
         frames_(store_frames(g, frame_input)) {
+    if (metric != BlockMetric::sad && metric != BlockMetric::satd)
+      throw std::invalid_argument("prepared SIMD metric requires SAD or SATD");
     block_.pel = g.pel;
     if constexpr (std::is_same_v<T, float>)
       metric_batch_ = detail::metric_batch_function(static_cast<T *>(nullptr));

@@ -180,4 +180,18 @@ for overlap in range(4):
     run(f"six-reference-{overlap}",
         "return neo_mv_Compensate(c,s,b,thsad=16320,thscd1=16320).Prefetch(4)",
         frame=0, prefix=setup, extra=("--expect-y8-sum", str(32 * 32 * 30)))
+# Exercise DCT through the C++ entry, including Prefetch and non-power-of-two blocks.
+for pixel in ("Y8", "Y16", "YUV420P10", "YUV420P16"):
+    for block in (6, 8, 12, 24, 48):
+        setup = (f'c=BlankClip(width=96,height=96,length=6,pixel_type="{pixel}")\n'
+                 f's=neo_mv_Super(c,blksize={block},overlap=0,pad=16,pel=2)\n'
+                 'v=neo_mv_AnalyseMany(s,radius=1,metric="dct",badrange=0)\n'
+                 'r=neo_mv_Recalculate(s,v,metric="dct",thsad=0)\n')
+        run(f"dct-{pixel}-{block}", "return neo_mv_Compensate(c,s,r[0]).Prefetch(4)", frame=2, prefix=setup)
+setup = ('c=BlankClip(width=32,height=32,length=6,pixel_type="Y32")\n'
+         's=neo_mv_Super(c,blksize=8,overlap=0)\n'
+         'v=neo_mv_Analyse(s)\n')
+for expression in ('neo_mv_Analyse(s,metric="dct")', 'neo_mv_AnalyseMany(s,metric="dct")[0]',
+                   'neo_mv_Recalculate(s,v,metric="dct")[0]'):
+    run("float-dct-"+str(count), "return "+expression, prefix=setup, error="integer samples")
 print(f"AviSynth {a.backend}: {count} cases passed; all 44 functions registered.")

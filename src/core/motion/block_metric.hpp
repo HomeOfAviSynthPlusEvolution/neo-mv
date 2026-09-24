@@ -8,12 +8,22 @@
 
 namespace neo_mv {
 
-enum class BlockMetric { sad, satd };
+enum class BlockMetric { sad, satd, dct };
 
 inline BlockMetric parse_block_metric(std::string_view value) {
   if (value == "sad") return BlockMetric::sad;
   if (value == "satd") return BlockMetric::satd;
-  throw std::invalid_argument("metric must be sad or satd");
+  if (value == "dct") return BlockMetric::dct;
+  throw std::invalid_argument("metric must be sad, satd or dct");
+}
+
+inline void validate_motion_metric(BlockMetric metric, int width, int height, int bits) {
+  if (metric != BlockMetric::sad && metric != BlockMetric::satd && metric != BlockMetric::dct)
+    throw std::invalid_argument("unknown motion metric");
+  if (metric == BlockMetric::satd && (width % 4 || height % 4))
+    throw std::invalid_argument("SATD requires block width and height divisible by 4");
+  if (metric == BlockMetric::dct && (bits < 8 || bits > 16))
+    throw std::invalid_argument("DCT requires integer samples");
 }
 
 namespace metric_detail {
@@ -71,6 +81,8 @@ inline std::int64_t encode_float_error(float error) {
 template <class T, bool Validated = false>
 std::int64_t block_metric(span2d::Plane<const T> source, span2d::Plane<const T> reference, BlockMetric metric) {
   static_assert(supported_sample<T>, "unsupported sample storage");
+  if (metric == BlockMetric::dct)
+    throw std::invalid_argument("DCT requires a bit-depth-aware workspace");
   if constexpr (!Validated) {
     validate_plane(source);
     validate_plane(reference);

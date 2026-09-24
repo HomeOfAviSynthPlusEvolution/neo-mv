@@ -1,4 +1,5 @@
 #pragma once
+#include "core/motion/dct.hpp"
 
 #include "core/motion/composition.hpp"
 
@@ -65,6 +66,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
   if constexpr (!InputValidated)
     validate_owned_field(old);
   validate_analysis_precision<T>(target.bits);
+  validate_motion_metric(controls.metric, target.block_width, target.block_height, target.bits);
   if (old.metadata.bits != target.bits || controls.mvlambda < 0 || controls.search < 0 || controls.search > 5 ||
       controls.pnew < 0 || controls.pnew > 256)
     throw std::invalid_argument("invalid Recalculate controls or input precision");
@@ -87,17 +89,26 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto block = analysis_block(target, bx, by);
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
-      auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames,
-                                                   controls.metric);
-      const auto error = evaluate(u);
-      SearchResult result{u, error.raw, error.raw};
-      if (error.raw > threshold) {
-        const auto lambda = by == 0 ? 0 : lambda0 / (target.pel * target.pel);
-        // Recalculate's short searches use the full metric path; bounded
-        // metric dispatch costs more than it saves here.
-        result = refine_motion(
-            result, {u, lambda, controls.pnew, omega, controls.search, std::max(1, controls.searchparam), {}},
-            [&](MotionVector vector) { return evaluate(vector); });
+      const auto search = [&](auto& evaluate) {
+        const auto error = evaluate(u);
+        SearchResult result{u, error.raw, error.raw};
+        if (error.raw > threshold) {
+          const auto lambda = by == 0 ? 0 : lambda0 / (target.pel * target.pel);
+          // Recalculate's short searches use the full metric path; bounded
+          // metric dispatch costs more than it saves here.
+          result = refine_motion(
+              result, {u, lambda, controls.pnew, omega, controls.search, std::max(1, controls.searchparam), {}},
+              [&](MotionVector vector) { return evaluate(vector); });
+        }
+        return result;
+      };
+      SearchResult result;
+      if (controls.metric == BlockMetric::dct) {
+        DctBlockError<T> evaluate(geometry, block, frames, target.bits);
+        result = search(evaluate);
+      } else {
+        auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames, controls.metric);
+        result = search(evaluate);
       }
       output.values[std::size_t(by) * target.blocks_x + bx] = {result.vector, result.raw};
     }

@@ -299,3 +299,29 @@ for name in ("", "SAD", "1", "unknown"):
     fails(lambda: mv.Analyse(s8, metric=name), "metric must be")
     fails(lambda: mv.AnalyseMany(s8, metric=name), "metric must be")
     fails(lambda: mv.Recalculate(s8, v8, metric=name), "metric must be")
+
+# DCT uses the selected error in both analysis and refinement. Constant blocks
+# give an exact DC-only oracle across sizes and integer precisions.
+for fmt in (vs.GRAY8, vs.GRAY10, vs.GRAY16):
+    for bw, bh in ((4,4),(6,6),(8,4),(8,8),(12,12),(16,2),(16,8),(16,16),
+                   (24,24),(32,16),(32,32),(48,48),(64,32),(64,64),(128,64),(128,128)):
+        a = core.std.BlankClip(width=bw*2, height=bh*2, length=3, format=fmt, color=[32])
+        b = core.std.BlankClip(a, color=[96])
+        c = core.std.Interleave([a,b])
+        s = mv.Super(c, blksize=[bw,bh], overlap=0, pad=16, pel=1, onelevel=True)
+        v = outputs(mv.AnalyseMany(s, radius=1, metric="dct", badrange=0, searchparam=1))
+        r = outputs(mv.Recalculate(s, v, metric="dct", thsad=0, searchparam=1))
+        expected = 64 * int(math.sqrt(bw*bh)+0.5)
+        for node in v+r:
+            errors = node.get_frame(2).props[P+"AnalysisSAD"]
+            assert all(e == expected for e in errors), (fmt,bw,bh,errors,expected)
+        # Submit concurrent host requests; all workspaces must remain private.
+        pending = [r[0].get_frame_async(n) for n in (1,2,3,4)]
+        for future in pending:
+            errors = future.result().props[P+"AnalysisSAD"]
+            assert all(e == expected for e in errors), (fmt,bw,bh,errors,expected)
+float_super = mv.Super(blank(vs.GRAYS, width=32, height=32), blksize=8, overlap=0)
+float_vectors = mv.Analyse(float_super)
+fails(lambda: mv.Analyse(float_super, metric="dct"), "integer samples")
+fails(lambda: mv.AnalyseMany(float_super, metric="dct"), "integer samples")
+fails(lambda: mv.Recalculate(float_super, float_vectors, metric="dct"), "integer samples")
