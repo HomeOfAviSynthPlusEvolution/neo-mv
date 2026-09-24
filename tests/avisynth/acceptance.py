@@ -149,12 +149,12 @@ for pixel in ("Y8", "YUV420P10", "YUV420P16", "Y32", "YUV444PS"):
 # Non-power-of-two square blocks through the public analysis/recalculation chain.
 for block in (12, 24, 48):
     for overlap in (0, block // 2):
-        for satd in (False, True):
+        for metric in ("sad", "satd"):
             setup = temporal[:temporal.index("s=neo_mv_Super")].replace("width=32,height=32", "width=192,height=192")
             setup += (f"s=neo_mv_Super(c,blksize={block},overlap={overlap},pad=32,pel=1)\n"
-                      f"v=neo_mv_AnalyseMany(s,radius=1,badrange=0,satd={str(satd).lower()})\n"
-                      f"r=neo_mv_Recalculate(s,v,thsad=0,satd={str(satd).lower()})\n")
-            run(f"square-{block}-{overlap}-{satd}",
+                      f"v=neo_mv_AnalyseMany(s,radius=1,badrange=0,metric=\"{metric}\")\n"
+                      f"r=neo_mv_Recalculate(s,v,thsad=0,metric=\"{metric}\")\n")
+            run(f"square-{block}-{overlap}-{metric}",
                 "return neo_mv_Compensate(c,s,r[0],thsad=16320,thscd1=16320)",
                 frame=0, prefix=setup, extra=("--expect-y8-sum", str(192 * 192 * 30)))
 # 6x6 SAD: exercise 3x3 chroma and overlap normalization through the AVS bridge.
@@ -168,8 +168,8 @@ for pixel in ("Y8", "Y16", "Y32", "YV12", "YUV420P16", "YUV420PS", "YV16", "YV24
         for name in ("compensate", "degrain", "flow", "inter", "fps", "blur",
                      "vector-mask", "sad-mask", "occlusion-mask"):
             run(f"six-{pixel}-{overlap}-{name}", "return " + paths[name], frame=2, prefix=setup)
-for expression in ('neo_mv_Analyse(s,satd=true)', 'neo_mv_AnalyseMany(s,satd=true)[0]',
-                   'neo_mv_Recalculate(s,v,satd=true)[0]'):
+for expression in ('neo_mv_Analyse(s,metric="satd")', 'neo_mv_AnalyseMany(s,metric="satd")[0]',
+                   'neo_mv_Recalculate(s,v,metric="satd")[0]'):
     run("six-satd-" + str(count), "return " + expression, prefix=setup, error="divisible by 4")
 for overlap in (1, 3):
     run(f"six-420-overlap-{overlap}",

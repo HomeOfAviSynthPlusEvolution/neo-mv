@@ -8,7 +8,8 @@ struct AnalyseControls {
   std::int32_t levels = 0, search = 2, searchparam = 2, pelsearch = 1;
   std::int32_t mvlambda = 1000, lsad = 400, plevel = 1;
   std::int32_t pnew = 25, pzero = 25, pglobal = 0, badsad = 10000, badrange = 24, trymany = 0;
-  bool globalmv = true, meander = true, fields = false, satd = false;
+  bool globalmv = true, meander = true, fields = false;
+  BlockMetric metric = BlockMetric::sad;
 };
 struct AnalysisLayer {
   AnalysisMetadata metadata;
@@ -21,7 +22,7 @@ inline void validate_analyse_controls(AnalyseControls c, int block_width, int bl
       c.pnew < 0 || c.pnew > 256 || c.pzero < 0 || c.pzero > 256 || c.pglobal < 0 || c.pglobal > 256 || c.trymany < 0 ||
       c.trymany > 2)
     throw std::invalid_argument("invalid Analyse controls");
-  if (c.satd && (block_width % 4 || block_height % 4))
+  if (c.metric == BlockMetric::satd && (block_width % 4 || block_height % 4))
     throw std::invalid_argument("SATD requires block width and height divisible by 4");
 }
 
@@ -182,7 +183,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
         auto evaluate = Kernels::prepare_block_error(layer.sampling, block, prepared_frames,
-                                                     controls.satd ? BlockMetric::satd : BlockMetric::sad);
+                                                     controls.metric);
         const auto result = analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
                                                   badsad, controls, evaluate, 0);
         current.values[std::size_t(y) * m.blocks_x + x] = {result.vector, result.raw};

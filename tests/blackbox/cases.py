@@ -51,7 +51,7 @@ def search0_translation(operation, distance):
     if operation == "analyse":
         params.update(delta=1, pelsearch=distance)
     else:
-        params.update(thsad=0, smooth=False, searchparam=distance, fields=False, satd=False)
+        params.update(thsad=0, smooth=False, searchparam=distance, fields=False, metric="sad")
     spec = case(f"{operation}.translation.search0.range{distance}", operation,
                 pattern="translation", params=params)
     spec["public_field"] = dict(delta=1, seed=[0, 0])
@@ -68,7 +68,7 @@ SEARCH0_CASES = [search0_translation(op, distance)
 def search0_image(name, size, pad, seed, block, expected, *, patch=None, row=None):
     spec = case(f"recalculate.search0.{name}", "recalculate_public", pattern="search0_image",
                 params=dict(thsad=0, smooth=False, search=0, searchparam=1, mvlambda=0,
-                            pnew=0, chroma=False, meander=False, fields=False, satd=False),
+                            pnew=0, chroma=False, meander=False, fields=False, metric="sad"),
                 super_params=dict(blksize=[4], pad=[pad]))
     spec.update(width=size, height=size, length=2, requests=[[0, n] for n in [0, 1, 0]],
                 public_field=dict(delta=1, seed=seed), reference_patch=patch, reference_row=row,

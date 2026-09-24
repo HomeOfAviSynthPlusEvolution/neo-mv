@@ -131,6 +131,10 @@ void invalid_rectangles() {
 
 int main() {
   try {
+    CHECK(neo_mv::parse_block_metric("sad") == BlockMetric::sad);
+    CHECK(neo_mv::parse_block_metric("satd") == BlockMetric::satd);
+    for (auto name : {"", "SAD", "1", "unknown"})
+      rejects([&] { neo_mv::parse_block_metric(name); });
     integer_examples<std::uint8_t>();
     integer_examples<std::uint16_t>();
     matrix_oracle();

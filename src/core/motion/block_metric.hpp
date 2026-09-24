@@ -4,10 +4,17 @@
 
 #include <array>
 #include <cmath>
+#include <string_view>
 
 namespace neo_mv {
 
 enum class BlockMetric { sad, satd };
+
+inline BlockMetric parse_block_metric(std::string_view value) {
+  if (value == "sad") return BlockMetric::sad;
+  if (value == "satd") return BlockMetric::satd;
+  throw std::invalid_argument("metric must be sad or satd");
+}
 
 namespace metric_detail {
 template <class T>

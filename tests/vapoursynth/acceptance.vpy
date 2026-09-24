@@ -276,16 +276,16 @@ for fmt in (vs.GRAY8, vs.GRAY16, vs.GRAYS, vs.YUV420P8, vs.YUV420P16,
         for node in (mv.VectorLengthMask(r6[0]), mv.SADMask(r6[0]), mv.OcclusionMask(r6[0])):
             node.get_frame(2)
         # No frame request: these must fail when the filter is constructed.
-        fails(lambda: mv.Analyse(s6, satd=True), "divisible by 4")
-        fails(lambda: mv.AnalyseMany(s6, satd=True), "divisible by 4")
-        fails(lambda: mv.Recalculate(s6, v6, satd=True), "divisible by 4")
+        fails(lambda: mv.Analyse(s6, metric="satd"), "divisible by 4")
+        fails(lambda: mv.AnalyseMany(s6, metric="satd"), "divisible by 4")
+        fails(lambda: mv.Recalculate(s6, v6, metric="satd"), "divisible by 4")
 # A block-size override must be validated against the requested size, not the Super size.
 c8 = blank(width=48, height=48)
 s8 = super_clip(c8, blksize=[8], overlap=[0], pad=[16])
 v8 = mv.Analyse(s8)
-fails(lambda: mv.Analyse(s8, blksize=[6], satd=True), "divisible by 4")
-fails(lambda: mv.AnalyseMany(s8, blksize=[6], satd=True), "divisible by 4")
-fails(lambda: mv.Recalculate(s8, v8, blksize=[6], satd=True), "divisible by 4")
+fails(lambda: mv.Analyse(s8, blksize=[6], metric="satd"), "divisible by 4")
+fails(lambda: mv.AnalyseMany(s8, blksize=[6], metric="satd"), "divisible by 4")
+fails(lambda: mv.Recalculate(s8, v8, blksize=[6], metric="satd"), "divisible by 4")
 r6 = outputs(mv.Recalculate(s8, v8, blksize=[6], overlap=[0], thsad=0))[0]
 assert r6.get_frame(1).props[P + "AnalysisBlkSizeX"] == 6
 for overlap in (1, 3):
@@ -294,3 +294,8 @@ for overlap in (1, 3):
 
 print("neo-mv VS acceptance passed: five entry points, ownership, motion, parameters, errors, search=0 fixtures")
 blank(length=1).set_output()
+
+for name in ("", "SAD", "1", "unknown"):
+    fails(lambda: mv.Analyse(s8, metric=name), "metric must be")
+    fails(lambda: mv.AnalyseMany(s8, metric=name), "metric must be")
+    fails(lambda: mv.Recalculate(s8, v8, metric=name), "metric must be")

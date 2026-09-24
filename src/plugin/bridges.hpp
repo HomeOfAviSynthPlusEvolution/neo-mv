@@ -50,7 +50,7 @@ inline ds::FilterDescriptor descriptor(Operation op) {
     add("trymany");
     add("fields", P::Boolean);
     add("tff", P::Boolean);
-    add("satd", P::Boolean);
+    add("metric", P::String);
   } else if (op == Operation::Recalculate) {
     d.name = "Recalculate";
     add("super", P::Clip, true);
@@ -67,7 +67,7 @@ inline ds::FilterDescriptor descriptor(Operation op) {
     add("meander", P::Boolean);
     add("fields", P::Boolean);
     add("tff", P::Boolean);
-    add("satd", P::Boolean);
+    add("metric", P::String);
   } else {
     d.name = "SCDetection";
     add("clip", P::Clip, true);
@@ -87,14 +87,14 @@ inline constexpr char super_signature[] =
   "chroma:int:opt;delta:int:opt;lsad:int:opt;plevel:int:opt;globalmv:int:opt;pnew:int:opt;pzero:int:opt;pglobal:int:"  \
   "opt;"                                                                                                               \
   "overlap:int[]:opt:empty;badsad:int:opt;badrange:int:opt;meander:int:opt;trymany:int:opt;fields:int:opt;tff:int:"    \
-  "opt;satd:int:opt;"
+  "opt;metric:data:opt;"
 inline constexpr char analyse_signature[] = NEO_MV_ANALYSE_PARAMETERS "prefix:data:opt;";
 inline constexpr char many_signature[] = NEO_MV_ANALYSE_PARAMETERS "radius:int:opt;prefix:data:opt;";
 #undef NEO_MV_ANALYSE_PARAMETERS
 inline constexpr char recalculate_signature[] =
     "super:vnode;vectors:vnode[];thsad:int:opt;smooth:int:opt;blksize:int[]:opt:empty;search:int:opt;searchparam:int:"
     "opt;mvlambda:int:opt;chroma:int:opt;pnew:int:opt;overlap:int[]:opt:empty;meander:int:opt;fields:int:opt;tff:int:"
-    "opt;satd:int:opt;prefix:data:opt;";
+    "opt;metric:data:opt;prefix:data:opt;";
 inline constexpr char scene_signature[] = "clip:vnode;vectors:vnode;thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
 template <Operation Op>
 struct Bridge {

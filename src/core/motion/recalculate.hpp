@@ -6,7 +6,8 @@ namespace neo_mv {
 
 struct RecalculateControls {
   std::int32_t thsad = 200, mvlambda = 1000, search = 2, searchparam = 2, pnew = 25;
-  bool smooth = true, satd = false, meander = true;
+  bool smooth = true, meander = true;
+  BlockMetric metric = BlockMetric::sad;
 };
 
 namespace recalculate_detail {
@@ -67,7 +68,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
   if (old.metadata.bits != target.bits || controls.mvlambda < 0 || controls.search < 0 || controls.search > 5 ||
       controls.pnew < 0 || controls.pnew > 256)
     throw std::invalid_argument("invalid Recalculate controls or input precision");
-  if (controls.satd && (target.block_width % 4 || target.block_height % 4))
+  if (controls.metric == BlockMetric::satd && (target.block_width % 4 || target.block_height % 4))
     throw std::invalid_argument("SATD requires block width and height divisible by 4");
   if constexpr (!GeometryValidated)
     validate_motion_layer(target, geometry, true);
@@ -87,7 +88,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
       auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames,
-                                                   controls.satd ? BlockMetric::satd : BlockMetric::sad);
+                                                   controls.metric);
       const auto error = evaluate(u);
       SearchResult result{u, error.raw, error.raw};
       if (error.raw > threshold) {

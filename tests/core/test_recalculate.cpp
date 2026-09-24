@@ -91,7 +91,7 @@ void metrics_and_admission() {
     std::fill(plane.begin(), plane.end(), 1.0f / 65536.0f);
   RecalculateControls controls;
   controls.thsad = INT32_MAX;
-  controls.satd = true;
+  controls.metric = neo_mv::BlockMetric::satd;
   auto a = recalculate_vectors(f.old_field(), f.metadata, f.geometry, f.frames, controls);
   for (auto v : a.values)
     CHECK(v.error == 16); // Y SATD 8 + U/V SAD 4 each
