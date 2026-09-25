@@ -406,6 +406,38 @@ void backend_equivalence() {
     }
 }
 #endif
+void quantization() {
+  const int saved_mode = std::fegetround();
+  std::mt19937 random(319);
+  for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+    check(std::fesetround(mode) == 0, "cannot set quantization rounding mode");
+    for (auto size : {std::pair{4, 4}, {6, 6}, {8, 4}, {16, 2}, {12, 12}, {48, 48}, {128, 128}}) {
+      const auto [w, h] = size;
+      std::vector<std::uint16_t> samples(w * h);
+      std::vector<double> input(w * h), rows(w * h), transformed(w * h);
+      for (int pattern = 0; pattern < 4; ++pattern) {
+        for (int i = 0; i < w * h; ++i) {
+          samples[i] = pattern == 0   ? 65535
+                       : pattern == 1 ? (i == 0 ? w * h / 4 : 0)
+                       : pattern == 2 ? ((i & 1) ? 65535 : 0)
+                                      : std::uint16_t(random());
+          input[i] = samples[i];
+        }
+        dct_detail::transform_block(w, h, input.data(), rows.data(), transformed.data(), false);
+        // DC is left untouched. Extra sentinels guard the unaligned AC start
+        // and the scalar tail after the final full vector.
+        std::vector<int> scalar(w * h + 2, -12345), native = scalar;
+        const double error = dct_detail::ac_error_bound(w, h, 16);
+        dct_detail::quantize_ac(samples.data(), w, h, transformed.data(), scalar.data() + 1, 65535, error, false);
+        dct_detail::quantize_ac(samples.data(), w, h, transformed.data(), native.data() + 1, 65535, error, true);
+        check(native == scalar, "DCT per-coefficient SIMD quantization mismatch");
+        check(native.front() == -12345 && native[1] == -12345 && native.back() == -12345,
+              "DCT quantization overwrote DC or guard");
+      }
+    }
+  }
+  check(std::fesetround(saved_mode) == 0, "cannot restore quantization rounding mode");
+}
 int main() {
   try {
     check(parse_block_metric("dct") == BlockMetric::dct, "DCT parameter parse");
@@ -421,11 +453,13 @@ int main() {
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
       hwy::SetSupportedTargetsForTest(target);
       numeric();
+      quantization();
       std::cout << "DCT target " << hwy::TargetName(target) << " passed\n";
     }
     hwy::SetSupportedTargetsForTest(0);
 #else
     numeric();
+    quantization();
 #endif
     sampling_and_search();
     std::vector<std::future<void>> workers;

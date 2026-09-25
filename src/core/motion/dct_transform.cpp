@@ -120,6 +120,38 @@ void Transform(int width, int height, const double* input, double* rows, double*
   for (; u < width; ++u)
     dct_line(height, rows + u, width, output + u, width);
 }
+void Quantize(const std::uint16_t* samples, int width, int height, const double* transformed, int* output, int maximum,
+              double error) {
+  const int size = width * height;
+  const double normalization = 0x1.6a09e667f3bcdp-1 / double(size);
+  int i = 1;
+#if HWY_HAVE_FLOAT64
+  const hn::CappedTag<double, 4> d;
+  const hn::Rebind<std::int32_t, decltype(d)> di;
+  const int lanes = int(hn::Lanes(d));
+  const auto half = hn::Set(d, .5), one = hn::Set(d, 1.0);
+  const auto scale = hn::Set(d, normalization), margin = hn::Set(d, 2 * error);
+  const auto midpoint = hn::Set(d, double((maximum + 1) / 2)), upper = hn::Set(d, double(maximum));
+  for (; i + lanes <= size; i += lanes) {
+    const auto value = hn::Mul(hn::LoadU(d, transformed + i), scale);
+    const auto low = hn::Floor(value);
+    const auto ambiguous = hn::Le(hn::Abs(hn::Sub(value, hn::Add(low, half))), margin);
+    if (hn::AllFalse(d, ambiguous)) {
+      // No lane can be a half-integer tie: those always enter refinement.
+      const auto q = hn::IfThenElse(hn::Gt(hn::Sub(value, low), half), hn::Add(low, one), low);
+      const auto clamped = hn::Min(upper, hn::Max(hn::Zero(d), hn::Add(q, midpoint)));
+      hn::StoreU(hn::DemoteTo(di, clamped), di, output + i);
+    } else {
+      HWY_ALIGN double values[4];
+      hn::StoreU(value, d, values);
+      for (int lane = 0; lane < lanes; ++lane)
+        output[i + lane] = quantize_one(samples, width, height, i + lane, values[lane], error, maximum);
+    }
+  }
+#endif
+  for (; i < size; ++i)
+    output[i] = quantize_one(samples, width, height, i, transformed[i] * normalization, error, maximum);
+}
 } // namespace HWY_NAMESPACE
 } // namespace neo_mv::dct_detail
 HWY_AFTER_NAMESPACE();
@@ -129,6 +161,7 @@ HWY_AFTER_NAMESPACE();
 namespace neo_mv::dct_detail {
 #if NEO_MV_DCT_SIMD
 HWY_EXPORT(Transform);
+HWY_EXPORT(Quantize);
 #endif
 void transform_block(int width, int height, const double* input, double* rows, double* output, bool simd) {
 #if NEO_MV_DCT_SIMD
@@ -143,6 +176,21 @@ void transform_block(int width, int height, const double* input, double* rows, d
     dct_line(width, input + y * width, 1, rows + y * width, 1);
   for (int u = 0; u < width; ++u)
     dct_line(height, rows + u, width, output + u, width);
+}
+void quantize_ac(const std::uint16_t* samples, int width, int height, const double* transformed, int* output,
+                 int maximum, double error, bool simd) {
+#if NEO_MV_DCT_SIMD
+  if (simd) {
+    HWY_DYNAMIC_DISPATCH(Quantize)(samples, width, height, transformed, output, maximum, error);
+    return;
+  }
+#else
+  (void)simd;
+#endif
+  const int size = width * height;
+  const double normalization = 0x1.6a09e667f3bcdp-1 / double(size);
+  for (int i = 1; i < size; ++i)
+    output[i] = quantize_one(samples, width, height, i, transformed[i] * normalization, error, maximum);
 }
 } // namespace neo_mv::dct_detail
 #endif
