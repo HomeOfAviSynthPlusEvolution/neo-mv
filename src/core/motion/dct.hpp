@@ -10,7 +10,10 @@ namespace neo_mv {
 // to one block search; no mutable transform state is shared between frames.
 class DctWorkspace {
   int width_, height_, maximum_, midpoint_, scale_;
-  std::vector<float> input_, transformed_;
+  bool simd_;
+  double error_;
+  std::vector<std::uint16_t> samples_;
+  std::vector<double> input_, rows_, transformed_;
   std::vector<int> source_, reference_;
   void transform(std::vector<int>& output);
   template <class T>
@@ -20,14 +23,19 @@ class DctWorkspace {
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x) {
         const auto value = plane.row(y)[x];
-        if (!std::isfinite(double(value)) || value < 0 || value > maximum_)
+        if constexpr (std::is_floating_point_v<T>) {
+          if (!std::isfinite(double(value)) || double(value) != std::floor(double(value)))
+            throw std::invalid_argument("DCT sample outside integer pixel range");
+        }
+        if (value < 0 || value > maximum_)
           throw std::invalid_argument("DCT sample outside integer pixel range");
-        input_[std::size_t(y) * width_ + x] = float(value);
+        samples_[std::size_t(y) * width_ + x] = std::uint16_t(value);
+        input_[std::size_t(y) * width_ + x] = double(value);
       }
   }
 
 public:
-  DctWorkspace(int width, int height, int bits);
+  DctWorkspace(int width, int height, int bits, bool simd = false);
   template <class T>
   void set_source(span2d::Plane<const T> plane) {
     load(plane);
@@ -54,8 +62,9 @@ class DctBlockError {
   DctWorkspace workspace_;
 
 public:
-  DctBlockError(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames, int bits)
-      : geometry_(geometry), block_(block), frames_(frames), workspace_(block.width, block.height, bits) {
+  DctBlockError(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames, int bits,
+                bool simd = false)
+      : geometry_(geometry), block_(block), frames_(frames), workspace_(block.width, block.height, bits, simd) {
     if constexpr (std::is_same_v<T, float>)
       throw std::invalid_argument("DCT requires integer samples");
     workspace_.set_source(frames.current[0].subplane(geometry.planes[0].pad_x + block.x,

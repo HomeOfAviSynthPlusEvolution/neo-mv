@@ -104,7 +104,7 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       };
       SearchResult result;
       if (controls.metric == BlockMetric::dct) {
-        DctBlockError<T> evaluate(geometry, block, frames, target.bits);
+        DctBlockError<T> evaluate(geometry, block, frames, target.bits, !std::is_same_v<Kernels, ScalarKernels<T>>);
         result = search(evaluate);
       } else {
         auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames, controls.metric);

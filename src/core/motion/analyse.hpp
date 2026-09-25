@@ -187,7 +187,7 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         const auto lambda = adaptive_lambda(base, lsad, u.error);
         SearchResult result;
         if (controls.metric == BlockMetric::dct) {
-          DctBlockError<T> evaluate(layer.sampling, block, frames[index], m.bits);
+          DctBlockError<T> evaluate(layer.sampling, block, frames[index], m.bits, !std::is_same_v<Kernels, ScalarKernels<T>>);
           result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
                                          badsad, controls, evaluate);
         } else {
