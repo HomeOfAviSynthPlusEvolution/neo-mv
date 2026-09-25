@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(neo_mv VERSION 0.9.1 LANGUAGES CXX)
+project(neo_mv VERSION 0.9.2 LANGUAGES CXX)
 
 option(NEO_MV_BUILD_AVISYNTH "Build the AviSynth interface" ON)
 option(NEO_MV_BUILD_VAPOURSYNTH "Build the VapourSynth plugin" ON)
