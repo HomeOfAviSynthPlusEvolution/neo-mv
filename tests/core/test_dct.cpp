@@ -1,4 +1,5 @@
 #include "core/motion/dct.hpp"
+#include "core/motion/dct_rounding.hpp"
 #include "core/motion/analyse.hpp"
 #include "core/motion/recalculate.hpp"
 #include "motion_fixture.hpp"
@@ -53,6 +54,40 @@ std::vector<int> oracle(const std::vector<std::uint16_t>& input, int w, int h, i
 auto view(const std::vector<std::uint16_t>& x, int w, int h) {
   return checked_plane<const std::uint16_t>(x.data(), w, h, w * sizeof(std::uint16_t),
                                             x.size() * sizeof(std::uint16_t));
+}
+void exact_boundaries() {
+  for (auto size : {std::pair{4, 4}, {6, 6}, {8, 4}, {8, 8}, {12, 12}, {16, 2}, {16, 8}, {16, 16},
+                    {24, 24}, {32, 16}, {32, 32}, {48, 48}, {64, 32}, {64, 64}, {128, 64}, {128, 128}}) {
+    const auto [w, h] = size;
+    // u=w/2, v=0 has AC=2*sum(sign[x]*pixel)/area, sign=+,-,-,+.
+    // Construct exact +/-1/2 and perturb by one unit on either side.
+    for (int sign : {-1, 1})
+      for (int delta : {-1, 0, 1}) {
+        std::vector<std::uint16_t> samples(w * h);
+        samples[sign == 1 ? 0 : 1] = std::uint16_t(w * h / 4 + delta);
+        const int k = sign == 1 ? 0 : -1;
+        check(dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k) == (delta == 0),
+              "exact DCT boundary predicate");
+        check(!dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k + 1), "wrong neighboring DCT boundary");
+        check(!dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k - 1), "wrong neighboring DCT boundary");
+      }
+  }
+  // Mixed frequency: on 12x12, (u=6,v=8) at (x=0,y=1) has
+  // cos(x)=sqrt(2)/2 and cos(y)=-1. Pixel324 therefore yields -4.5.
+  std::array<std::uint16_t, 144> mixed{};
+  mixed[12] = 324;
+  check(dct_detail::exact_half(mixed.data(), 12, 12, 6, 8, -5), "mixed DCT frequency tie");
+  ++mixed[12];
+  check(!dct_detail::exact_half(mixed.data(), 12, 12, 6, 8, -5), "mixed DCT frequency non-tie");
+  std::array<std::uint8_t, 16> small{};
+  small[0] = 4;
+  check(dct_detail::exact_half(small.data(), 4, 4, 2, 0, 0), "8-bit exact DCT tie");
+  check(!dct_detail::exact_half(small.data(), 4, 4, 2, 0, INT64_MIN), "DCT lower boundary overflow");
+  check(!dct_detail::exact_half(small.data(), 4, 4, 2, 0, INT64_MAX), "DCT upper boundary overflow");
+  rejects([&] { dct_detail::exact_half(small.data(), 0, 4, 1, 0, 0); });
+  rejects([&] { dct_detail::exact_half(small.data(), 4, 4, 0, 0, 0); });
+  rejects([&] { dct_detail::exact_half(small.data(), 4, 4, 4, 0, 0); });
+  rejects([&] { dct_detail::exact_half(mixed.data(), 10, 10, 1, 0, 0); });
 }
 // A one-level impulse has |AC| <= 2*sqrt(2)/area < 0.5 here.
 // Consequently this pair differs only in DC, whose exact mean lies immediately
@@ -224,6 +259,7 @@ int main() {
     backend_equivalence<std::uint8_t>();
     backend_equivalence<std::uint16_t>();
 #endif
+    exact_boundaries();
     dc_boundary();
     numeric();
     sampling_and_search();
