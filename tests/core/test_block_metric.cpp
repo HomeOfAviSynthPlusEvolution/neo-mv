@@ -1,4 +1,5 @@
 #include "core/motion/block_metric.hpp"
+#include "core/motion/metric_policy.hpp"
 
 #include <iostream>
 #include <string>
@@ -131,10 +132,10 @@ void invalid_rectangles() {
 
 int main() {
   try {
-    CHECK(neo_mv::parse_block_metric("sad") == BlockMetric::sad);
-    CHECK(neo_mv::parse_block_metric("satd") == BlockMetric::satd);
+    CHECK(neo_mv::parse_motion_metric("sad") == neo_mv::MotionMetric::sad);
+    CHECK(neo_mv::parse_motion_metric("satd") == neo_mv::MotionMetric::satd);
     for (auto name : {"", "SAD", "1", "unknown"})
-      rejects([&] { neo_mv::parse_block_metric(name); });
+      rejects([&] { neo_mv::parse_motion_metric(name); });
     integer_examples<std::uint8_t>();
     integer_examples<std::uint16_t>();
     matrix_oracle();

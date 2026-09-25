@@ -7,7 +7,7 @@ Create an ordered array of forward/backward analysis clips.
 VapourSynth: `core.neo_mv.AnalyseMany`. AviSynth: `neo_mv_AnalyseMany`. Parameter order:
 
 ```text
-AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, radius, prefix])
+AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, radius, prefix, metric_weight, metric_threshold])
 ```
 
 Brackets here mark optional arguments, not a literal array. Use named optional arguments. Booleans are `True`/`False` in Python and `true`/`false` in AviSynth.
@@ -38,11 +38,15 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `trymany` | Integer | `0` | 0 searches from the selected seed; 1 tries multiple seeds on coarse levels; 2 does so on all levels. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `metric` | String | `"sad"` | Luma matching metric: `"sad"`, `"satd"`, or `"dct"`; chroma remains SAD. See restrictions below. |
+| `metric` | String | `"sad"` | Luma matching metric: pure SAD/SATD/DCT or local/global mixtures; chroma remains SAD. See restrictions below. |
 | `radius` | Integer | `1` | AnalyseMany only: positive pair count. delta must also be positive and radius×delta must fit signed int32. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
+| `metric_weight` | Float | `0.5` | Transform contribution after a local trigger; [0,1], precision 1/65536. |
+| `metric_threshold` | Float | `0.03125` | Local relative luma-sum change threshold; [0,1], precision 1/65536. |
 
 ### Matching metric
+
+New mixed modes, local parameters, and migration mapping follow [Analyse](analyse.md#mixed-modes). Each member and frame-pair request has separate statistics and workspace.
 
 Values and restrictions match [Analyse](analyse.md#matching-metric): `"sad"` is the default; `"satd"` excludes 6×6 and 16×2; `"dct"` supports all valid block sizes but accepts only 8–16-bit integer samples, rejecting float32. Chroma always uses SAD. This string parameter replaces the former `satd` Boolean parameter.
 

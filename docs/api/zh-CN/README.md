@@ -6,7 +6,7 @@ VapourSynth 使用 `core.neo_mv.Name`，AviSynth 使用 `neo_mv_Name`；分别�
 
 数组参数允许用单值简写一个元素；Python 使用 `[16, 8]` 这样的列表，AviSynth 使用同样写法的原生数组。省略参数与显式空数组并不总是等价，具体规则见各页。`AnalyseMany` 和 `Recalculate` 返回剪辑数组，Recalculate 只有一个输入时也如此。
 
-Analyse、AnalyseMany 和 Recalculate 的 `metric` 参数可选 `"sad"`、`"satd"` 或仅限整数的 `"dct"`。格式和块尺寸限制见 [Analyse](analyse.md#匹配度量)。消费分析数据的函数直接使用存储的块误差，包括 SATD/DCT 误差，不换算成像素 SAD。
+Analyse、AnalyseMany 和 Recalculate 的 `metric` 参数可选 `"sad"`、`"satd"`、仅限整数的 `"dct"` 或局部/全局混合模式。格式和块尺寸限制见 [Analyse](analyse.md#匹配度量)。消费分析数据的函数直接使用存储的块误差，包括 SATD/DCT 和混合误差，不换算成像素 SAD。
 
 | 函数 | 用途 |
 | --- | --- |

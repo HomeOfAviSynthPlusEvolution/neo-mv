@@ -4,7 +4,7 @@
 
 `SADMask` uses a block's motion vector to select another block's stored error, then normalizes that error to grayscale. It reads no images and measures no new SAD at the projected position.
 
-Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, DCT, or mixed luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
 
 ## 2. Objects and notation
 

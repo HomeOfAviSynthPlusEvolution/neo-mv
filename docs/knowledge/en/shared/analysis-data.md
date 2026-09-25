@@ -27,7 +27,7 @@ Read scalar element 0; missing, empty, or wrongly typed scalars initially become
 
 ## Decoding arrays
 
-`AnalysisSAD` stores the selected luma metric (SAD, SATD, or DCT), plus chroma SAD when enabled. There is no metric identifier in the descriptor. Consumers use these stored errors directly for thresholds, weights, and masks; they do not recompute pixel SAD or convert the errors to a common metric. Recalculate chooses its own metric for fresh measurements.
+`AnalysisSAD` stores the selected luma metric (SAD, SATD, DCT, or a mixture), plus chroma SAD when enabled. There is no metric identifier in the descriptor. Consumers use these stored errors directly for thresholds, weights, and masks; they do not recompute pixel SAD or convert the errors to a common metric. Recalculate chooses its own metric for fresh measurements.
 
 Count `N=NBlkX·NBlkY`, row-major index `i=by·NBlkX+bx`. `AnalysisVectors` stores signed X in the low 32 bits and signed Y in the high 32 bits. `AnalysisSAD` stores nonnegative raw error. See [Analyse](../analyse.md) for packing and units.
 

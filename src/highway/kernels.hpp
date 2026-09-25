@@ -43,8 +43,6 @@ void extend_border(span2d::Plane<const T> src, span2d::Plane<T> dst, int ww, int
 }
 template <class T, bool Validated = false>
 std::int64_t block_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric op) {
-  if (op == BlockMetric::dct)
-    throw std::invalid_argument("DCT requires a bit-depth-aware workspace");
   if constexpr (!Validated) {
     validate_plane(a);
     validate_plane(b);
@@ -245,8 +243,6 @@ SubpixelPhases<T> interpolate_subpixels(span2d::Plane<const T> base, int pel, in
 template <class T, bool Validated = false>
 BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, MotionVector vector,
                        BlockMetric metric) {
-  if (metric == BlockMetric::dct)
-    throw std::invalid_argument("DCT requires a bit-depth-aware workspace");
   if constexpr (!Validated) {
     validate_sampling_domain(g, b, sampling_detail::singleton(vector));
     if ((metric != BlockMetric::sad && metric != BlockMetric::satd) ||
@@ -527,6 +523,21 @@ SubpixelPhases<T> extract_external_subpixels(span2d::Plane<const T> base, span2d
 namespace neo_mv {
 template <class T>
 struct HighwayKernels {
+  static auto prepare_statistics() {
+    const auto function = simd::detail::statistics_function(static_cast<T*>(nullptr));
+    return [function](span2d::Plane<const T> a, span2d::Plane<const T> b) {
+      return function(a.data(), a.stride_bytes() / sizeof(T), b.data(), b.stride_bytes() / sizeof(T), b.width(), b.height());
+    };
+  }
+  static std::int64_t block_luma_sum(span2d::Plane<const T> p) {
+    return prepare_statistics()({}, p).reference_sum;
+  }
+  static SadReferenceSum sad_and_reference_sum(span2d::Plane<const T> a, span2d::Plane<const T> b) {
+    return prepare_statistics()(a, b);
+  }
+  static std::int64_t pixel_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric metric) {
+    return simd::block_metric<T, true>(a, b, metric);
+  }
   static constexpr auto interpolate_predictions = &simd::interpolate_predictions;
   static decltype(auto) prepare_frames(const SamplingGeometry& geometry, const SamplingFrames<T>& frames) {
     if constexpr (std::is_same_v<T, std::uint8_t>)

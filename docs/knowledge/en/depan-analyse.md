@@ -6,7 +6,7 @@
 
 This is not an arbitrary-precision least-squares solve. Initialization, step sizes, reweighting, and stopping all affect results.
 
-Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, DCT, or mixed luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
 
 ## 2. Objects and notation
 

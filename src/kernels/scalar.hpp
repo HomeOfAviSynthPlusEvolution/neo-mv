@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/motion/block_sampling.hpp"
+#include "core/motion/block_statistics.hpp"
 #include "core/motion/prediction.hpp"
 #include "core/super/border_extension.hpp"
 #include "core/super/pyramid_reduction.hpp"
@@ -10,6 +11,16 @@ namespace neo_mv {
 // Compile-time pixel operations; control flow and search stay in the core.
 template <class T>
 struct ScalarKernels {
+  static auto prepare_statistics() {
+    return [](span2d::Plane<const T> a, span2d::Plane<const T> b) { return neo_mv::sad_and_reference_sum(a, b); };
+  }
+  static std::int64_t block_luma_sum(span2d::Plane<const T> p) { return neo_mv::block_luma_sum(p); }
+  static SadReferenceSum sad_and_reference_sum(span2d::Plane<const T> a, span2d::Plane<const T> b) {
+    return neo_mv::sad_and_reference_sum(a, b);
+  }
+  static std::int64_t pixel_metric(span2d::Plane<const T> a, span2d::Plane<const T> b, BlockMetric metric) {
+    return neo_mv::block_metric<T, true>(a, b, metric);
+  }
   static constexpr auto interpolate_predictions = &neo_mv::interpolate_predictions;
   static const SamplingFrames<T>& prepare_frames(const SamplingGeometry&, const SamplingFrames<T>& frames) {
     return frames;

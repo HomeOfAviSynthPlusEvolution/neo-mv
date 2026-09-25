@@ -15,6 +15,16 @@
 #include <random>
 
 using namespace neo_mv;
+// Standalone adapter for direct sampling tests; production uses the same evaluator.
+template <class T>
+struct DctBlockError {
+  MetricScratch scratch;
+  PreparedMetricEvaluator<T, ScalarKernels<T>> evaluator;
+  DctBlockError(const SamplingGeometry& geometry, BlockRegion block, const SamplingFrames<T>& frames, int bits)
+      : evaluator(metric_layer_plan(MotionMetric::dct, {}), geometry, block, frames, scratch, bits) {}
+  BlockError operator()(MotionVector vector) { return evaluator(vector); }
+};
+
 static void check(bool ok, const char* message) {
   if (!ok)
     throw std::runtime_error(message);
@@ -340,7 +350,7 @@ void sampling_and_search() {
           check(e.chroma == sad.chroma && e.raw == e.luma + e.chroma, "DCT chroma SAD");
         }
         AnalyseControls controls;
-        controls.metric = BlockMetric::dct;
+        controls.metric = MotionMetric::dct;
         controls.badrange = 0;
         controls.mvlambda = 0;
         const auto grid = analyse_vectors<std::uint16_t>(f.metadata, {f.geometry}, {f.frames}, controls);
@@ -348,7 +358,7 @@ void sampling_and_search() {
         auto old = f.old_field();
         old.grid = grid;
         RecalculateControls r;
-        r.metric = BlockMetric::dct;
+        r.metric = MotionMetric::dct;
         r.thsad = 0;
         const auto refined = recalculate_vectors(old, f.metadata, f.geometry, f.frames, r);
         for (int y = 0; y < f.metadata.blocks_y; ++y)
@@ -384,7 +394,7 @@ void backend_equivalence() {
       };
       for (int search = 0; search <= 5; ++search) {
         AnalyseControls a;
-        a.metric = BlockMetric::dct;
+        a.metric = MotionMetric::dct;
         a.search = search;
         a.trymany = search % 3;
         a.badrange = search % 2 ? -2 : 2;
@@ -396,7 +406,7 @@ void backend_equivalence() {
         same(analyse_vectors<T>(f.metadata, {f.geometry}, {f.frames}, a, shift),
              analyse_vectors<T, HighwayKernels<T>>(f.metadata, {f.geometry}, {f.frames}, a, shift));
         RecalculateControls r;
-        r.metric = BlockMetric::dct;
+        r.metric = MotionMetric::dct;
         r.search = search;
         r.thsad = 0;
         r.smooth = search % 2 == 0;
@@ -440,7 +450,7 @@ void quantization() {
 }
 int main() {
   try {
-    check(parse_block_metric("dct") == BlockMetric::dct, "DCT parameter parse");
+    check(parse_motion_metric("dct") == MotionMetric::dct, "DCT parameter parse");
 #if NEO_MV_DCT_TEST_HIGHWAY
     backend_equivalence<std::uint8_t>();
     backend_equivalence<std::uint16_t>();

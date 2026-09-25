@@ -195,3 +195,23 @@ for expression in ('neo_mv_Analyse(s,metric="dct")', 'neo_mv_AnalyseMany(s,metri
                    'neo_mv_Recalculate(s,v,metric="dct")[0]'):
     run("float-dct-"+str(count), "return "+expression, prefix=setup, error="integer samples")
 print(f"AviSynth {a.backend}: {count} cases passed; all 44 functions registered.")
+# Mixed policy registration and configuration through the native C++ AVS adapter.
+for name in ("sad_dct_global", "sad_dct_local", "sad_satd_global", "sad_satd_local", "sad_satd_global_half"):
+    setup = ('a=BlankClip(width=32,height=32,length=3,pixel_type="Y8",color_yuv=$280000)\n'
+             'b=BlankClip(a,color_yuv=$320000)\n'
+             'c=Interleave(a,b)\n'
+             's=neo_mv_Super(c,blksize=8,overlap=0,pad=16,pel=2)\n'
+             f'v=neo_mv_AnalyseMany(s,radius=1,metric="{name}",badrange=0)\n'
+             f'r=neo_mv_Recalculate(s,v,metric="{name}",thsad=0)\n')
+    run("mixed-"+name,"return neo_mv_Compensate(c,s,r[0]).Prefetch(4)",frame=2,prefix=setup)
+    extra=',metric_weight=0.6,metric_threshold=0.04' if 'local' in name else ',metric_weight=0.5'
+    for expression in (f'neo_mv_Analyse(s,metric="{name}"{extra})',
+                       f'neo_mv_AnalyseMany(s,metric="{name}"{extra})[0]',
+                       f'neo_mv_Recalculate(s,v,metric="{name}"{extra})[0]'):
+        run("mixed-params-"+str(count),"return "+expression,prefix=setup,
+            error=None if 'local' in name else "local metric")
+for key in ("metric_weight", "metric_threshold"):
+    for value in (-0.1, 1.1):
+        run("mixed-invalid-"+str(count),
+            f'return neo_mv_Analyse(s,metric="sad_satd_local",{key}={value})',prefix=setup,error="[0,1]")
+print(f"AviSynth {a.backend}: {count} cases including mixed metrics passed.")

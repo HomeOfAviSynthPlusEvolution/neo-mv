@@ -14,6 +14,37 @@ namespace hn = hwy::HWY_NAMESPACE;
 std::int64_t Target() {
   return HWY_TARGET;
 }
+// Motion rectangles contain at most 16384 uint16 pixels. Each total
+// is below INT32_MAX, including on the scalar target. Null source requests sum only.
+template <class T>
+SadReferenceSum Statistics(const T* a, std::ptrdiff_t as, const T* b, std::ptrdiff_t bs, int w, int h) {
+  const hn::ScalableTag<std::int32_t> d;
+  const hn::Rebind<T, decltype(d)> narrow;
+  const int n = int(hn::Lanes(d));
+  auto sad = hn::Zero(d), sum = hn::Zero(d);
+  SadReferenceSum tail;
+  for (int y = 0; y < h; ++y) {
+    int x = 0;
+    for (; x <= w - n; x += n) {
+      const auto r = hn::PromoteTo(d, hn::LoadU(narrow, b + x));
+      sum = hn::Add(sum, r);
+      if (a) sad = hn::Add(sad, hn::Abs(hn::Sub(hn::PromoteTo(d, hn::LoadU(narrow, a + x)), r)));
+    }
+    for (; x < w; ++x) {
+      tail.reference_sum += b[x];
+      if (a) tail.sad += std::abs(int(a[x]) - int(b[x]));
+    }
+    if (y + 1 < h) { if (a) a += as; b += bs; }
+  }
+  return {tail.sad + hn::ReduceSum(d, sad), tail.reference_sum + hn::ReduceSum(d, sum)};
+}
+SadReferenceSum StatisticsU8(const std::uint8_t* a, std::ptrdiff_t as, const std::uint8_t* b, std::ptrdiff_t bs, int w, int h) {
+  return Statistics(a, as, b, bs, w, h);
+}
+SadReferenceSum StatisticsU16(const std::uint16_t* a, std::ptrdiff_t as, const std::uint16_t* b, std::ptrdiff_t bs, int w, int h) {
+  return Statistics(a, as, b, bs, w, h);
+}
+
 template <class T> using Wide = std::conditional_t<std::is_same_v<T, float>, float, std::int32_t>;
 template <class T> using FormulaWide = std::conditional_t<std::is_same_v<T, std::uint8_t>, std::int16_t, Wide<T>>;
 template <class D, class V> HWY_INLINE void finite(D d, V v) {
@@ -1066,6 +1097,10 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_mv::simd::detail {
 HWY_EXPORT(Target);
+HWY_EXPORT(StatisticsU8);
+HWY_EXPORT(StatisticsU16);
+StatisticsFunction<std::uint8_t> statistics_function(std::uint8_t*) { return HWY_DYNAMIC_DISPATCH(StatisticsU8); }
+StatisticsFunction<std::uint16_t> statistics_function(std::uint16_t*) { return HWY_DYNAMIC_DISPATCH(StatisticsU16); }
 const char *target_name() {
   return hwy::TargetName(HWY_DYNAMIC_DISPATCH(Target)());
 }

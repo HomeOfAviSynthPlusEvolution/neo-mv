@@ -28,6 +28,8 @@ Block-motion and Flow operations support planar GRAY/YUV with 8–16-bit integer
 
 `Analyse`, `AnalyseMany`, and `Recalculate` select the luma matching metric with `metric="sad"` (default), `"satd"`, or `"dct"`. SATD requires both block dimensions to be divisible by 4. DCT supports every valid block shape, including 6×6 and 16×2, but only 8–16-bit integer samples. Chroma always uses SAD. The string parameter replaces the former `satd` Boolean. Error thresholds retain their existing scaling and are not converted between metrics.
 
+The integer-only mixed modes `sad_dct_global`, `sad_dct_local`, `sad_satd_global`, `sad_satd_local`, and `sad_satd_global_half` add adaptive frame-pair weights or configurable local `metric_weight` / `metric_threshold`. See the [API migration table](docs/api/en/analyse.md#migrating-from-mvtools-dct). Existing pure metrics retain their numerical definitions.
+
 Motion data is carried in frame properties. The default property prefix is `MVUtensils`, independently of the `neo_mv` plugin namespace. Super's auxiliary images belong to the implementation that created them; generate Super with neo-mv for use by neo-mv consumers.
 
 ## Documentation and use

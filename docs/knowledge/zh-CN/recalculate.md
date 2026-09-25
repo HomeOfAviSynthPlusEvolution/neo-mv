@@ -6,6 +6,10 @@
 
 旧误差只接受数据有效性检查，不决定是否搜索。即使向量完全不动，输出误差也重新测量。可见输出与初始属性来自 `super`，不来自旧向量节点。
 
+### 混合度量的权重
+
+两个 local 模式使用与 [Analyse](analyse.md) 相同的逐候选门限和 Q16 加权公式，参数独立于输入矢量，省略时分别为 0.5 和 0.03125。三个 global 模式在 Recalculate 中固定 base_weight=8，half 模式实际用 4；没有最粗层统计。先按该模式重新测量映射来的候选，再将新的原始误差与 thsad 比较；旧矢量的存储误差不参与混合。
+
 ## 2. 计算对象与记号
 
 旧几何带下标 0，包括块 `Bx0,By0`、步长 `sx0,sy0` 和 `p0`。目标几何为 `Bx,By,Ox,Oy,p`，目标块索引为 `bx,by`。`d` 是成员创建时保存的旧 `DeltaFrame`。
@@ -52,7 +56,7 @@ $$I=\operatorname{trunc}\left(\frac{u+\operatorname{trunc}(d_y(v-u)/s_{y0})}{s_{
 
 ### 4.4 阈值、重测与搜索
 
-新误差使用 [Analyse 中的 SAD、SATD 或 DCT 计算](analyse.md#45-从样本计算原始误差)。`metric` 独立默认为 `"sad"`，不会继承输入向量生成时使用的度量；若要重新测量 DCT，须显式传入 `metric="dct"`。DCT 要求整数样本，支持全部合法目标块尺寸。下面的阈值缩放规则保持不变，不在度量之间自动换算。
+新误差使用 [Analyse 中的 SAD、SATD、DCT 和混合误差计算](analyse.md#45-从样本计算原始误差)。`metric` 独立默认为 `"sad"`，不会继承输入向量生成时使用的度量；若要重新测量 DCT，须显式传入 `metric="dct"`。DCT 要求整数样本，支持全部合法目标块尺寸。下面的阈值缩放规则保持不变，不在度量之间自动换算。
 
 使用 [Analyse](analyse.md) 中的位深转换 `Qb`：
 
@@ -82,7 +86,9 @@ T=\operatorname{trunc}(Q_b(thsad)\,B_xB_y/64).$$
 | `search`,`searchparam` | 2、2；search 为 0～5，范围至少 1 | 单层搜索 |
 | `mvlambda`,`pnew` | 1000、25；分别非负、0～256 | 距离和误差惩罚 |
 | `chroma` | true | 是否计入色度 SAD |
-| `metric` | `"sad"`；限制同 Analyse | 每次新测量的亮度度量 |
+| `metric` | 默认 `"sad"`；SATD 家族要求尺寸能被 4 整除；DCT 和混合模式仅整数 | 亮度误差策略，色度仍用 SAD |
+| `metric_weight` | local 专用，默认 0.5，[0,1] | 触发后的变换比例，Q16 量化 |
+| `metric_threshold` | local 专用，默认 1/32，[0,1] | 相对亮度和变化门限，Q16 量化 |
 | `meander` | true | 求值方向，不改变独立块结果 |
 | `fields`,`tff` | false、省略 | 场信息验证 |
 | `prefix` | `MVUtensils` | Super 和 Analysis 名称 |

@@ -79,7 +79,7 @@ AVSValue __cdecl create(AVSValue args, void* user_data, IScriptEnvironment* env)
 
 ds::FilterDescriptor many_descriptor() {
   auto d = Adapter<Bridge<Operation::Analyse>>::descriptor();
-  d.params.insert(d.params.end() - 1, {"radius", ds::ParamType::Integer});
+  d.params.insert(d.params.begin() + index(d, "prefix"), {"radius", ds::ParamType::Integer});
   return d;
 }
 

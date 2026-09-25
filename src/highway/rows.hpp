@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include "core/motion/block_statistics.hpp"
 #include <cstddef>
 #include <cstdint>
 namespace neo_mv {
@@ -22,6 +23,10 @@ template <class T> struct MetricRequest {
   int width, height;
   bool satd;
 };
+template <class T>
+using StatisticsFunction = SadReferenceSum (*)(const T*, std::ptrdiff_t, const T*, std::ptrdiff_t, int, int);
+StatisticsFunction<std::uint8_t> statistics_function(std::uint8_t*);
+StatisticsFunction<std::uint16_t> statistics_function(std::uint16_t*);
 // Layer-wide phase tables and block-local source/coordinates. The caller has
 // admitted the complete candidate domain before entering these kernels.
 template <class T> struct MetricReferenceFrames {

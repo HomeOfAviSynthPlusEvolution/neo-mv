@@ -2,7 +2,7 @@
 
 根据存储的块误差附加场景切换标记。
 
-这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD 或 DCT 亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](../../knowledge/zh-CN/shared/analysis-data.md)。
+这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD、DCT 或混合亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](../../knowledge/zh-CN/shared/analysis-data.md)。
 
 ## 调用方式
 

@@ -137,6 +137,24 @@ void validate_sampling_frames(const SamplingGeometry& g, const SamplingFrames<T>
   }
 }
 
+template <class T>
+span2d::Plane<const T> source_block(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames, int k) {
+  const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;
+  return frames.current[k].subplane(g.planes[k].pad_x + b.x / rx, g.planes[k].pad_y + b.y / ry,
+                                    b.width / rx, b.height / ry);
+}
+template <class T>
+span2d::Plane<const T> reference_block(const SamplingGeometry& g, BlockRegion b, const SamplingFrames<T>& frames,
+                                      int k, MotionVector vector) {
+  const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;
+  const auto tx = std::int64_t(vector.x) / rx, ty = std::int64_t(vector.y) / ry;
+  const auto qx = sampling_detail::floor_div(tx, g.pel), qy = sampling_detail::floor_div(ty, g.pel);
+  const auto phase = (ty - g.pel * qy) * g.pel + tx - g.pel * qx;
+  const auto x = std::int64_t(g.planes[k].pad_x) + b.x / rx;
+  const auto y = std::int64_t(g.planes[k].pad_y) + b.y / ry;
+  return frames.reference[k][std::size_t(phase)].subplane(int(x + qx), int(y + qy), b.width / rx, b.height / ry);
+}
+
 // Direct evaluation rejects an unsafe vector before any sample read. Callers
 // must additionally admit the entire Omega at creation.
 template <class T, bool Validated = false>
@@ -152,15 +170,8 @@ BlockError block_error(const SamplingGeometry& g, BlockRegion b, const SamplingF
   const int count = g.chroma ? 3 : 1;
   std::array<std::int64_t, 3> errors{};
   for (int k = 0; k < count; ++k) {
-    const int rx = k == 0 ? 1 : g.ratio_x, ry = k == 0 ? 1 : g.ratio_y;
-    const auto tx = std::int64_t(vector.x) / rx, ty = std::int64_t(vector.y) / ry;
-    const auto qx = sampling_detail::floor_div(tx, g.pel), qy = sampling_detail::floor_div(ty, g.pel);
-    const auto ax = tx - g.pel * qx, ay = ty - g.pel * qy;
-    const int x = static_cast<int>(std::int64_t(g.planes[k].pad_x) + b.x / rx);
-    const int y = static_cast<int>(std::int64_t(g.planes[k].pad_y) + b.y / ry);
-    const auto source = frames.current[k].subplane(x, y, b.width / rx, b.height / ry);
-    const auto reference = frames.reference[k][static_cast<std::size_t>(ay * g.pel + ax)].subplane(
-        static_cast<int>(x + qx), static_cast<int>(y + qy), b.width / rx, b.height / ry);
+    const auto source = source_block(g, b, frames, k);
+    const auto reference = reference_block(g, b, frames, k, vector);
     errors[k] = block_metric<T, true>(source, reference, k == 0 ? metric : BlockMetric::sad);
   }
   const auto chroma = metric_detail::accumulate(errors[1], errors[2]);

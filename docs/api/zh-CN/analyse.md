@@ -7,7 +7,7 @@
 VapourSynth：`core.neo_mv.Analyse`；AviSynth：`neo_mv_Analyse`。参数顺序：
 
 ```text
-Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix])
+Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix, metric_weight, metric_threshold])
 ```
 
 此处方括号表示可选参数，不是数组字面量。可选参数建议按名称传入；Python 布尔值写作 `True`/`False`，AviSynth 写作 `true`/`false`。
@@ -38,8 +38,10 @@ Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chro
 | `trymany` | 整数 | `0` | 0 从选定初始候选搜索；1 在粗层分别尝试多个候选；2 在所有层尝试。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `metric` | 字符串 | `"sad"` | 亮度匹配度量：`"sad"`、`"satd"` 或 `"dct"`；色度仍使用 SAD。限制见下文。 |
+| `metric` | 字符串 | `"sad"` | 亮度匹配度量：纯 SAD/SATD/DCT 或局部/全局混合模式；色度仍使用 SAD。限制见下文。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
+| `metric_weight` | 浮点数 | `0.5` | local 触发后变换误差所占比例，[0,1]，精度 1/65536。 |
+| `metric_threshold` | 浮点数 | `0.03125` | local 相对亮度和变化门限，[0,1]，精度 1/65536。 |
 
 ### 匹配度量
 
@@ -51,9 +53,49 @@ Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chro
 | `"satd"` | 基于 4×4 Hadamard 变换的绝对差。 | 8–16 位整数和 float32；块宽、高均须能被 4 整除，不支持 6×6 和 16×2。 |
 | `"dct"` | 分别对源块和参考块做 DCT-II、量化系数，再计算带 DC 权重和块尺寸缩放的系数绝对差。 | 仅 8–16 位整数；全部合法块尺寸，包括 6×6 和 16×2。 |
 
-`chroma=true` 时，色度在三种模式下都使用 SAD；`metric` 只改变亮度度量。DCT 的 AC 系数采用最近偶数舍入，DC 使用整数截断；它不是未量化 DCT 系数的直接距离，也不保证复现历史实现的浮点舍入差异。
+`chroma=true` 时，色度在所有模式下都使用 SAD；`metric` 只改变亮度度量。DCT 的 AC 系数采用最近偶数舍入，DC 使用整数截断；它不是未量化 DCT 系数的直接距离，也不保证复现历史实现的浮点舍入差异。
 
 输出属性仍名为 `AnalysisSAD`，但保存的是所选度量计算的块误差（启用色度时包含色度 SAD），不是始终保存像素 SAD。切换度量会改变误差分布；误差阈值不会自动换算为等效 SAD 阈值。
+
+
+#### 混合模式
+
+以下五种新模式仅接受 8–16 位整数。所有 SATD 家族模式都要求块宽、高能被 4 整除，即使权重为零也不放宽尺寸限制；DCT 家族支持全部合法块尺寸。既有 `sad`、`satd`、`dct` 的数值定义和默认行为不变。
+
+| `metric` | 亮度误差策略 |
+| --- | --- |
+| `sad_dct_global` | SAD 与 DCT 混合，帧对统一决定权重；DC 权重为 4。 |
+| `sad_dct_local` | 逐候选检查亮度变化，触发后按 `metric_weight` 混合；DC 权重为 1。 |
+| `sad_satd_global` | SAD 与 SATD 混合，帧对统一决定权重。 |
+| `sad_satd_local` | 逐候选检查亮度变化，触发后按 `metric_weight` 混合。 |
+| `sad_satd_global_half` | 全局 SATD 权重减半，最多占 50%。 |
+
+`metric_weight` 和 `metric_threshold` 只允许在两个 local 模式中显式传入。二者须为 [0,1] 内的有限数，分别默认为 0.5 和 0.03125；创建时量化至最近的 1/65536 网格，正好居中时取较大值。非 local 模式显式传入任一个都会报错，即使等于默认值。参数追加在原签名末尾。
+
+设源块、候选参考块的亮度样本和为 Ls、Lr；仅当 `abs(Ls-Lr)*65536 > (Ls+Lr)*H` 时触发，其中 H 是量化门限。触发后亮度误差为 `(S*(65536-W)+X*W)/65536`，W 为量化权重，X 为相应变换误差；最后做一次整数截断。未触发则使用 SAD。两块均为零或门限恰好相等均不触发。weight=0 或 threshold=1 恒为 SAD；weight=1 只在触发后使用纯变换误差。
+
+全局模式从最粗层实际块网格的零位移亮度差求有符号平均值，再归一化为 0–16 的整数权重；正负变化可以抵消，重叠区域重复计入。最粗层本身使用 SAD，细层复用同一权重。只有一层时全局模式就是 SAD。AnalyseMany 的每个成员独立统计。色度始终只加一次 SAD，阈值不随度量自动换算。
+
+#### 从 MVTools 的 dct 参数迁移
+
+这是策略对应表，不是不同 DCT 后端之间的逐位兼容保证。表中空缺的新参数应省略。
+
+| 原 `dct` | 新 `metric` | `metric_weight` | `metric_threshold` |
+| ---: | --- | ---: | ---: |
+| 0 | `sad` | — | — |
+| 1 | `dct` | — | — |
+| 2 | `sad_dct_global` | — | — |
+| 3 | `sad_dct_local` | 0.5 | 0.03125 |
+| 4 | `sad_dct_local` | 0.75 | 0.03125 |
+| 5 | `satd` | — | — |
+| 6 | `sad_satd_global` | — | — |
+| 7 | `sad_satd_local` | 0.5 | 0.03125 |
+| 8 | `sad_satd_local` | 0.75 | 0.03125 |
+| 9 | `sad_satd_global_half` | — | — |
+| 10 | `sad_satd_local` | 0.25 | 0.0625 |
+
+局部比例可以自行设置，例如 `metric="sad_satd_local", metric_weight=0.6, metric_threshold=0.04`。比例和门限互相独立。与上游分项截断相比，在基础误差和触发决策相同的前提下，单次最终截断的 50% 组合可能高 0–1，25%/75% 组合可能高 0–2。这不限制最终向量差异；候选胜负可能改变。
+
 
 ### 搜索模式
 
@@ -107,7 +149,7 @@ return result
 
 ## 限制与常见错误
 
-缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 6×6 和 16×2；DCT 拒绝 float32，未知或大小写错误的 metric 字符串也会报错。取帧时元数据变化或非有限计算会报错。
+缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 6×6 和 16×2；DCT 和混合模式拒绝 float32，未知或大小写错误的 metric 字符串也会报错。取帧时元数据变化或非有限计算会报错。
 
 ## 计算原理
 

@@ -142,7 +142,7 @@ With rx=2, p=2, vx=−1 becomes chroma vector zero. vx=−3 becomes −1, then i
 
 ### 4.5 Measuring raw error
 
-`metric` selects `"sad"` (default), `"satd"`, or `"dct"`, with exact lowercase spelling. Only luma changes; chroma stays SAD. The exported `AnalysisSAD` stores the selected raw error, without search penalties. Thresholds keep their existing depth/area scaling; switching metrics does not convert them to equivalent SAD thresholds.
+`metric` selects `"sad"` (default), `"satd"`, `"dct"`, or one of the five mixed modes below, with exact lowercase spelling. Only luma changes; chroma stays SAD. The exported `AnalysisSAD` stores the selected raw error, without search penalties. Thresholds keep their existing depth/area scaling; switching metrics does not convert them to equivalent SAD thresholds.
 
 #### Integer SAD
 
@@ -201,7 +201,40 @@ For example, two 8-bit `4×4` grayscale blocks are constant 20 and 24. All AC co
 
 The implementation first uses FFT calculations to estimate AC coefficients with an error bound. An interval contained in one rounding region determines the quantized value immediately. Near a half-integer boundary, exact half-integer detection and fixed-precision integer intervals resolve the decision; remaining ambiguity triggers progressively higher-precision integer intervals until rounding is unique. Exact halves use the even rule rather than a tolerance-based guess. Scalar and SIMD paths therefore follow the same coefficient quantization definition, without reproducing historical floating-point rounding deviations.
 
-A block search can reuse its current block's quantized coefficients; each candidate still transforms its own reference block. The workspace belongs to that search, so mutable transform state is not shared with other frames.
+A block search can reuse its current block's quantized coefficients; each candidate still transforms its own reference block. The workspace is reused within one layer/request, so mutable transform state is not shared with other frames.
+
+#### Mixed errors: separate base distances from brightness policy
+
+The five mixed modes accept only 8–16-bit integers. Base SAD, SATD, and DCT definitions do not change. Let S be luma SAD, T be SATD, C be the absolute differences of all quantized DCT coefficients (including DC once), Z be the DC difference, and K be the block-size scale defined above:
+
+```text
+D4 = ((C + 3*Z)*K)/2
+D1 = (C*K)/2
+```
+
+`dct` and `sad_dct_global` use D4; `sad_dct_local` uses D1. Choose the DC weight before division by 2; subtracting a scaled term from an already truncated D4 is not equivalent. In the preceding constant 20/24 example, S=64, D4=16, and D1=4. The triggered default local mixture is `(64+4)/2=34`, not `(64+16)/2=40`.
+
+**Local modes.** `sad_dct_local` / `sad_satd_local` check brightness changes for each candidate. Compute source luma sum Ls and reference sum Lr without subtracting limited-range black offsets. At creation, multiply `metric_weight` and `metric_threshold` by 65536 and round to nearest, ties up, obtaining W and H. Candidate arithmetic is integer-only:
+
+```text
+active = abs(Ls-Lr)*65536 > (Ls+Lr)*H
+luma = active ? (S*(65536-W)+X*W)/65536 : S
+```
+
+X is D1 or T. Defaults W=32768 and H=2048 mean half transform weight and a threshold of 1/32 of the combined sums. Equal sums, two zero sums, and exact equality at the threshold do not trigger. W=0 or H=65536 always gives SAD, but format/size validation still applies. W=65536 also uses X only after a trigger. Ls can be reused; Lr must be recomputed per candidate. Local DCT transforms the source only on the first trigger, then reuses its coefficients within that source block.
+
+**Global modes.** For each actual coarsest-grid block, read the source and the zero-displacement reference block at the same position. This uses neither a searched best vector nor a field shift. Sum signed `Lr-Ls`, divide by block count with truncation toward zero, then compute:
+
+```text
+base_weight = min(16, (abs(mean_delta) >> (bits-8))/block_area)
+w = base_weight                         # sad_dct_global / sad_satd_global
+w = base_weight/2                       # sad_satd_global_half
+luma = (S*(16-w)+X*w)/16
+```
+
+X is D4 or T. Opposite changes cancel before taking the absolute value. Overlapped pixels are counted for every containing block. The coarsest level itself always uses SAD; all finer levels share this frame-pair weight. A one-level analysis therefore uses SAD throughout. Half uses integer division: base_weight=9 gives w=4, not 4.5. AnalyseMany members and concurrent frame requests compute independent statistics.
+
+Finally add chroma SAD exactly once; search penalties follow the existing process. Mixed error can be smaller than S, so exceeding a threshold in pure SAD cannot safely reject a mixed candidate. `AnalysisSAD` stores the mixed raw error; downstream consumers do not convert it back to pixel SAD. See the [Analyse API](../../api/en/analyse.md#mixed-modes) for parameters and migration mapping.
 
 #### Encoding float32 errors
 
@@ -550,7 +583,9 @@ Int32 values saturate to signed 32-bit range before validation. Booleans use the
 | `trymany` | 0; 0, 1, 2 | Independent seed searches |
 | `fields` | false | Field-shift geometry and calculation |
 | `tff` | Omitted reads `_Field` | Parity when needed |
-| `metric` | `"sad"`; `"satd"` requires dimensions divisible by 4; `"dct"` requires integer samples | Luma metric; chroma stays SAD |
+| `metric` | Default `"sad"`; SATD family requires dimensions divisible by 4; DCT and mixed modes require integers | Luma error policy; chroma stays SAD |
+| `metric_weight` | Local only; default 0.5, [0,1] | Transform weight after triggering; Q16 quantization |
+| `metric_threshold` | Local only; default 1/32, [0,1] | Relative luma-sum change threshold; Q16 quantization |
 | `prefix` | `MVUtensils` | Select Super data and name analysis properties |
 
 One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,6×6,8×4,8×8,12×12,16×2,16×8,16×16,24×24,32×16,32×32,48×48,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.

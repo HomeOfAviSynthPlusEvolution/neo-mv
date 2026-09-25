@@ -7,7 +7,7 @@
 VapourSynth：`core.neo_mv.Recalculate`；AviSynth：`neo_mv_Recalculate`。参数顺序：
 
 ```text
-Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, metric, prefix])
+Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, metric, prefix, metric_weight, metric_threshold])
 ```
 
 此处方括号表示可选参数，不是数组字面量。可选参数建议按名称传入；Python 布尔值写作 `True`/`False`，AviSynth 写作 `true`/`false`。
@@ -30,10 +30,14 @@ Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlam
 | `meander` | 布尔 | `true` | 相邻块行交替左右遍历方向。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `metric` | 字符串 | `"sad"` | 亮度匹配度量：`"sad"`、`"satd"` 或 `"dct"`；色度仍使用 SAD。限制见下文。 |
+| `metric` | 字符串 | `"sad"` | 亮度匹配度量：纯 SAD/SATD/DCT 或局部/全局混合模式；色度仍使用 SAD。限制见下文。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
+| `metric_weight` | 浮点数 | `0.5` | local 触发后变换误差所占比例，[0,1]，精度 1/65536。 |
+| `metric_threshold` | 浮点数 | `0.03125` | local 相对亮度和变化门限，[0,1]，精度 1/65536。 |
 
 ### 匹配度量
+
+新混合模式、local 参数及迁移表同 [Analyse](analyse.md#混合模式)。所有配置独立于输入矢量；全局模式固定 base_weight=8，half 模式实际权重为 4，不做多层亮度统计。local 参数省略时使用自己的默认值。
 
 可选值与限制同 [Analyse](analyse.md#匹配度量)：`"sad"` 为默认值；`"satd"` 不支持 6×6 和 16×2；`"dct"` 支持全部合法块尺寸，但仅接受 8–16 位整数、拒绝 float32。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。
 

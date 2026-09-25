@@ -95,7 +95,7 @@ inline AnalyseControls analyse_controls(Params p, int pel) {
   c.globalmv = p.boolean("globalmv", true);
   c.meander = p.boolean("meander", true);
   c.fields = p.boolean("fields", false);
-  c.metric = parse_block_metric(unwrap(p.values.get_string("metric", "sad")));
+  c.metric = motion_metric(p);
   return c;
 }
 inline void target_axes(AnalysisMetadata& m, Params args) {
@@ -191,7 +191,7 @@ struct RecalculateRuntime final : Runtime {
     controls.searchparam = args.integer("searchparam", 2);
     controls.pnew = args.integer("pnew", 25);
     controls.smooth = args.boolean("smooth", true);
-    controls.metric = parse_block_metric(unwrap(args.values.get_string("metric", "sad")));
+    controls.metric = motion_metric(args);
     controls.meander = args.boolean("meander", true);
     require(controls.mvlambda >= 0 && controls.search >= 0 && controls.search <= 5 && controls.pnew >= 0 &&
                 controls.pnew <= 256,

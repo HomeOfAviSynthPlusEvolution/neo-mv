@@ -76,6 +76,10 @@ inline ds::FilterDescriptor descriptor(Operation op) {
     add("thscd2", P::Float);
   }
   add("prefix", P::String);
+  if (op == Operation::Analyse || op == Operation::Recalculate) {
+    add("metric_weight", P::Float);
+    add("metric_threshold", P::Float);
+  }
   return d;
 }
 inline constexpr char super_signature[] =
@@ -88,13 +92,13 @@ inline constexpr char super_signature[] =
   "opt;"                                                                                                               \
   "overlap:int[]:opt:empty;badsad:int:opt;badrange:int:opt;meander:int:opt;trymany:int:opt;fields:int:opt;tff:int:"    \
   "opt;metric:data:opt;"
-inline constexpr char analyse_signature[] = NEO_MV_ANALYSE_PARAMETERS "prefix:data:opt;";
-inline constexpr char many_signature[] = NEO_MV_ANALYSE_PARAMETERS "radius:int:opt;prefix:data:opt;";
+inline constexpr char analyse_signature[] = NEO_MV_ANALYSE_PARAMETERS "prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
+inline constexpr char many_signature[] = NEO_MV_ANALYSE_PARAMETERS "radius:int:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
 #undef NEO_MV_ANALYSE_PARAMETERS
 inline constexpr char recalculate_signature[] =
     "super:vnode;vectors:vnode[];thsad:int:opt;smooth:int:opt;blksize:int[]:opt:empty;search:int:opt;searchparam:int:"
     "opt;mvlambda:int:opt;chroma:int:opt;pnew:int:opt;overlap:int[]:opt:empty;meander:int:opt;fields:int:opt;tff:int:"
-    "opt;metric:data:opt;prefix:data:opt;";
+    "opt;metric:data:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
 inline constexpr char scene_signature[] = "clip:vnode;vectors:vnode;thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
 template <Operation Op>
 struct Bridge {

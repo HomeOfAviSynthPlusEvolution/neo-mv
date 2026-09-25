@@ -7,7 +7,7 @@ Estimate block motion from each frame to a reference at n+delta.
 VapourSynth: `core.neo_mv.Analyse`. AviSynth: `neo_mv_Analyse`. Parameter order:
 
 ```text
-Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix])
+Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix, metric_weight, metric_threshold])
 ```
 
 Brackets here mark optional arguments, not a literal array. Use named optional arguments. Booleans are `True`/`False` in Python and `true`/`false` in AviSynth.
@@ -38,8 +38,10 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `trymany` | Integer | `0` | 0 searches from the selected seed; 1 tries multiple seeds on coarse levels; 2 does so on all levels. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `metric` | String | `"sad"` | Luma matching metric: `"sad"`, `"satd"`, or `"dct"`; chroma remains SAD. See restrictions below. |
+| `metric` | String | `"sad"` | Luma matching metric: pure SAD/SATD/DCT or local/global mixtures; chroma remains SAD. See restrictions below. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
+| `metric_weight` | Float | `0.5` | Transform contribution after a local trigger; [0,1], precision 1/65536. |
+| `metric_threshold` | Float | `0.03125` | Local relative luma-sum change threshold; [0,1], precision 1/65536. |
 
 ### Matching metric
 
@@ -51,9 +53,49 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `"satd"` | Absolute differences based on 4×4 Hadamard transforms. | 8–16-bit integer and float32; both dimensions must be divisible by 4, excluding 6×6 and 16×2. |
 | `"dct"` | DCT-II and coefficient quantization of each source/reference block, followed by coefficient absolute differences with DC weighting and block-size scaling. | 8–16-bit integer only; all valid block sizes, including 6×6 and 16×2. |
 
-With `chroma=true`, chroma uses SAD in all three modes; `metric` changes only the luma metric. DCT AC coefficients use nearest-even rounding, while DC uses integer truncation. This is not the direct distance between unquantized DCT coefficients and does not promise to reproduce historical floating-point rounding differences.
+With `chroma=true`, chroma uses SAD in all modes; `metric` changes only the luma metric. DCT AC coefficients use nearest-even rounding, while DC uses integer truncation. This is not the direct distance between unquantized DCT coefficients and does not promise to reproduce historical floating-point rounding differences.
 
 The output property remains named `AnalysisSAD`, but contains block error from the selected metric (including chroma SAD when enabled), not necessarily pixel SAD. Changing metrics changes the error distribution; error thresholds are not automatically converted to equivalent SAD thresholds.
+
+
+#### Mixed modes
+
+These five new modes accept only 8–16-bit integer samples. Every SATD-family mode requires both block dimensions divisible by 4, even at zero weight; the DCT family supports all valid block shapes. Existing `sad`, `satd`, and `dct` numerical definitions and defaults remain unchanged.
+
+| `metric` | Luma error policy |
+| --- | --- |
+| `sad_dct_global` | Mix SAD and DCT using a frame-pair weight; DC weight is 4. |
+| `sad_dct_local` | Check brightness change per candidate, then mix with `metric_weight` if triggered; DC weight is 1. |
+| `sad_satd_global` | Mix SAD and SATD using a frame-pair weight. |
+| `sad_satd_local` | Check brightness change per candidate, then mix with `metric_weight` if triggered. |
+| `sad_satd_global_half` | Halve the global SATD weight, limiting it to 50%. |
+
+Only the two local modes accept explicit `metric_weight` and `metric_threshold`. Both must be finite numbers in [0,1], defaulting to 0.5 and 0.03125. At creation, each is rounded to the nearest 1/65536 grid point, with exact ties rounded up. Supplying either parameter to another mode is an error, even at its default value. Both parameters are appended to the original signature.
+
+Let Ls and Lr be source and candidate luma sums. Trigger only when `abs(Ls-Lr)*65536 > (Ls+Lr)*H`, where H is the quantized threshold. The triggered luma error is `(S*(65536-W)+X*W)/65536`, where W is the quantized weight and X is the transform error; truncate once at the end. Otherwise use SAD. Two zero sums or equality at the threshold do not trigger. weight=0 or threshold=1 always uses SAD; weight=1 uses pure transform error only after triggering.
+
+Global modes average signed zero-displacement brightness differences across the actual coarsest block grid, then normalize this to an integer weight from 0 to 16. Opposite changes can cancel; overlaps are counted repeatedly. The coarsest level itself uses SAD; finer levels reuse the same weight. With just one level, global modes are SAD. Each AnalyseMany member computes its own statistics. Chroma SAD is added exactly once, and thresholds are not automatically converted between metrics.
+
+#### Migrating from MVTools dct
+
+This table maps policies; it does not guarantee bitwise equivalence between DCT backends. Omit new parameters marked with a dash.
+
+| Original `dct` | New `metric` | `metric_weight` | `metric_threshold` |
+| ---: | --- | ---: | ---: |
+| 0 | `sad` | — | — |
+| 1 | `dct` | — | — |
+| 2 | `sad_dct_global` | — | — |
+| 3 | `sad_dct_local` | 0.5 | 0.03125 |
+| 4 | `sad_dct_local` | 0.75 | 0.03125 |
+| 5 | `satd` | — | — |
+| 6 | `sad_satd_global` | — | — |
+| 7 | `sad_satd_local` | 0.5 | 0.03125 |
+| 8 | `sad_satd_local` | 0.75 | 0.03125 |
+| 9 | `sad_satd_global_half` | — | — |
+| 10 | `sad_satd_local` | 0.25 | 0.0625 |
+
+Custom proportions are supported, for example `metric="sad_satd_local", metric_weight=0.6, metric_threshold=0.04`. Weight and threshold are independent. Given identical base errors and trigger decisions, one final truncation can exceed upstream's separately truncated terms by 0–1 for 50%, or 0–2 for 25%/75%. This does not bound final vector differences: candidate rankings can change.
+
 
 ### Search modes
 
@@ -107,7 +149,7 @@ return result
 
 ## Restrictions and common errors
 
-Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2; DCT rejects float32, and unknown or wrongly cased metric strings are errors. Changed frame metadata or nonfinite calculations fail at evaluation.
+Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2; DCT and mixed modes reject float32, and unknown or wrongly cased metric strings are errors. Changed frame metadata or nonfinite calculations fail at evaluation.
 
 ## Computation
 

@@ -325,3 +325,48 @@ float_vectors = mv.Analyse(float_super)
 fails(lambda: mv.Analyse(float_super, metric="dct"), "integer samples")
 fails(lambda: mv.AnalyseMany(float_super, metric="dct"), "integer samples")
 fails(lambda: mv.Recalculate(float_super, float_vectors, metric="dct"), "integer samples")
+# New policies share the entry points and preserve independent request state.
+mixed_names = ["sad_dct_global", "sad_dct_local", "sad_satd_global",
+               "sad_satd_local", "sad_satd_global_half"]
+c = core.std.Interleave([blank(width=32,height=32,color=40,length=3),
+                        blank(width=32,height=32,color=50,length=3)])
+s = mv.Super(c,blksize=8,overlap=0,pad=16,pel=2)
+one = mv.Super(c,blksize=8,overlap=0,pad=16,pel=2,onelevel=True)
+expected_analysis = [290,330,440,480,540]
+expected_recalc = [360,330,480,480,560]
+for name, ea, er in zip(mixed_names, expected_analysis, expected_recalc):
+    a = mv.Analyse(s,metric=name,levels=2,badrange=0)
+    many = outputs(mv.AnalyseMany(s,metric=name,levels=2,radius=1,badrange=0))
+    r = outputs(mv.Recalculate(s,many,metric=name,thsad=0))
+    for node, expected in [(a,ea)]+[(n,ea) for n in many]+[(n,er) for n in r]:
+        errors = values(node.get_frame(2).props[P+"AnalysisSAD"])
+        assert all(e==expected for e in errors), (name,errors,expected)
+    # Interleaved member/direction/frame requests must agree with serial output.
+    jobs = [(n,i,n.get_frame_async(i)) for n in many+r for i in (1,3,2,4)]
+    for node,i,future in jobs:
+        assert analysis(future.result()) == analysis(node.get_frame(i))
+    assert P+"AnalysisSAD" not in a.get_frame(5).props
+    if "global" in name:
+        single = mv.Analyse(one,metric=name,badrange=0)
+        assert all(e==640 for e in values(single.get_frame(2).props[P+"AnalysisSAD"]))
+    for create in [lambda **kw: mv.Analyse(float_super,**kw),
+                   lambda **kw: mv.AnalyseMany(float_super,**kw),
+                   lambda **kw: mv.Recalculate(float_super,float_vectors,**kw)]:
+        fails(lambda: create(metric=name), "integer samples")
+    if "satd" in name:
+        six = mv.Super(blank(width=24,height=24),blksize=6,overlap=0)
+        fails(lambda: mv.Analyse(six,metric=name), "divisible by 4")
+        if "local" in name:
+            fails(lambda: mv.Analyse(six,metric=name,metric_weight=0), "divisible by 4")
+for create in [lambda **kw: mv.Analyse(s,**kw),lambda **kw: mv.AnalyseMany(s,**kw),
+               lambda **kw: mv.Recalculate(s,many,**kw)]:
+    for name in ["sad","satd","dct","sad_dct_global","sad_satd_global","sad_satd_global_half"]:
+        fails(lambda: create(metric=name,metric_weight=0.5), "local metric")
+        fails(lambda: create(metric=name,metric_threshold=0.03125), "local metric")
+    for key in ["metric_weight","metric_threshold"]:
+        for bad in [-0.01,1.01,float("inf"),float("nan")]:
+            fails(lambda: create(metric="sad_satd_local",**{key:bad}))
+    for weight, threshold, expected in [(0.,0.,640),(1.,1.,640),(1.,0.,320),(.6,.04,447)]:
+        nodes=outputs(create(metric="sad_satd_local",metric_weight=weight,metric_threshold=threshold))
+        for node in nodes:
+            assert all(e==expected for e in values(node.get_frame(2).props[P+"AnalysisSAD"]))

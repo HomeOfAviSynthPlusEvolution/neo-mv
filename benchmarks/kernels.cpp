@@ -65,7 +65,7 @@ void run(const std::string& op, int width, bool highway, int iterations, int sam
     randomize(f.source[0], rng);
     randomize(f.reference[0][0], rng);
     neo_mv::AnalyseControls controls;
-    controls.metric = satd ? neo_mv::BlockMetric::satd : neo_mv::BlockMetric::sad;
+    controls.metric = satd ? neo_mv::MotionMetric::satd : neo_mv::MotionMetric::sad;
     controls.badrange = 0;
     const std::vector<neo_mv::SamplingGeometry> geometries{f.geometry};
     const std::vector<neo_mv::SamplingFrames<T>> frames{f.frames};

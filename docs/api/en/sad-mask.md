@@ -2,7 +2,7 @@
 
 Visualize stored block errors after vector-based projection.
 
-Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](../../knowledge/en/shared/analysis-data.md).
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, DCT, or mixed luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](../../knowledge/en/shared/analysis-data.md).
 
 ## Calling the function
 

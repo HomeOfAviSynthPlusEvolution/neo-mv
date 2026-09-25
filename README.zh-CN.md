@@ -28,6 +28,8 @@ neo-mv 将运动计算与宿主帧管理分离。核心处理图像平面、运�
 
 `Analyse`、`AnalyseMany` 和 `Recalculate` 通过 `metric="sad"`（默认）、`"satd"` 或 `"dct"` 选择亮度匹配度量。SATD 要求块宽、高均能被 4 整除；DCT 支持全部合法块尺寸，包括 6×6 和 16×2，但仅接受 8–16 位整数。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。误差阈值保留原有缩放规则，不在不同度量之间自动换算。
 
+仅整数的混合模式 `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local` 和 `sad_satd_global_half` 支持帧对自适应权重，或可调的局部 `metric_weight` / `metric_threshold`。参见 [API 迁移表](docs/api/zh-CN/analyse.md#从-mvtools-的-dct-参数迁移)。既有纯模式的数值定义不变。
+
 运动数据保存在帧属性中。默认属性前缀为 `MVUtensils`，与插件命名空间 `neo_mv` 相互独立。Super 的辅助图像属于生成它的实现，供 neo-mv 使用的 Super 应由 neo-mv 生成。
 
 ## 文档与使用

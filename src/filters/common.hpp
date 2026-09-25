@@ -56,6 +56,14 @@ struct Params {
   }
   std::optional<bool> tff() const { return present("tff") ? std::optional<bool>(boolean("tff", false)) : std::nullopt; }
 };
+inline MetricConfig motion_metric(Params p) {
+  const auto optional = [&](const char* key) -> std::optional<double> {
+    if (!p.present(key)) return {};
+    return unwrap(p.values.get_double(key, 0));
+  };
+  return make_metric_config(unwrap(p.values.get_string("metric", "sad")),
+                            optional("metric_weight"), optional("metric_threshold"));
+}
 inline ds::VideoOutputInfo output_info(const ds::VideoInputInfo& in) {
   return {in.width, in.height, in.num_frames, in.format, in.fps};
 }

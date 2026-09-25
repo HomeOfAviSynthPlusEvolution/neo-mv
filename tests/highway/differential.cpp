@@ -217,13 +217,13 @@ template <class T> void sampled_motion(int block_width = 8) {
         for (int trymany : {0, 1, 2}) {
         AnalyseControls a;
         a.search = search;
-        a.metric = satd ? neo_mv::BlockMetric::satd : neo_mv::BlockMetric::sad;
+        a.metric = satd ? neo_mv::MotionMetric::satd : neo_mv::MotionMetric::sad;
         a.trymany = trymany;
         same_grid(analyse_vectors<T>(f.metadata, {f.geometry}, {f.frames}, a),
                   analyse_vectors<T, HighwayKernels<T>>(f.metadata, {f.geometry}, {f.frames}, a));
         RecalculateControls r;
         r.search = search;
-        r.metric = satd ? neo_mv::BlockMetric::satd : neo_mv::BlockMetric::sad;
+        r.metric = satd ? neo_mv::MotionMetric::satd : neo_mv::MotionMetric::sad;
         r.thsad = 0;
         same_grid(recalculate_vectors(f.old_field(), f.metadata, f.geometry, f.frames, r),
                   recalculate_vectors<T, HighwayKernels<T>>(f.old_field(), f.metadata, f.geometry, f.frames, r));

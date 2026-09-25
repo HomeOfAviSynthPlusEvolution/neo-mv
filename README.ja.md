@@ -28,6 +28,8 @@ neo-mv は動きの計算とホストのフレーム管理を分離していま�
 
 `Analyse`、`AnalyseMany`、`Recalculate` は `metric="sad"`（既定）、`"satd"`、`"dct"` で輝度の比較方法を選択します。SATD はブロックの幅と高さがともに 4 の倍数である必要があります。DCT は 6×6 と 16×2 を含むすべての有効なブロック形状に対応しますが、8–16 ビット整数のみ使用できます。色差は常に SAD です。この文字列パラメーターは従来の `satd` 真偽値を置き換えます。誤差のしきい値は既存のスケーリング規則を維持し、比較方法の間で自動換算しません。
 
+整数専用の混合モード `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local`、`sad_satd_global_half` は、フレーム対の適応的な重み、または局所的な `metric_weight` / `metric_threshold` を使用します。[API の移行表](docs/api/en/analyse.md#migrating-from-mvtools-dct)を参照してください。既存の純粋な SAD/SATD/DCT の数値定義は変わりません。
+
 動きデータはフレームプロパティに格納されます。既定のプロパティ接頭辞は `MVUtensils` で、プラグインの名前空間 `neo_mv` とは独立しています。Super の補助画像は生成した実装に属するため、neo-mv の関数で使用する Super は neo-mv で生成してください。
 
 ## ドキュメントと使用方法

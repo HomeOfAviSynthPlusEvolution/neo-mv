@@ -1,5 +1,5 @@
 #pragma once
-#include "core/motion/dct.hpp"
+#include "core/motion/metric_evaluator.hpp"
 
 #include "core/motion/composition.hpp"
 
@@ -8,7 +8,7 @@ namespace neo_mv {
 struct RecalculateControls {
   std::int32_t thsad = 200, mvlambda = 1000, search = 2, searchparam = 2, pnew = 25;
   bool smooth = true, meander = true;
-  BlockMetric metric = BlockMetric::sad;
+  MetricConfig metric{};
 };
 
 namespace recalculate_detail {
@@ -70,8 +70,6 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
   if (old.metadata.bits != target.bits || controls.mvlambda < 0 || controls.search < 0 || controls.search > 5 ||
       controls.pnew < 0 || controls.pnew > 256)
     throw std::invalid_argument("invalid Recalculate controls or input precision");
-  if (controls.metric == BlockMetric::satd && (target.block_width % 4 || target.block_height % 4))
-    throw std::invalid_argument("SATD requires block width and height divisible by 4");
   if constexpr (!GeometryValidated)
     validate_motion_layer(target, geometry, true);
   validate_sampling_frames(geometry, frames);
@@ -82,6 +80,8 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
     threshold = prediction_detail::add(threshold, 2 * (threshold / (target.ratio_x * target.ratio_y)));
   MotionGrid output{target.blocks_x, target.blocks_y, {}};
   output.values.resize(static_cast<std::size_t>(field_detail::count(target)));
+  const auto metric_plan = metric_layer_plan(controls.metric, {8});
+  MetricScratch metric_scratch;
   decltype(auto) prepared_frames = Kernels::prepare_frames(geometry, frames);
   for (int by = 0; by < target.blocks_y; ++by)
     for (int index = 0; index < target.blocks_x; ++index) {
@@ -102,14 +102,8 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
         }
         return result;
       };
-      SearchResult result;
-      if (controls.metric == BlockMetric::dct) {
-        DctBlockError<T> evaluate(geometry, block, frames, target.bits, !std::is_same_v<Kernels, ScalarKernels<T>>);
-        result = search(evaluate);
-      } else {
-        auto evaluate = Kernels::prepare_block_error(geometry, block, prepared_frames, controls.metric);
-        result = search(evaluate);
-      }
+      const auto result = with_motion_evaluator<T, Kernels>(metric_plan, geometry, block, frames, prepared_frames,
+                                                            metric_scratch, target.bits, search);
       output.values[std::size_t(by) * target.blocks_x + bx] = {result.vector, result.raw};
     }
   return output;

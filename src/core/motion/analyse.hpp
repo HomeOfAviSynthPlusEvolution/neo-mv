@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/motion/composition.hpp"
-#include "core/motion/dct.hpp"
+#include "core/motion/metric_evaluator.hpp"
 
 namespace neo_mv {
 
@@ -10,7 +10,7 @@ struct AnalyseControls {
   std::int32_t mvlambda = 1000, lsad = 400, plevel = 1;
   std::int32_t pnew = 25, pzero = 25, pglobal = 0, badsad = 10000, badrange = 24, trymany = 0;
   bool globalmv = true, meander = true, fields = false;
-  BlockMetric metric = BlockMetric::sad;
+  MetricConfig metric{};
 };
 struct AnalysisLayer {
   AnalysisMetadata metadata;
@@ -23,7 +23,7 @@ inline void validate_analyse_controls(AnalyseControls c, int block_width, int bl
       c.pnew < 0 || c.pnew > 256 || c.pzero < 0 || c.pzero > 256 || c.pglobal < 0 || c.pglobal > 256 || c.trymany < 0 ||
       c.trymany > 2)
     throw std::invalid_argument("invalid Analyse controls");
-  if (c.metric == BlockMetric::satd && (block_width % 4 || block_height % 4))
+  if (metric_descriptor(c.metric.mode).transform == MetricTransform::satd && (block_width % 4 || block_height % 4))
     throw std::invalid_argument("SATD requires block width and height divisible by 4");
 }
 
@@ -151,12 +151,19 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
   const auto lsad = scale_area(scale_precision(controls.lsad, finest.bits), finest.block_width, finest.block_height);
   const auto badsad =
       scale_area(scale_precision(controls.badsad, finest.bits), finest.block_width, finest.block_height);
+  MetricFrameContext metric_context;
+  if constexpr (std::is_integral_v<T>) {
+    if (layers.size() > 1 && metric_descriptor(controls.metric.mode).mix == MetricMix::global)
+      metric_context = metric_frame_context<T, Kernels>(layers.back().metadata, layers.back().sampling, frames[layers.size() - 1]);
+  }
   MotionGrid parent{0, 0, {}};
   int parent_pel = 1;
   for (std::size_t index = layers.size(); index-- > 0;) {
     const auto& layer = layers[index];
     const auto& m = layer.metadata;
     const bool coarsest = index + 1 == layers.size();
+    const auto metric_plan = metric_layer_plan(controls.metric, coarsest ? MetricFrameContext{} : metric_context);
+    MetricScratch metric_scratch;
     const int f = index == 0 ? field_shift : 0;
     MotionGrid current{m.blocks_x, m.blocks_y, {}};
     current.values.resize(static_cast<std::size_t>(field_detail::count(m)));
@@ -185,16 +192,11 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         if (coarsest)
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
-        SearchResult result;
-        if (controls.metric == BlockMetric::dct) {
-          DctBlockError<T> evaluate(layer.sampling, block, frames[index], m.bits, !std::is_same_v<Kernels, ScalarKernels<T>>);
-          result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
-                                         badsad, controls, evaluate);
-        } else {
-          auto evaluate = Kernels::prepare_block_error(layer.sampling, block, prepared_frames, controls.metric);
-          result = analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
-                                                 badsad, controls, evaluate, 0);
-        }
+        const auto result = with_motion_evaluator<T, Kernels>(metric_plan, layer.sampling, block, frames[index],
+            prepared_frames, metric_scratch, m.bits, [&](auto& evaluate) {
+              return analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
+                                                   badsad, controls, evaluate, 0);
+            });
         current.values[std::size_t(y) * m.blocks_x + x] = {result.vector, result.raw};
       }
     }

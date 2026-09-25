@@ -23,7 +23,7 @@ Here θ includes all other arguments, preserving whether each was omitted. Omitt
 
 Each member retains the full source frame count and rate. Its frame n uses `super[n]` as the carrier and `n±rD` as the reference. Estimation, visible pixels, and output properties all follow Analyse. Members may share immutable Super data, but not mutable analysis results.
 
-`metric` is passed unchanged to every member: `"sad"` by default, or `"satd"` / `"dct"` under Analyse's restrictions. Each member uses the same coefficient quantization and error rules; errors are not combined across members.
+`metric` is passed unchanged to every member: `"sad"` by default, or `"satd"`, `"dct"`, or a mixed mode under Analyse's restrictions. `metric_weight` and `metric_threshold` are also forwarded unchanged, and each member computes its own global weight. Each member uses the same coefficient quantization and error rules; errors are not combined across members.
 
 ## 5. A complete numerical example
 

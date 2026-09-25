@@ -231,18 +231,18 @@ void additional_squares() {
         for (bool satd : {false, true}) {
           if (b == 6 && satd) {
             AnalyseControls invalid;
-            invalid.metric = neo_mv::BlockMetric::satd;
+            invalid.metric = neo_mv::MotionMetric::satd;
             rejects([&] { plan_analysis(metadata, geometry, invalid); });
             continue;
           }
           AnalyseControls controls;
-          controls.metric = satd ? neo_mv::BlockMetric::satd : neo_mv::BlockMetric::sad;
+          controls.metric = satd ? neo_mv::MotionMetric::satd : neo_mv::MotionMetric::sad;
           const auto grid = analyse_vectors<T>(metadata, geometry, frames, controls);
           CHECK(grid.values.size() == std::size_t(metadata.blocks_x) * metadata.blocks_y);
           for (const auto& v : grid.values)
             CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
           RecalculateControls refine;
-          refine.metric = satd ? neo_mv::BlockMetric::satd : neo_mv::BlockMetric::sad;
+          refine.metric = satd ? neo_mv::MotionMetric::satd : neo_mv::MotionMetric::sad;
           const auto result = recalculate_vectors(AnalysisField{metadata, FieldState::complete, grid},
                                                   metadata, geometry[0], frames[0], refine);
           for (const auto& v : result.values)
@@ -284,7 +284,7 @@ void six_chroma() {
       for (const auto& v : refined.values)
         CHECK(v.vector.x == 0 && v.vector.y == 0 && v.error == 0);
       RecalculateControls invalid;
-      invalid.metric = neo_mv::BlockMetric::satd;
+      invalid.metric = neo_mv::MotionMetric::satd;
       rejects([&] { recalculate_vectors(AnalysisField{metadata, FieldState::complete, grid},
                                        metadata, geometry[0], same[0], invalid); });
     }

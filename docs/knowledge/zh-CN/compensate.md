@@ -4,7 +4,7 @@
 
 `Compensate` 根据每块的原始误差，在参考 Super 与当前 Super 之间选择样本来源，再按运动位移取整块，最后用重叠窗口合成。它不重新估计向量，也不按 SAD 连续混合两个图像。
 
-这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD 或 DCT 亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](shared/analysis-data.md)。
+这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD、DCT 或混合亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](shared/analysis-data.md)。
 
 ## 2. 计算对象与记号
 

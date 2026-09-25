@@ -6,6 +6,10 @@
 
 Old errors are validated but do not decide whether to search. Even unchanged vectors receive newly measured errors. Visible output and initial properties come from `super`, not old vector nodes.
 
+### Mixed metric weights
+
+The two local modes use the same per-candidate trigger and Q16 mixture as [Analyse](analyse.md). Parameters are independent of input vectors and default to 0.5 and 0.03125. The three global modes use fixed base_weight=8 in Recalculate (effective weight 4 for half), without coarsest-level statistics. Remeasure the mapped candidate using this policy before comparing its new raw error with thsad; the old stored error does not enter the mixture.
+
 ## 2. Objects and notation
 
 Old geometry has subscript 0: blocks `Bx0,By0`, steps `sx0,sy0`, and pel `p0`. Target geometry is `Bx,By,Ox,Oy,p`, with block index `bx,by`. d is the old `DeltaFrame` saved when the member was created.
@@ -52,7 +56,7 @@ This forms horizontal weighted quantities on both rows, then interpolates vertic
 
 ### 4.4 Threshold, new measurement, and search
 
-The new error uses the [SAD, SATD, or DCT calculation in Analyse](analyse.md#45-measuring-raw-error). `metric` defaults independently to `"sad"`; it does not inherit the metric used to produce the input vectors. To measure DCT again, explicitly pass `metric="dct"`. DCT requires integer samples and supports every valid target block shape. Threshold scaling below remains unchanged; there is no metric-to-metric conversion.
+The new error uses the [SAD, SATD, DCT, and mixed error calculation in Analyse](analyse.md#45-measuring-raw-error). `metric` defaults independently to `"sad"`; it does not inherit the metric used to produce the input vectors. To measure DCT again, explicitly pass `metric="dct"`. DCT requires integer samples and supports every valid target block shape. Threshold scaling below remains unchanged; there is no metric-to-metric conversion.
 
 Using [Analyse](analyse.md)'s depth conversion Qb:
 
@@ -82,7 +86,9 @@ Let both pel values be 1, vector 2 be inside the target domain, and the new GRAY
 | `search,searchparam` | 2, 2; search 0–5, range at least 1 | Single-level search |
 | `mvlambda,pnew` | 1000, 25; nonnegative and 0–256 respectively | Distance and error penalties |
 | `chroma` | true | Include chroma SAD |
-| `metric` | `"sad"`; same restrictions as Analyse | Luma metric for fresh measurement |
+| `metric` | Default `"sad"`; SATD family requires dimensions divisible by 4; DCT and mixed modes require integers | Luma error policy; chroma stays SAD |
+| `metric_weight` | Local only; default 0.5, [0,1] | Transform weight after triggering; Q16 quantization |
+| `metric_threshold` | Local only; default 1/32, [0,1] | Relative luma-sum change threshold; Q16 quantization |
 | `meander` | true | Evaluation direction; independent block results do not change |
 | `fields,tff` | false, omitted | Field-information validation |
 | `prefix` | `MVUtensils` | Super/Analysis names |
