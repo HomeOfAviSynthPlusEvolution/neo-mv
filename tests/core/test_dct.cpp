@@ -1,5 +1,7 @@
 #include "core/motion/dct.hpp"
 #include "core/motion/dct_rounding.hpp"
+#include "core/motion/dct_fft.hpp"
+#include <cfenv>
 #include "core/motion/analyse.hpp"
 #include "core/motion/recalculate.hpp"
 #include "motion_fixture.hpp"
@@ -54,6 +56,57 @@ std::vector<int> oracle(const std::vector<std::uint16_t>& input, int w, int h, i
 auto view(const std::vector<std::uint16_t>& x, int w, int h) {
   return checked_plane<const std::uint16_t>(x.data(), w, h, w * sizeof(std::uint16_t),
                                             x.size() * sizeof(std::uint16_t));
+}
+void bounded_fft() {
+  struct RestoreRounding {
+    int mode = std::fegetround();
+    ~RestoreRounding() { std::fesetround(mode); }
+  } restore;
+  std::mt19937 random(625);
+  for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+    check(std::fesetround(mode) == 0, "cannot set rounding mode for DCT test");
+    for (int n : {2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 128}) {
+      std::vector<double> input(3 * n, -17), output(3 * n, -19);
+      for (int pattern = 0; pattern < 4; ++pattern) {
+        for (int x = 0; x < n; ++x)
+          input[3 * x] = pattern == 0 ? 65535 : pattern == 1 ? (x == 0 ? 65535 : 0) :
+                         pattern == 2 ? ((x & 1) ? 65535 : 0) : double(random() & 65535);
+        const auto before = input;
+        dct_detail::dct_line(n, input.data(), 3, output.data(), 3);
+        int ell = 0;
+        for (int k = 2 * n; k > 1; k = (k + 1) / 2)
+          ++ell;
+        const double bound = 2 * n * 65535.0 * (64 * (ell + 1)) * 0x1p-52;
+        for (int k = 0; k < n; ++k) {
+          check(std::fesetround(FE_TONEAREST) == 0, "cannot set oracle rounding mode");
+          double expected = 0;
+          // Evaluate the independent cosine oracle in round-to-nearest: some
+          // libm implementations lose accuracy in directed rounding modes.
+          // The FFT under test was evaluated in the selected mode above.
+          // Independent direct cosine sum is a numerical cross-check; the
+          // constant generator and analytical bound supply the enclosure proof.
+          for (int x = 0; x < n; ++x)
+            expected += 2 * input[3 * x] * std::cos(std::acos(-1.0) * (2 * x + 1) * k / (2 * n));
+          check(std::fesetround(mode) == 0, "cannot restore FFT rounding mode");
+          if (!(std::abs(output[3 * k] - expected) < 4 * bound)) {
+            std::cerr << "FFT mismatch mode=" << mode << " n=" << n << " pattern=" << pattern << " k=" << k
+                      << " got=" << output[3*k] << " expected=" << expected << " bound=" << bound << '\n';
+            throw std::runtime_error("bounded FFT cosine cross-check");
+          }
+          if (pattern == 0 && k > 0)
+            check(std::abs(output[3 * k]) <= bound, "bounded FFT constant has nonzero AC");
+          check(output[3 * k + 1] == -19 && output[3 * k + 2] == -19, "FFT output stride overrun");
+        }
+        check(input == before, "FFT modified input");
+      }
+    }
+  }
+  rejects([] { dct_detail::ac_error_bound(10, 10, 8); });
+  rejects([] { dct_detail::ac_error_bound(8, 8, 32); });
+  for (int w : {4, 6, 12, 24, 48, 128}) {
+    const auto bound = dct_detail::ac_error_bound(w, w, 16);
+    check(bound > 0 && bound < 1e-6, "unexpected DCT AC error enclosure");
+  }
 }
 void exact_boundaries() {
   for (auto size : {std::pair{4, 4}, {6, 6}, {8, 4}, {8, 8}, {12, 12}, {16, 2}, {16, 8}, {16, 16},
@@ -259,6 +312,7 @@ int main() {
     backend_equivalence<std::uint8_t>();
     backend_equivalence<std::uint16_t>();
 #endif
+    bounded_fft();
     exact_boundaries();
     dc_boundary();
     numeric();
