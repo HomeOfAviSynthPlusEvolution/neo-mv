@@ -20,6 +20,14 @@ void Fft(D d, const double* input, int step, double* re, double* im, const doubl
   if constexpr (N == 1) {
     hn::StoreU(hn::LoadU(d, input), d, re);
     hn::StoreU(hn::Zero(d), d, im);
+  } else if constexpr (N == 2) {
+    // Both inputs are real, and the only twiddle is exactly (1, 0).
+    // Avoid the generic complex multiply and its temporary arrays.
+    const auto a = hn::LoadU(d, input), b = hn::LoadU(d, input + step);
+    hn::StoreU(hn::Add(a, b), d, re);
+    hn::StoreU(hn::Sub(a, b), d, re + lanes);
+    hn::StoreU(hn::Zero(d), d, im);
+    hn::StoreU(hn::Zero(d), d, im + lanes);
   } else if constexpr (N == 3) {
     const auto a = hn::LoadU(d, input), b = hn::LoadU(d, input + step), c = hn::LoadU(d, input + 2 * step);
     const auto sum = hn::Add(b, c), delta = hn::Sub(b, c);
@@ -108,6 +116,19 @@ void Transform(int width, int height, const double* input, double* rows, double*
 #if HWY_HAVE_FLOAT64
   const hn::CappedTag<double, 4> d;
   const int lanes = int(hn::Lanes(d));
+  if (width == 8 && height == 8) {
+    // Keep the shape and strides visible to the optimizer for this common
+    // small transform; the FFT graph and quantization remain unchanged.
+    for (; y + lanes <= 8; y += lanes)
+      Lines<8>(d, input + y * 8, 1, 8, rows + y * 8, 1, 8);
+    for (; y < 8; ++y)
+      dct_line(8, input + y * 8, 1, rows + y * 8, 1);
+    for (; u + lanes <= 8; u += lanes)
+      Lines<8>(d, rows + u, 8, 1, output + u, 8, 1);
+    for (; u < 8; ++u)
+      dct_line(8, rows + u, 8, output + u, 8);
+    return;
+  }
   for (; y + lanes <= height; y += lanes)
     Lines(d, width, input + y * width, 1, width, rows + y * width, 1, width);
 #endif
