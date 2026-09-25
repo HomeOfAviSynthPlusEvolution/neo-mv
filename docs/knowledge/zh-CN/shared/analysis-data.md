@@ -27,6 +27,8 @@
 
 ## 数组怎样解码
 
+`AnalysisSAD` 保存所选亮度度量（SAD、SATD 或 DCT）的误差，启用色度时再加色度 SAD。描述字段中没有度量标识。消费者直接用这些误差计算阈值、权重和蒙版，不重新计算像素 SAD，也不把误差换算为统一度量。Recalculate 则独立选择度量重新测量。
+
 总数 `N=NBlkX·NBlkY`，行序索引 `i=by·NBlkX+bx`。`AnalysisVectors` 的低 32 位为有符号 X，高 32 位为有符号 Y；`AnalysisSAD` 为非负原始误差。打包和采样单位详见 [Analyse](../analyse.md)。
 
 每块带 padding 起点 `x0=hp+bx(Bx-Ox),y0=vp+by(By-Oy)`，公共向量必须满足：

@@ -1,5 +1,6 @@
 # KernelInfo：查询当前计算后端
 
+`fft` 和 `fft_lanes` 描述 `DepanEstimate` 使用的 PocketFFT 后端，不描述 DCT 块度量。后者使用 neo-mv 自身的标量/Highway 变换及严格的系数量化。
 ## 1. 这个函数计算什么
 
 `KernelInfo()` 返回当前选择的普通计算后端、指令集目标及 FFT 配置。它没有视频输入，不计算像素、运动或性能分数。

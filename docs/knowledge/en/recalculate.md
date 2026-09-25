@@ -52,6 +52,8 @@ This forms horizontal weighted quantities on both rows, then interpolates vertic
 
 ### 4.4 Threshold, new measurement, and search
 
+The new error uses the [SAD, SATD, or DCT calculation in Analyse](analyse.md#45-measuring-raw-error). `metric` defaults independently to `"sad"`; it does not inherit the metric used to produce the input vectors. To measure DCT again, explicitly pass `metric="dct"`. DCT requires integer samples and supports every valid target block shape. Threshold scaling below remains unchanged; there is no metric-to-metric conversion.
+
 Using [Analyse](analyse.md)'s depth conversion Qb:
 
 $$\lambda_0=Q_b(\operatorname{trunc}(mvlambda\,B_xB_y/64)),\quad
@@ -79,7 +81,8 @@ Let both pel values be 1, vector 2 be inside the target domain, and the new GRAY
 | `blksize,overlap` | Inherited from Super | Target grid; array rules as in Analyse |
 | `search,searchparam` | 2, 2; search 0–5, range at least 1 | Single-level search |
 | `mvlambda,pnew` | 1000, 25; nonnegative and 0–256 respectively | Distance and error penalties |
-| `chroma,satd` | true, false | Fresh error metric |
+| `chroma` | true | Include chroma SAD |
+| `metric` | `"sad"`; same restrictions as Analyse | Luma metric for fresh measurement |
 | `meander` | true | Evaluation direction; independent block results do not change |
 | `fields,tff` | false, omitted | Field-information validation |
 | `prefix` | `MVUtensils` | Super/Analysis names |

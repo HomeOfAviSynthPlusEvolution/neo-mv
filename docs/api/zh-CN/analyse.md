@@ -7,7 +7,7 @@
 VapourSynth：`core.neo_mv.Analyse`；AviSynth：`neo_mv_Analyse`。参数顺序：
 
 ```text
-Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, prefix])
+Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix])
 ```
 
 此处方括号表示可选参数，不是数组字面量。可选参数建议按名称传入；Python 布尔值写作 `True`/`False`，AviSynth 写作 `true`/`false`。
@@ -38,8 +38,22 @@ Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chro
 | `trymany` | 整数 | `0` | 0 从选定初始候选搜索；1 在粗层分别尝试多个候选；2 在所有层尝试。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 6×6 和 16×2 块。 |
+| `metric` | 字符串 | `"sad"` | 亮度匹配度量：`"sad"`、`"satd"` 或 `"dct"`；色度仍使用 SAD。限制见下文。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
+
+### 匹配度量
+
+`metric` 接受区分大小写的字符串，默认 `"sad"`，替代旧的 `satd` 布尔参数。
+
+| 值 | 亮度误差 | 格式与块尺寸 |
+| --- | --- | --- |
+| `"sad"` | 像素绝对差之和。 | 8–16 位整数和 float32；全部合法块尺寸。 |
+| `"satd"` | 基于 4×4 Hadamard 变换的绝对差。 | 8–16 位整数和 float32；块宽、高均须能被 4 整除，不支持 6×6 和 16×2。 |
+| `"dct"` | 分别对源块和参考块做 DCT-II、量化系数，再计算带 DC 权重和块尺寸缩放的系数绝对差。 | 仅 8–16 位整数；全部合法块尺寸，包括 6×6 和 16×2。 |
+
+`chroma=true` 时，色度在三种模式下都使用 SAD；`metric` 只改变亮度度量。DCT 的 AC 系数采用最近偶数舍入，DC 使用整数截断；它不是未量化 DCT 系数的直接距离，也不保证复现历史实现的浮点舍入差异。
+
+输出属性仍名为 `AnalysisSAD`，但保存的是所选度量计算的块误差（启用色度时包含色度 SAD），不是始终保存像素 SAD。切换度量会改变误差分布；误差阈值不会自动换算为等效 SAD 阈值。
 
 ### 搜索模式
 
@@ -77,7 +91,7 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neo_mv.Analyse(s, delta=1, badrange=0)
+result = core.neo_mv.Analyse(s, delta=1, badrange=0, metric="dct")
 result.set_output()
 ```
 
@@ -87,13 +101,13 @@ result.set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-result = neo_mv_Analyse(s, delta=1, badrange=0)
+result = neo_mv_Analyse(s, delta=1, badrange=0, metric="dct")
 return result
 ```
 
 ## 限制与常见错误
 
-缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 6×6 和 16×2。取帧时元数据变化或非有限计算会报错。
+缺失 Super 数据、块几何或枚举无效、delta=0、pelsearch 非正或没有可用层时创建失败。完整搜索采样域须落在有效 Super 支持范围内。场模式要求 pel>1 和所需场序；SATD 拒绝 6×6 和 16×2；DCT 拒绝 float32，未知或大小写错误的 metric 字符串也会报错。取帧时元数据变化或非有限计算会报错。
 
 ## 计算原理
 

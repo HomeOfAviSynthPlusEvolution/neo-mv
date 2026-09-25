@@ -7,7 +7,7 @@
 VapourSynth：`core.neo_mv.AnalyseMany`；AviSynth：`neo_mv_AnalyseMany`。参数顺序：
 
 ```text
-AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, radius, prefix])
+AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, radius, prefix])
 ```
 
 此处方括号表示可选参数，不是数组字面量。可选参数建议按名称传入；Python 布尔值写作 `True`/`False`，AviSynth 写作 `true`/`false`。
@@ -38,9 +38,15 @@ AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, 
 | `trymany` | 整数 | `0` | 0 从选定初始候选搜索；1 在粗层分别尝试多个候选；2 在所有层尝试。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 6×6 和 16×2 块。 |
+| `metric` | 字符串 | `"sad"` | 亮度匹配度量：`"sad"`、`"satd"` 或 `"dct"`；色度仍使用 SAD。限制见下文。 |
 | `radius` | 整数 | `1` | 仅 AnalyseMany：正的矢量对数；delta 也必须为正，radius×delta 须可由有符号 int32 表示。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
+
+### 匹配度量
+
+可选值与限制同 [Analyse](analyse.md#匹配度量)：`"sad"` 为默认值；`"satd"` 不支持 6×6 和 16×2；`"dct"` 支持全部合法块尺寸，但仅接受 8–16 位整数、拒绝 float32。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。
+
+所选度量应用于数组中的全部成员；`AnalysisSAD` 和误差阈值的含义同 Analyse。
 
 ### 搜索模式
 
@@ -78,7 +84,7 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neo_mv.AnalyseMany(s, radius=2, badrange=0)
+result = core.neo_mv.AnalyseMany(s, radius=2, badrange=0, metric="dct")
 result[0].set_output()
 ```
 
@@ -88,7 +94,7 @@ result[0].set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-result = neo_mv_AnalyseMany(s, radius=2, badrange=0)
+result = neo_mv_AnalyseMany(s, radius=2, badrange=0, metric="dct")
 return result[0]
 ```
 

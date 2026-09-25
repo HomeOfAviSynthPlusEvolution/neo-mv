@@ -6,6 +6,8 @@
 
 它不是一次任意精度的最小二乘求解。初始化、步长、重新选权和停止条件都影响最终数值。
 
+这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD 或 DCT 亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](shared/analysis-data.md)。
+
 ## 2. 计算对象与记号
 
 创建时向量 delta 只能为 ±1，记为 d。d=+1 时输出 n 读取 vectors[max(0,n-1)]，d=-1 时读取 vectors[n]。固定分析 prefix 为 `MVUtensils`，无 prefix 参数。

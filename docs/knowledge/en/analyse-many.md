@@ -23,6 +23,8 @@ Here θ includes all other arguments, preserving whether each was omitted. Omitt
 
 Each member retains the full source frame count and rate. Its frame n uses `super[n]` as the carrier and `n±rD` as the reference. Estimation, visible pixels, and output properties all follow Analyse. Members may share immutable Super data, but not mutable analysis results.
 
+`metric` is passed unchanged to every member: `"sad"` by default, or `"satd"` / `"dct"` under Analyse's restrictions. Each member uses the same coefficient quantization and error rules; errors are not combined across members.
+
 ## 5. A complete numerical example
 
 `radius=3,delta=2` produces offsets `[2,-2,4,-4,6,-6]`. In a 20-frame sequence, frame 8 refers to `[10,6,12,4,14,2]`, all valid.

@@ -7,7 +7,7 @@
 VapourSynth：`core.neo_mv.Recalculate`；AviSynth：`neo_mv_Recalculate`。参数顺序：
 
 ```text
-Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, satd, prefix])
+Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, metric, prefix])
 ```
 
 此处方括号表示可选参数，不是数组字面量。可选参数建议按名称传入；Python 布尔值写作 `True`/`False`，AviSynth 写作 `true`/`false`。
@@ -30,8 +30,14 @@ Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlam
 | `meander` | 布尔 | `true` | 相邻块行交替左右遍历方向。 |
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
-| `satd` | 布尔 | `false` | 亮度使用 SATD，色度仍使用 SAD；不支持 6×6 和 16×2 块。 |
+| `metric` | 字符串 | `"sad"` | 亮度匹配度量：`"sad"`、`"satd"` 或 `"dct"`；色度仍使用 SAD。限制见下文。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
+
+### 匹配度量
+
+可选值与限制同 [Analyse](analyse.md#匹配度量)：`"sad"` 为默认值；`"satd"` 不支持 6×6 和 16×2；`"dct"` 支持全部合法块尺寸，但仅接受 8–16 位整数、拒绝 float32。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。
+
+`metric` 独立选择本次重新测量和搜索的亮度度量，不从输入矢量继承；即使输入由 DCT 分析生成，省略它仍使用 SAD。要继续使用 DCT，须显式传入 `metric="dct"`。输出 `AnalysisSAD` 使用本次新测误差，`thsad` 按本次度量判断，不会自动换算为等效 SAD 阈值。
 
 ### 搜索模式
 
@@ -69,8 +75,8 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neo_mv.Recalculate(s, v, blksize=8, overlap=4)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0, metric="dct")
+result = core.neo_mv.Recalculate(s, v, blksize=8, overlap=4, metric="dct")
 result[0].set_output()
 ```
 
@@ -80,8 +86,8 @@ result[0].set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-v = neo_mv_AnalyseMany(s, radius=1, badrange=0)
-result = neo_mv_Recalculate(s, v, blksize=8, overlap=4)
+v = neo_mv_AnalyseMany(s, radius=1, badrange=0, metric="dct")
+result = neo_mv_Recalculate(s, v, blksize=8, overlap=4, metric="dct")
 return result[0]
 ```
 

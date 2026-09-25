@@ -26,6 +26,8 @@ neo-mv 将运动计算与宿主帧管理分离。核心处理图像平面、运�
 
 块运动和 Flow 系列支持平面 GRAY/YUV 的 8–16 位整数及 32 位浮点样本，具体格式和子采样限制因函数而异。`DepanAnalyse`、`DepanCompensate` 和 `DepanStabilise` 使用整数图像；`DepanEstimate` 也接受 float32。不支持 RGB。
 
+`Analyse`、`AnalyseMany` 和 `Recalculate` 通过 `metric="sad"`（默认）、`"satd"` 或 `"dct"` 选择亮度匹配度量。SATD 要求块宽、高均能被 4 整除；DCT 支持全部合法块尺寸，包括 6×6 和 16×2，但仅接受 8–16 位整数。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。误差阈值保留原有缩放规则，不在不同度量之间自动换算。
+
 运动数据保存在帧属性中。默认属性前缀为 `MVUtensils`，与插件命名空间 `neo_mv` 相互独立。Super 的辅助图像属于生成它的实现，供 neo-mv 使用的 Super 应由 neo-mv 生成。
 
 ## 文档与使用
@@ -53,7 +55,7 @@ output.set_output()
 
 这个最小示例使用合成剪辑展示调用关系。`Super` 必须显式指定块大小和重叠量。正 `delta` 引用后面的帧，负 `delta` 引用前面的帧。完整参数和计算过程见对应函数文章。
 
-同一个插件文件也提供 AviSynth C 接口。使用 AviSynth+ 3.7.4 或更新版本（接口 11），或兼容的 AviSynthMinus 运行时，通过 `LoadPlugin` 加载：
+同一个插件文件也提供 AviSynth C++ 接口。使用 AviSynth+ 3.7.4 或更新版本（接口 11），或兼容的 AviSynthMinus 运行时，通过 `LoadPlugin` 加载：
 
 ```avs
 LoadPlugin("/path/to/neo-mv.dll")
@@ -73,9 +75,11 @@ return neo_mv_Degrain1(clip, super_clip, vectors)
 
 FFT 配置和允许的浮点差异可能影响结果，更宽的 SIMD 不保证吞吐量更高。详见 [KernelInfo](docs/knowledge/zh-CN/kernel-info.md) 及各函数的精度章节。
 
+`fft` 和 `fft_lanes` 描述 DePan 使用的 PocketFFT，不代表块 DCT 变换。DCT 随选定后端使用标量或 Highway 内核，系数量化规则相同。
+
 ## 构建与测试
 
-需要 CMake 3.24 或更新版本、Git 及支持 C++17 的编译器。CMake 获取固定版本的 DualSynth2 和 PocketFFT，启用 SIMD 时还会获取 Highway 1.4.0。两个宿主的 SDK 均可从本地发现或自动下载。VapourSynth 测试需要架构匹配的运行时和 `vspipe`；AviSynth 测试需要架构匹配的运行时库。
+需要 CMake 3.24 或更新版本、Git 及支持 C++17 的编译器。CMake 获取固定版本的 DualSynth2、PocketFFT、Boost.Multiprecision 和 Boost.Config，启用 SIMD 时还会获取 Highway 1.4.0。两个宿主的 SDK 均可从本地发现或自动下载。VapourSynth 测试需要架构匹配的运行时和 `vspipe`；AviSynth 测试需要架构匹配的运行时库。
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -103,6 +107,8 @@ ctest --test-dir build/release -C Release --output-on-failure
 CI 配置包含 Windows x64、Linux x64、macOS ARM64 及 Linux ASan/UBSan 检查。发布工作流构建 Windows、Linux 和 macOS 的 x64/ARM64 版本，其中 VapourSynth 宿主测试目前在 Windows x64 上运行，AviSynth 运行时测试通过上述选项单独启用。
 
 ## 性能
+
+这些历史测量不包含新增的 DCT 度量。
 
 已有测量中，各条已测滤镜路径的吞吐量约为 **MVUtensils R9 的 0.62–1.83 倍**。比值为 **neo-mv 吞吐量 / MVUtensils 吞吐量**，等价于 MVUtensils 耗时 / neo-mv 耗时；**大于 1 表示 neo-mv 更快**。下列范围跨越 8/16 位和 AVX2/AVX-512 配置，不是置信区间。
 
@@ -147,7 +153,8 @@ CI 配置包含 Windows x64、Linux x64、macOS ARM64 及 Linux ASan/UBSan 检�
 neo-mv 还使用了以下计算库：
 
 - [Google Highway](https://github.com/google/highway)：提供跨平台 SIMD 支持。
-- [PocketFFT](https://github.com/mreineck/pocketfft)：完成 FFT 计算。
+- [PocketFFT](https://github.com/mreineck/pocketfft)：用于 `DepanEstimate` 的 FFT 相关计算；块 DCT 匹配使用 neo-mv 自身的变换实现。
+- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) 和 [Boost.Config](https://github.com/boostorg/config)：为 DCT 舍入边界的整数区间细化及可移植宽整数提供仅头文件支持，采用 BSL-1.0 许可证；不需要 Boost 运行时库。
 
 感谢参与测试、报告问题和改进的开发者与用户。
 

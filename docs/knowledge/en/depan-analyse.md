@@ -6,6 +6,8 @@
 
 This is not an arbitrary-precision least-squares solve. Initialization, step sizes, reweighting, and stopping all affect results.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+
 ## 2. Objects and notation
 
 Creation vector delta d must be ±1. For d=+1, output n reads vectors[max(0, n−1)]; for d=−1, vectors[n]. Prefix is fixed to `MVUtensils`; there is no prefix argument.

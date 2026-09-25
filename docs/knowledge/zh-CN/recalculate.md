@@ -52,6 +52,8 @@ $$I=\operatorname{trunc}\left(\frac{u+\operatorname{trunc}(d_y(v-u)/s_{y0})}{s_{
 
 ### 4.4 阈值、重测与搜索
 
+新误差使用 [Analyse 中的 SAD、SATD 或 DCT 计算](analyse.md#45-从样本计算原始误差)。`metric` 独立默认为 `"sad"`，不会继承输入向量生成时使用的度量；若要重新测量 DCT，须显式传入 `metric="dct"`。DCT 要求整数样本，支持全部合法目标块尺寸。下面的阈值缩放规则保持不变，不在度量之间自动换算。
+
 使用 [Analyse](analyse.md) 中的位深转换 `Qb`：
 
 $$\lambda_0=Q_b(\operatorname{trunc}(mvlambda\,B_xB_y/64)),\quad
@@ -79,7 +81,8 @@ T=\operatorname{trunc}(Q_b(thsad)\,B_xB_y/64).$$
 | `blksize`,`overlap` | 继承 Super | 目标网格，数组规则同 Analyse |
 | `search`,`searchparam` | 2、2；search 为 0～5，范围至少 1 | 单层搜索 |
 | `mvlambda`,`pnew` | 1000、25；分别非负、0～256 | 距离和误差惩罚 |
-| `chroma`,`satd` | true、false | 每次新误差的度量 |
+| `chroma` | true | 是否计入色度 SAD |
+| `metric` | `"sad"`；限制同 Analyse | 每次新测量的亮度度量 |
 | `meander` | true | 求值方向，不改变独立块结果 |
 | `fields`,`tff` | false、省略 | 场信息验证 |
 | `prefix` | `MVUtensils` | Super 和 Analysis 名称 |

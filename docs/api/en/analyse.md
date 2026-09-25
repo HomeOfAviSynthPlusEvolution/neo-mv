@@ -7,7 +7,7 @@ Estimate block motion from each frame to a reference at n+delta.
 VapourSynth: `core.neo_mv.Analyse`. AviSynth: `neo_mv_Analyse`. Parameter order:
 
 ```text
-Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, prefix])
+Analyse(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, prefix])
 ```
 
 Brackets here mark optional arguments, not a literal array. Use named optional arguments. Booleans are `True`/`False` in Python and `true`/`false` in AviSynth.
@@ -38,8 +38,22 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `trymany` | Integer | `0` | 0 searches from the selected seed; 1 tries multiple seeds on coarse levels; 2 does so on all levels. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 6×6 and 16×2 blocks. |
+| `metric` | String | `"sad"` | Luma matching metric: `"sad"`, `"satd"`, or `"dct"`; chroma remains SAD. See restrictions below. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
+
+### Matching metric
+
+`metric` accepts case-sensitive strings and defaults to `"sad"`, replacing the former `satd` Boolean parameter.
+
+| Value | Luma error | Formats and block sizes |
+| --- | --- | --- |
+| `"sad"` | Sum of absolute pixel differences. | 8–16-bit integer and float32; all valid block sizes. |
+| `"satd"` | Absolute differences based on 4×4 Hadamard transforms. | 8–16-bit integer and float32; both dimensions must be divisible by 4, excluding 6×6 and 16×2. |
+| `"dct"` | DCT-II and coefficient quantization of each source/reference block, followed by coefficient absolute differences with DC weighting and block-size scaling. | 8–16-bit integer only; all valid block sizes, including 6×6 and 16×2. |
+
+With `chroma=true`, chroma uses SAD in all three modes; `metric` changes only the luma metric. DCT AC coefficients use nearest-even rounding, while DC uses integer truncation. This is not the direct distance between unquantized DCT coefficients and does not promise to reproduce historical floating-point rounding differences.
+
+The output property remains named `AnalysisSAD`, but contains block error from the selected metric (including chroma SAD when enabled), not necessarily pixel SAD. Changing metrics changes the error distribution; error thresholds are not automatically converted to equivalent SAD thresholds.
 
 ### Search modes
 
@@ -77,7 +91,7 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neo_mv.Analyse(s, delta=1, badrange=0)
+result = core.neo_mv.Analyse(s, delta=1, badrange=0, metric="dct")
 result.set_output()
 ```
 
@@ -87,13 +101,13 @@ result.set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-result = neo_mv_Analyse(s, delta=1, badrange=0)
+result = neo_mv_Analyse(s, delta=1, badrange=0, metric="dct")
 return result
 ```
 
 ## Restrictions and common errors
 
-Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2. Changed frame metadata or nonfinite calculations fail at evaluation.
+Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2; DCT rejects float32, and unknown or wrongly cased metric strings are errors. Changed frame metadata or nonfinite calculations fail at evaluation.
 
 ## Computation
 

@@ -2,6 +2,8 @@
 
 Render block motion compensation from one vector clip.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](../../knowledge/en/shared/analysis-data.md).
+
 ## Calling the function
 
 VapourSynth: `core.neo_mv.Compensate`. AviSynth: `neo_mv_Compensate`. Parameter order:

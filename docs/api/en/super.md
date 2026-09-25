@@ -2,6 +2,8 @@
 
 Builds image pyramids, extended borders, and subpixel sampling data for motion analysis and compensation. Returns a clip carrying this auxiliary data while preserving the visible image.
 
+For analysis with `metric="dct"`, all supported block shapes accept integer samples; float32 is rejected by the analysis entry points. Super itself does not select a matching metric.
+
 ## Calling the function
 
 Use `core.neo_mv.Super` in VapourSynth and `neo_mv_Super` in AviSynth. Both interfaces use the same parameter order:

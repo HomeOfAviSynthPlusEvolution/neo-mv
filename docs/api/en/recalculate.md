@@ -7,7 +7,7 @@ Map existing vectors onto a target grid and optionally refine them using fresh s
 VapourSynth: `core.neo_mv.Recalculate`. AviSynth: `neo_mv_Recalculate`. Parameter order:
 
 ```text
-Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, satd, prefix])
+Recalculate(super, vectors [, thsad, smooth, blksize, search, searchparam, mvlambda, chroma, pnew, overlap, meander, fields, tff, metric, prefix])
 ```
 
 Brackets here mark optional arguments, not a literal array. Use named optional arguments. Booleans are `True`/`False` in Python and `true`/`false` in AviSynth.
@@ -30,8 +30,14 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `meander` | Boolean | `true` | Alternate horizontal block traversal on successive rows. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 6×6 and 16×2 blocks. |
+| `metric` | String | `"sad"` | Luma matching metric: `"sad"`, `"satd"`, or `"dct"`; chroma remains SAD. See restrictions below. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
+
+### Matching metric
+
+Values and restrictions match [Analyse](analyse.md#matching-metric): `"sad"` is the default; `"satd"` excludes 6×6 and 16×2; `"dct"` supports all valid block sizes but accepts only 8–16-bit integer samples, rejecting float32. Chroma always uses SAD. This string parameter replaces the former `satd` Boolean parameter.
+
+`metric` independently selects the luma metric for this remeasurement and search; it is not inherited from input vectors. Omitting it uses SAD even for vectors produced by DCT analysis. Pass `metric="dct"` explicitly to continue using DCT. Output `AnalysisSAD` contains newly measured error, and `thsad` is evaluated in the current metric, without conversion to an equivalent SAD threshold.
 
 ### Search modes
 
@@ -69,8 +75,8 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0)
-result = core.neo_mv.Recalculate(s, v, blksize=8, overlap=4)
+v = core.neo_mv.AnalyseMany(s, radius=1, badrange=0, metric="dct")
+result = core.neo_mv.Recalculate(s, v, blksize=8, overlap=4, metric="dct")
 result[0].set_output()
 ```
 
@@ -80,8 +86,8 @@ result[0].set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-v = neo_mv_AnalyseMany(s, radius=1, badrange=0)
-result = neo_mv_Recalculate(s, v, blksize=8, overlap=4)
+v = neo_mv_AnalyseMany(s, radius=1, badrange=0, metric="dct")
+result = neo_mv_Recalculate(s, v, blksize=8, overlap=4, metric="dct")
 return result[0]
 ```
 

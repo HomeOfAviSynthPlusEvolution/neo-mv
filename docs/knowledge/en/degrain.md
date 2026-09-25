@@ -6,6 +6,8 @@
 
 `Degrain1` through `Degrain25` use the same calculation. R in the name additionally requires exactly 2R vector members. Generic Degrain derives R from input count.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+
 ## 2. Objects and notation
 
 Input order is `[a1,b1,…,aR,bR]`; each pair has opposite offsets, and absolute distances strictly increase. Either sign may come first within a pair; members are not sorted by sign. Center/reference samples are C, Rr. Final weights Vc, Vr sum exactly to 256.
@@ -119,7 +121,7 @@ One threshold/limit value duplicates to luma/chroma; empty arrays use defaults; 
 
 Validate every member even when its user coefficient is zero. Available references require valid Super; malformed data or dependency failure does not become zero weight. Member descriptors match except delta and positive Levels; later valid descriptor changes fail.
 
-At creation, all processed planes validate sampling over the entire public vector domain. No actual processed planes does not waive parameter or required-data checks. Degrain has no fields, time, satd, or search parameters.
+At creation, all processed planes validate sampling over the entire public vector domain. No actual processed planes does not waive parameter or required-data checks. Degrain has no fields, time, metric, or search parameters.
 
 ## 8. Precision and determinism
 

@@ -2,6 +2,7 @@
 
 查询已选用的通用计算内核及 FFT 配置。函数不接收剪辑，也不处理视频。
 
+`fft` 和 `fft_lanes` 描述 `DepanEstimate` 使用的 PocketFFT 后端，不描述 DCT 块度量。后者使用 neo-mv 自身的标量/Highway 变换及严格的系数量化。
 ## 调用方式
 
 ```text

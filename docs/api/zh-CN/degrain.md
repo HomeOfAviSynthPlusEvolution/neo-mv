@@ -2,6 +2,8 @@
 
 按匹配误差加权合成当前图像与运动补偿参考；带编号的入口固定矢量对数。
 
+这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD 或 DCT 亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](../../knowledge/zh-CN/shared/analysis-data.md)。
+
 ## 调用方式
 
 VapourSynth：`core.neo_mv.Degrain`；AviSynth：`neo_mv_Degrain`。参数顺序：
@@ -107,7 +109,7 @@ return result
 
 ## 限制与常见错误
 
-要求 1～25 对（2～50 个）矢量剪辑。用户权重为零也会校验该成员。描述无效、完整数组损坏或 Super 采样支持不足时报错。本函数没有 fields、time、search、satd 参数。
+要求 1～25 对（2～50 个）矢量剪辑。用户权重为零也会校验该成员。描述无效、完整数组损坏或 Super 采样支持不足时报错。本函数没有 fields、time、search、metric 参数。
 
 ## 计算原理
 

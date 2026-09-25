@@ -7,7 +7,7 @@ Create an ordered array of forward/backward analysis clips.
 VapourSynth: `core.neo_mv.AnalyseMany`. AviSynth: `neo_mv_AnalyseMany`. Parameter order:
 
 ```text
-AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, satd, radius, prefix])
+AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, chroma, delta, lsad, plevel, globalmv, pnew, pzero, pglobal, overlap, badsad, badrange, meander, trymany, fields, tff, metric, radius, prefix])
 ```
 
 Brackets here mark optional arguments, not a literal array. Use named optional arguments. Booleans are `True`/`False` in Python and `true`/`false` in AviSynth.
@@ -38,9 +38,15 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `trymany` | Integer | `0` | 0 searches from the selected seed; 1 tries multiple seeds on coarse levels; 2 does so on all levels. |
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
-| `satd` | Boolean | `false` | Use SATD for luma; chroma remains SAD. Not supported for 6×6 and 16×2 blocks. |
+| `metric` | String | `"sad"` | Luma matching metric: `"sad"`, `"satd"`, or `"dct"`; chroma remains SAD. See restrictions below. |
 | `radius` | Integer | `1` | AnalyseMany only: positive pair count. delta must also be positive and radius×delta must fit signed int32. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
+
+### Matching metric
+
+Values and restrictions match [Analyse](analyse.md#matching-metric): `"sad"` is the default; `"satd"` excludes 6×6 and 16×2; `"dct"` supports all valid block sizes but accepts only 8–16-bit integer samples, rejecting float32. Chroma always uses SAD. This string parameter replaces the former `satd` Boolean parameter.
+
+The selected metric applies to every array member; `AnalysisSAD` and error thresholds have the same meaning as in Analyse.
 
 ### Search modes
 
@@ -78,7 +84,7 @@ core = vs.core
 core.std.LoadPlugin(path="/path/to/neo-mv.dll")
 clip = core.std.BlankClip(width=64, height=48, length=12, fpsnum=24, format=vs.YUV420P8)
 s = core.neo_mv.Super(clip, blksize=8, overlap=4, pad=32)
-result = core.neo_mv.AnalyseMany(s, radius=2, badrange=0)
+result = core.neo_mv.AnalyseMany(s, radius=2, badrange=0, metric="dct")
 result[0].set_output()
 ```
 
@@ -88,7 +94,7 @@ result[0].set_output()
 LoadPlugin("/path/to/neo-mv.dll")
 clip = BlankClip(width=64, height=48, length=12, fps=24, pixel_type="YV12")
 s = neo_mv_Super(clip, blksize=8, overlap=4, pad=32)
-result = neo_mv_AnalyseMany(s, radius=2, badrange=0)
+result = neo_mv_AnalyseMany(s, radius=2, badrange=0, metric="dct")
 return result[0]
 ```
 

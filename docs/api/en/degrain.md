@@ -2,6 +2,8 @@
 
 Combine the current image with motion-compensated references weighted by matching error. The named variants fix the number of reference pairs.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](../../knowledge/en/shared/analysis-data.md).
+
 ## Calling the function
 
 VapourSynth: `core.neo_mv.Degrain`. AviSynth: `neo_mv_Degrain`. Parameter order:
@@ -107,7 +109,7 @@ return result
 
 ## Restrictions and common errors
 
-Requires 1–25 pairs (2–50 vector clips). Every member is validated even when its user weight is zero. Invalid descriptors, malformed complete arrays or insufficient Super sampling support fail. There are no fields, time, search or satd parameters.
+Requires 1–25 pairs (2–50 vector clips). Every member is validated even when its user weight is zero. Invalid descriptors, malformed complete arrays or insufficient Super sampling support fail. There are no fields, time, search or metric parameters.
 
 ## Computation
 

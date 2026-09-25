@@ -142,6 +142,8 @@ With rx=2, p=2, vx=−1 becomes chroma vector zero. vx=−3 becomes −1, then i
 
 ### 4.5 Measuring raw error
 
+`metric` selects `"sad"` (default), `"satd"`, or `"dct"`, with exact lowercase spelling. Only luma changes; chroma stays SAD. The exported `AnalysisSAD` stores the selected raw error, without search penalties. Thresholds keep their existing depth/area scaling; switching metrics does not convert them to equivalent SAD thresholds.
+
 #### Integer SAD
 
 For current and reference sample matrices S, R:
@@ -154,7 +156,7 @@ Call luma error eY. With chroma enabled, sum separate U/V SADs into eC without c
 
 #### Luma SATD
 
-With satd=true, split luma into nonoverlapping `4×4` cells. For difference matrix E=S−R, compute:
+With `metric="satd"`, split luma into nonoverlapping `4×4` cells. For difference matrix E=S−R, compute:
 
 $$H=\begin{pmatrix}1&1&1&1\\1&-1&1&-1\\1&1&-1&-1\\1&-1&-1&1\end{pmatrix},\qquad F=HEH^T.$$
 
@@ -165,6 +167,41 @@ $$e_Y=\sum_{cells}\left\lfloor\frac{\sum_{a,b}|F_{a,b}|}{2}\right\rfloor.$$
 A `4×4` cell of differences all 1 has SAD 16 and only one nonzero transform coefficient, 16, giving SATD 8. One isolated difference of 1 has SAD 1 and sixteen absolute coefficients of 1, also giving SATD 8. SATD is not a fixed scaling of SAD.
 
 Larger blocks do not use one large transform. `6×6` and `16×2` cannot be tiled this way and disallow SATD. U/V always use SAD. The property remains named `AnalysisSAD` even when luma uses SATD.
+
+#### Luma DCT: quantize each block, then compare coefficients
+
+`metric="dct"` computes a two-dimensional DCT-II separately for the current luma block and each candidate reference block. It transforms the entire block rather than tiling it into 4×4 cells. Every valid block shape is supported, including 6×6 and 16×2. Samples must be 8–16-bit integers; float32 is rejected at filter creation.
+
+Let width and height be W and H, area A=WH, integer depth b, maximum M=2^b−1, and offset B=2^(b−1). For either input block X, define the unnormalized coefficients as:
+
+$$F_{u,v}(X)=4\sum_{y=0}^{H-1}\sum_{x=0}^{W-1}X_{y,x}
+\cos\frac{\pi(2x+1)u}{2W}\cos\frac{\pi(2y+1)v}{2H}.$$
+
+u and v range from 0 to W−1 and H−1. The DC coefficient `(0,0)` represents total block brightness; the AC coefficients describe variation at different spatial frequencies. Samples are not first centered by subtracting B. This definition does not use the frequency-dependent scale factors of an orthonormal DCT.
+
+Quantize every coefficient to an integer in `[0,M]`. Compute DC directly from the integer sample sum:
+
+$$Q_{0,0}(X)=\operatorname{clip}_{[0,M]}\left(B+
+\operatorname{trunc}\frac{\sum X_{y,x}}{2A}\right).$$
+
+Samples are nonnegative, so truncation toward zero is also floor here. This calculation avoids floating transform error. Every AC coefficient instead uses the same normalization and nearest-even rounding:
+
+$$Q_{u,v}(X)=\operatorname{clip}_{[0,M]}\left(B+
+\operatorname{roundEven}\frac{F_{u,v}(X)}{\sqrt{2}A}\right),\quad (u,v)\ne(0,0).$$
+
+`roundEven` selects the nearest integer, choosing the even one at an exact half: 2.5→2, 3.5→4, and −2.5→−2. Round first, add the offset, then clip. Quantization and clipping can discard differences, so transforming `S−R` once cannot replace these two independent calculations.
+
+Set `D(u,v)=|Q(u,v,S)−Q(u,v,R)|` and `K=floor(sqrt(A)+0.5)`. The luma error is:
+
+$$e_Y=\operatorname{trunc}\frac{K\left(\sum_{u,v}D(u,v)+3D(0,0)\right)}{2}.$$
+
+The sum already includes DC; adding it three more times gives DC a total weight of 4 and each AC a weight of 1. Integer division happens after summation and multiplication by K. When chroma is enabled, add pixel SAD from U/V to obtain `s=eY+eC`.
+
+For example, two 8-bit `4×4` grayscale blocks are constant 20 and 24. All AC coefficients are zero and quantize to 128. DC quantizes to `128+20/2=138` and `128+24/2=140`. Only DC differs, by 2, and K=4, giving `(2+3×2)×4/2=16`. Pixel SAD on the same inputs is `16×4=64`. Changing the constant from 20 to 21 instead leaves quantized DC at 138: DCT error is zero while pixel SAD is 16. Quantized DCT error is neither a fixed multiple of SAD nor necessarily positive for different blocks.
+
+The implementation first uses FFT calculations to estimate AC coefficients with an error bound. An interval contained in one rounding region determines the quantized value immediately. Near a half-integer boundary, exact half-integer detection and fixed-precision integer intervals resolve the decision; remaining ambiguity triggers progressively higher-precision integer intervals until rounding is unique. Exact halves use the even rule rather than a tolerance-based guess. Scalar and SIMD paths therefore follow the same coefficient quantization definition, without reproducing historical floating-point rounding deviations.
+
+A block search can reuse its current block's quantized coefficients; each candidate still transforms its own reference block. The workspace belongs to that search, so mutable transform state is not shared with other frames.
 
 #### Encoding float32 errors
 
@@ -513,7 +550,7 @@ Int32 values saturate to signed 32-bit range before validation. Booleans use the
 | `trymany` | 0; 0, 1, 2 | Independent seed searches |
 | `fields` | false | Field-shift geometry and calculation |
 | `tff` | Omitted reads `_Field` | Parity when needed |
-| `satd` | false; unavailable for `6×6` and `16×2` | Luma metric; chroma stays SAD |
+| `metric` | `"sad"`; `"satd"` requires dimensions divisible by 4; `"dct"` requires integer samples | Luma metric; chroma stays SAD |
 | `prefix` | `MVUtensils` | Select Super data and name analysis properties |
 
 One-element blksize/overlap arrays duplicate to both axes; two mean horizontal/vertical. Explicit empty arrays inherit corresponding Super values; more than two fail. Supported block pairs are `4×4,6×6,8×4,8×8,12×12,16×2,16×8,16×16,24×24,32×16,32×32,48×48,64×32,64×64,128×64,128×128`, still subject to geometry/chroma alignment.

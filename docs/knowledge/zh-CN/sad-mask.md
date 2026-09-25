@@ -4,6 +4,8 @@
 
 `SADMask` 使用当前块的运动向量选择小网格中另一个块的存储误差，再把该误差归一化为灰度。它不读取图像，也不在投影位置重新测量 SAD。
 
+这里的块误差指存储的 `AnalysisSAD`，可能包含 SAD、SATD 或 DCT 亮度误差，以及启用的色度 SAD。本函数不重算像素 SAD，也不在度量间换算；现有阈值和缩放公式直接作用于存储值。见[公共分析数据](shared/analysis-data.md)。
+
 ## 2. 计算对象与记号
 
 块步长 `sx=Bx-Ox,sy=By-Oy`，pel 为 p，分析精度为 ba。`f,t,M,Q` 来自 [mask 共同规则](shared/mask-input.md)。

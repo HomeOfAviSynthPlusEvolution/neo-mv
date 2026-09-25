@@ -4,6 +4,8 @@ These articles explain how each public neo-mv function turns inputs into outputs
 
 Function names in these articles omit the host prefix. Use `core.neo_mv.Super(...)` in VapourSynth and `neo_mv_Super(...)` in AviSynth; the same rule applies to the other functions. Computations and parameter names are shared. AviSynth accepts native arrays such as `[8, 8]`; `AnalyseMany` and `Recalculate` return arrays of clips, including when `Recalculate` produces one clip. `KernelInfo` returns an array in the order `[backend, target, fft, fft_lanes]`.
 
+The [Analyse article](analyse.md#45-measuring-raw-error) explains SAD, SATD, and DCT block errors, including DCT coefficient quantization and rounding-boundary decisions. [Shared analysis data](shared/analysis-data.md) explains how those errors are consumed downstream.
+
 ## Image levels and block motion
 
 | Function | Calculation |

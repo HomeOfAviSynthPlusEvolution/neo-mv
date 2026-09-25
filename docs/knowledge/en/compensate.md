@@ -4,6 +4,8 @@
 
 `Compensate` uses each block's raw error to choose reference Super or current Super, samples a complete block at the selected displacement, then combines blocks through overlap windows. It neither estimates new vectors nor continuously blends the two images according to SAD.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+
 ## 2. Objects and notation
 
 Current frame n, saved reference offset d, vector vx, vy, and error s. t is time quantized to 0–256; T is the scaled block threshold; f is the vertical field shift.

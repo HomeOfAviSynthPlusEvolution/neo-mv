@@ -6,6 +6,8 @@
 
 Output preserves clip pixels and replaces one directional scene property. Analysis precision comes from vector metadata and need not match output clip depth.
 
+Block error here means the stored `AnalysisSAD`, which may contain SAD, SATD, or DCT luma error plus enabled chroma SAD. This function does not recompute pixel SAD or convert between metrics; its existing threshold and scaling formulas apply to the stored value. See [analysis data](shared/analysis-data.md).
+
 ## 2. Objects and notation
 
 Blocks are `Bx,By`, grid `Nx,Ny`, total `N=NxNy`, chroma ratios `rx,ry`, analysis precision b. T1 is the block-error threshold, T2 the bad-block-count threshold, and K the actual bad-block count.

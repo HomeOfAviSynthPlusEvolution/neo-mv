@@ -26,6 +26,8 @@ neo-mv は動きの計算とホストのフレーム管理を分離していま�
 
 ブロック動きと Flow 系の処理は、プレーナー GRAY/YUV の 8–16 ビット整数および 32 ビット浮動小数点サンプルに対応します。形式とサブサンプリングの制約は関数によって異なります。`DepanAnalyse`、`DepanCompensate`、`DepanStabilise` は整数画像を使用し、`DepanEstimate` は float32 にも対応します。RGB には対応していません。
 
+`Analyse`、`AnalyseMany`、`Recalculate` は `metric="sad"`（既定）、`"satd"`、`"dct"` で輝度の比較方法を選択します。SATD はブロックの幅と高さがともに 4 の倍数である必要があります。DCT は 6×6 と 16×2 を含むすべての有効なブロック形状に対応しますが、8–16 ビット整数のみ使用できます。色差は常に SAD です。この文字列パラメーターは従来の `satd` 真偽値を置き換えます。誤差のしきい値は既存のスケーリング規則を維持し、比較方法の間で自動換算しません。
+
 動きデータはフレームプロパティに格納されます。既定のプロパティ接頭辞は `MVUtensils` で、プラグインの名前空間 `neo_mv` とは独立しています。Super の補助画像は生成した実装に属するため、neo-mv の関数で使用する Super は neo-mv で生成してください。
 
 ## ドキュメントと使用方法
@@ -53,7 +55,7 @@ output.set_output()
 
 この最小例は合成クリップで呼び出しの流れを示します。`Super` ではブロックサイズとオーバーラップを明示する必要があります。正の `delta` は後のフレーム、負の `delta` は前のフレームを参照します。パラメーターと計算の詳細は各関数の記事を参照してください。
 
-同じプラグインファイルに AviSynth C インターフェースも含まれます。AviSynth+ 3.7.4 以降（インターフェース 11）、または互換性のある AviSynthMinus ランタイムで `LoadPlugin` を使用してください。
+同じプラグインファイルに AviSynth C++ インターフェースも含まれます。AviSynth+ 3.7.4 以降（インターフェース 11）、または互換性のある AviSynthMinus ランタイムで `LoadPlugin` を使用してください。
 
 ```avs
 LoadPlugin("/path/to/neo-mv.dll")
@@ -73,9 +75,11 @@ SIMD を有効にしたビルドは、実行中の CPU が対応し、かつビ�
 
 FFT の設定と許容される浮動小数点差分は結果に影響することがあります。広い SIMD が常に高いスループットを保証するわけではありません。[KernelInfo](docs/knowledge/en/kernel-info.md) と各関数の精度の節を参照してください。
 
+`fft` と `fft_lanes` は DePan 用 PocketFFT の情報で、ブロック DCT 変換の情報ではありません。DCT は選択されたバックエンドに従ってスカラーまたは Highway カーネルを使用し、係数の量子化規則は共通です。
+
 ## ビルドとテスト
 
-CMake 3.24 以降、Git、C++17 対応コンパイラーが必要です。CMake は固定バージョンの DualSynth2 と PocketFFT を取得し、SIMD 有効時には Highway 1.4.0 も取得します。両ホストの SDK はローカルで検出するか、自動取得します。VapourSynth テストにはアーキテクチャが一致するランタイムと `vspipe`、AviSynth テストにはアーキテクチャが一致するランタイムライブラリが必要です。
+CMake 3.24 以降、Git、C++17 対応コンパイラーが必要です。CMake は固定バージョンの DualSynth2、PocketFFT、Boost.Multiprecision、Boost.Config を取得し、SIMD 有効時には Highway 1.4.0 も取得します。両ホストの SDK はローカルで検出するか、自動取得します。VapourSynth テストにはアーキテクチャが一致するランタイムと `vspipe`、AviSynth テストにはアーキテクチャが一致するランタイムライブラリが必要です。
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -103,6 +107,8 @@ ctest --test-dir build/release -C Release --output-on-failure
 CI は Windows x64、Linux x64、macOS ARM64、Linux ASan/UBSan の検査を設定しています。リリースワークフローは Windows、Linux、macOS の x64/ARM64 をビルドし、VapourSynth のホストテストは現在 Windows x64 で実行します。AviSynth のランタイムテストは上記のオプションで別途有効にします。
 
 ## 性能
+
+この過去の計測には、新しい DCT 比較方式は含まれていません。
 
 既存の計測では、計測対象のフィルター経路で **MVUtensils R9 の約 0.62–1.83 倍のスループット**を得ています。比率は **neo-mv のスループット / MVUtensils のスループット**、すなわち MVUtensils の時間 / neo-mv の時間です。**1 より大きい場合は neo-mv が高速**です。以下の範囲は 8/16 ビットと AVX2/AVX-512 の各設定をまとめたもので、信頼区間ではありません。
 
@@ -147,7 +153,8 @@ neo-mv のインターフェースと動き処理機能の基礎を築いた、�
 neo-mv は以下の計算ライブラリも使用しています。
 
 - [Google Highway](https://github.com/google/highway)：クロスプラットフォームの SIMD を提供します。
-- [PocketFFT](https://github.com/mreineck/pocketfft)：FFT 計算を行います。
+- [PocketFFT](https://github.com/mreineck/pocketfft)：`DepanEstimate` の FFT 相関に使用します。ブロック DCT 比較には neo-mv 独自の変換実装を使用します。
+- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) と [Boost.Config](https://github.com/boostorg/config)：DCT の丸め境界における整数区間演算と移植可能な多倍長整数を支えるヘッダーのみの依存です。ライセンスは BSL-1.0 で、Boost のランタイムライブラリは不要です。
 
 テスト、問題報告、改善に協力する開発者とユーザーの皆様に感謝します。
 

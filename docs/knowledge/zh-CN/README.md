@@ -4,6 +4,8 @@
 
 文中函数名省略宿主前缀：VapourSynth 使用 `core.neo_mv.Super(...)`，AviSynth 使用 `neo_mv_Super(...)`，其他函数同理。两者共用计算过程和参数名。AviSynth 使用 `[8, 8]` 这样的原生数组；`AnalyseMany` 和 `Recalculate` 返回 clip 数组，即使 `Recalculate` 只有一个输出也一样。`KernelInfo` 按 `[backend, target, fft, fft_lanes]` 的顺序返回数组。
 
+[Analyse 文章](analyse.md#45-从样本计算原始误差) 解释 SAD、SATD 和 DCT 块误差，包含 DCT 系数量化及舍入边界判定。[公共分析数据](shared/analysis-data.md) 说明这些误差如何被后续函数使用。
+
 ## 图像层级与块运动
 
 | 函数 | 计算内容 |

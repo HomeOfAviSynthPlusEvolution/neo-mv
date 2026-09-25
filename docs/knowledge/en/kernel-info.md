@@ -1,5 +1,6 @@
 # KernelInfo: query the selected computation backends
 
+`fft` and `fft_lanes` describe the PocketFFT backend used by `DepanEstimate`. They do not describe the DCT block metric, which uses neo-mv's own scalar/Highway transform and strict coefficient quantization.
 ## 1. What the function computes
 
 `KernelInfo()` reports the selected general computation backend, instruction target, and FFT configuration. It has no video input and computes neither pixels, motion, nor performance scores.

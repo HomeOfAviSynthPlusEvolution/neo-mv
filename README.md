@@ -26,6 +26,8 @@ The implementation was developed from behavioral specifications, with explicit r
 
 Block-motion and Flow operations support planar GRAY/YUV with 8–16-bit integer or 32-bit floating-point samples. Format and subsampling restrictions vary by function. `DepanAnalyse`, `DepanCompensate`, and `DepanStabilise` use integer images; `DepanEstimate` also accepts float32. RGB is not supported.
 
+`Analyse`, `AnalyseMany`, and `Recalculate` select the luma matching metric with `metric="sad"` (default), `"satd"`, or `"dct"`. SATD requires both block dimensions to be divisible by 4. DCT supports every valid block shape, including 6×6 and 16×2, but only 8–16-bit integer samples. Chroma always uses SAD. The string parameter replaces the former `satd` Boolean. Error thresholds retain their existing scaling and are not converted between metrics.
+
 Motion data is carried in frame properties. The default property prefix is `MVUtensils`, independently of the `neo_mv` plugin namespace. Super's auxiliary images belong to the implementation that created them; generate Super with neo-mv for use by neo-mv consumers.
 
 ## Documentation and use
@@ -53,7 +55,7 @@ output.set_output()
 
 This minimal example uses a synthetic clip to show the calling sequence. `Super` requires explicit block size and overlap. Positive `delta` refers to a later frame; negative `delta` refers to an earlier frame. See the function articles for full parameter and calculation details.
 
-The same plugin also provides an AviSynth C interface. Use `LoadPlugin` with AviSynth+ 3.7.4 or later (interface 11), or a compatible AviSynthMinus runtime:
+The same plugin also provides an AviSynth C++ interface. Use `LoadPlugin` with AviSynth+ 3.7.4 or later (interface 11), or a compatible AviSynthMinus runtime:
 
 ```avs
 LoadPlugin("/path/to/neo-mv.dll")
@@ -73,9 +75,11 @@ Selection is cached after the first successful initialization. Changing the envi
 
 FFT profiles and permitted floating-point differences can affect results. Wider SIMD does not guarantee higher throughput. See [KernelInfo](docs/knowledge/en/kernel-info.md) and each function's precision section.
 
+The `fft` and `fft_lanes` fields describe PocketFFT used by DePan, not the block DCT transform. DCT uses scalar or Highway kernels according to the selected backend, with the same coefficient quantization rules.
+
 ## Building and testing
 
-Requires CMake 3.24 or later, Git, and a C++17 compiler. CMake retrieves pinned DualSynth2 and PocketFFT sources, plus Highway 1.4.0 when SIMD is enabled. Both host SDKs are discovered locally or fetched automatically. Running VapourSynth tests requires a matching runtime and `vspipe`; AviSynth tests require a matching runtime library.
+Requires CMake 3.24 or later, Git, and a C++17 compiler. CMake retrieves pinned DualSynth2, PocketFFT, Boost.Multiprecision, and Boost.Config sources, plus Highway 1.4.0 when SIMD is enabled. Both host SDKs are discovered locally or fetched automatically. Running VapourSynth tests requires a matching runtime and `vspipe`; AviSynth tests require a matching runtime library.
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -103,6 +107,8 @@ The plugin target retains the name `neo_mv_vs`, with output basename `neo-mv`; i
 CI configures Windows x64, Linux x64, macOS ARM64, and Linux ASan/UBSan checks. The release workflow builds Windows, Linux, and macOS on x64 and ARM64; VapourSynth host tests in that workflow currently run on Windows x64; AviSynth runtime tests are enabled separately with the options above.
 
 ## Performance
+
+These historical measurements do not measure the new DCT metric.
 
 Existing measurements give approximately **0.62–1.83× MVUtensils R9 throughput** across the measured filter paths. The ratio is **neo-mv throughput / MVUtensils throughput**, equivalently MVUtensils time / neo-mv time; **above 1 means neo-mv is faster**. Each range below spans 8-/16-bit and AVX2/AVX-512 configurations, not a confidence interval.
 
@@ -147,7 +153,8 @@ Thanks to the authors and contributors of the following upstream projects, whose
 neo-mv also uses the following computation libraries:
 
 - [Google Highway](https://github.com/google/highway): cross-platform SIMD support.
-- [PocketFFT](https://github.com/mreineck/pocketfft): FFT computation.
+- [PocketFFT](https://github.com/mreineck/pocketfft): FFT correlation for `DepanEstimate`. Block DCT matching uses neo-mv's own transform implementation.
+- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) and [Boost.Config](https://github.com/boostorg/config): header-only support for integer interval refinement at DCT rounding boundaries and portable wide integers; licensed under BSL-1.0. No Boost runtime library is required.
 
 Thanks to the developers and users who contribute tests, reports, and improvements.
 

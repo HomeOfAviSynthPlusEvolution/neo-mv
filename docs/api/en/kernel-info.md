@@ -2,6 +2,7 @@
 
 Query the selected general-kernel and FFT configuration. This function takes no clip and does not process video.
 
+`fft` and `fft_lanes` describe the PocketFFT backend used by `DepanEstimate`. They do not describe the DCT block metric, which uses neo-mv's own scalar/Highway transform and strict coefficient quantization.
 ## Calling the function
 
 ```text
