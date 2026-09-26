@@ -172,12 +172,14 @@ Larger blocks do not use one large transform. `6×6` and `16×2` cannot be tiled
 
 `metric="dct"` computes a two-dimensional DCT-II separately for the current luma block and each candidate reference block. It transforms the entire block rather than tiling it into 4×4 cells. Every valid block shape is supported, including 6×6 and 16×2. Samples must be 8–16-bit integers; float32 is rejected at filter creation.
 
+All supported shapes and integer bit depths, including 8-bit 8×8, use float32 arithmetic with the same mathematical basis.
+
 Let width and height be W and H, area A=WH, integer depth b, maximum M=2^b−1, and offset B=2^(b−1). For either input block X, define the unnormalized coefficients as:
 
 $$F_{u,v}(X)=4\sum_{y=0}^{H-1}\sum_{x=0}^{W-1}X_{y,x}
 \cos\frac{\pi(2x+1)u}{2W}\cos\frac{\pi(2y+1)v}{2H}.$$
 
-u and v range from 0 to W−1 and H−1. The DC coefficient `(0,0)` represents total block brightness; the AC coefficients describe variation at different spatial frequencies. Samples are not first centered by subtracting B. This definition does not use the frequency-dependent scale factors of an orthonormal DCT.
+u and v range from 0 to W−1 and H−1. The DC coefficient `(0,0)` represents total block brightness; the AC coefficients describe variation at different spatial frequencies. The mathematical definition uses original samples. The implementation subtracts B before the AC transform to reduce intermediate magnitudes; a constant offset has no mathematical AC contribution. DC is computed separately from the original integer samples. This definition does not use the frequency-dependent scale factors of an orthonormal DCT.
 
 Quantize every coefficient to an integer in `[0,M]`. Compute DC directly from the integer sample sum:
 
@@ -191,7 +193,7 @@ $$Q_{u,v}(X)=\operatorname{clip}_{[0,M]}\left(B+
 
 `roundEven` selects the nearest integer, choosing the even one at an exact half: 2.5→2, 3.5→4, and −2.5→−2. Round first, add the offset, then clip. Quantization and clipping can discard differences, so transforming `S−R` once cannot replace these two independent calculations.
 
-Set `D(u,v)=|Q(u,v,S)−Q(u,v,R)|` and `K=floor(sqrt(A)+0.5)`. The luma error is:
+**Distance.** Set `D(u,v)=|Q(u,v,S)−Q(u,v,R)|` and `K=floor(sqrt(A)+0.5)`. The luma error is:
 
 $$e_Y=\operatorname{trunc}\frac{K\left(\sum_{u,v}D(u,v)+3D(0,0)\right)}{2}.$$
 
@@ -199,13 +201,15 @@ The sum already includes DC; adding it three more times gives DC a total weight 
 
 For example, two 8-bit `4×4` grayscale blocks are constant 20 and 24. All AC coefficients are zero and quantize to 128. DC quantizes to `128+20/2=138` and `128+24/2=140`. Only DC differs, by 2, and K=4, giving `(2+3×2)×4/2=16`. Pixel SAD on the same inputs is `16×4=64`. Changing the constant from 20 to 21 instead leaves quantized DC at 138: DCT error is zero while pixel SAD is 16. Quantized DCT error is neither a fixed multiple of SAD nor necessarily positive for different blocks.
 
-The implementation first uses FFT calculations to estimate AC coefficients with an error bound. An interval contained in one rounding region determines the quantized value immediately. Near a half-integer boundary, exact half-integer detection and fixed-precision integer intervals resolve the decision; remaining ambiguity triggers progressively higher-precision integer intervals until rounding is unique. Exact halves use the even rule rather than a tolerance-based guess. Scalar and SIMD paths therefore follow the same coefficient quantization definition, without reproducing historical floating-point rounding deviations.
+The formulas describe the mathematical DCT and normalization. Production computes an approximation in float32, then rounds that computed value; it does not refine it to enforce the mathematically exact rounding result. An exact half in the computed value rounds to even, but small transform error can put a mathematical half on either side. Small coefficient differences can change motion-vector selection when candidate costs are close.
+
+8×8 uses a dedicated symmetric cosine matrix. Squares of 12, 16, 24, 32, 48, 64 and 128 use fixed-size radix-2/3 FFT kernels. Other supported shapes use a general float32 path sharing the same FFT components. Scalar and SIMD backends use these float32 algorithms; there is no separate 8-bit integer DCT or high-precision fallback.
 
 A block search can reuse its current block's quantized coefficients; each candidate still transforms its own reference block. The workspace is reused within one layer/request, so mutable transform state is not shared with other frames.
 
 #### Mixed errors: separate base distances from brightness policy
 
-The five mixed modes accept only 8–16-bit integers. Base SAD, SATD, and DCT definitions do not change. Let S be luma SAD, T be SATD, C be the absolute differences of all quantized DCT coefficients (including DC once), Z be the DC difference, and K be the block-size scale defined above:
+The five mixed modes accept only 8–16-bit integers. The base distances follow the definitions above. Let S be luma SAD, T be SATD, C be the absolute differences of all quantized DCT coefficients (including DC once), Z be the DC difference, and K be the block-size scale defined above:
 
 ```text
 D4 = ((C + 3*Z)*K)/2

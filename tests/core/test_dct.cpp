@@ -1,7 +1,5 @@
 #include "core/motion/dct.hpp"
-#include "core/motion/dct_rounding.hpp"
 #include "core/motion/dct_fft.hpp"
-#include "core/motion/dct_refine.hpp"
 #include <cfenv>
 #include "core/motion/analyse.hpp"
 #include "core/motion/recalculate.hpp"
@@ -38,12 +36,11 @@ void rejects(F f) {
   }
   throw std::runtime_error("missing DCT rejection");
 }
-// Independent, separable cosine matrix oracle, in double precision. No FFT
-// routines or production quantization code are used here.
-std::vector<int> oracle(const std::vector<std::uint16_t>& input, int w, int h, int bits) {
+// Independent direct cosine summation in double: never calls the production
+// FFT, generated constants, or an integer transform. No high-precision library.
+std::vector<double> oracle(const std::vector<std::uint16_t>& input, int w, int h) {
   const double pi = std::acos(-1.0);
-  std::vector<double> cx(w * w), cy(h * h), rows(w * h);
-  std::vector<int> result(w * h);
+  std::vector<double> cx(w * w), cy(h * h), rows(w * h), result(w * h);
   for (int k = 0; k < w; ++k)
     for (int x = 0; x < w; ++x)
       cx[k * w + x] = std::cos(pi * (x + 0.5) * k / w);
@@ -53,185 +50,127 @@ std::vector<int> oracle(const std::vector<std::uint16_t>& input, int w, int h, i
   for (int y = 0; y < h; ++y)
     for (int u = 0; u < w; ++u)
       for (int x = 0; x < w; ++x)
-        rows[y * w + u] += 2 * input[y * w + x] * cx[u * w + x];
+        rows[y * w + u] += input[y * w + x] * cx[u * w + x];
   for (int v = 0; v < h; ++v)
     for (int u = 0; u < w; ++u) {
-      double value = 0;
+      double sum = 0;
       for (int y = 0; y < h; ++y)
-        value += 2 * rows[y * w + u] * cy[v * h + y];
-      value *= (u == 0 && v == 0 ? 0.125 : 1 / std::sqrt(2.0)) / (w * h);
-      int q;
-      if (u == 0 && v == 0) {
-        std::int64_t sum = 0;
-        for (auto sample : input)
-          sum += sample;
-        q = int(sum / (2 * w * h));
-      } else {
-        const auto k = std::int64_t(std::floor(value));
-        if (std::abs(value - (double(k) + 0.5)) < 1e-8 && dct_detail::exact_half(input.data(), w, h, u, v, k))
-          q = int(k + (k % 2 != 0));
-        else
-          q = int(std::nearbyint(value));
-      }
-      result[v * w + u] = std::clamp(q + (1 << (bits - 1)), 0, (1 << bits) - 1);
+        sum += rows[y * w + u] * cy[v * h + y];
+      result[v * w + u] = sum * (2 * std::sqrt(2.0) / (w * h));
     }
   return result;
+}
+const std::vector<std::pair<int, int>> shapes = {{4, 4},   {6, 6},   {8, 4},    {8, 8},    {12, 12}, {16, 2},
+                                                 {16, 8},  {16, 16}, {24, 24},  {32, 16},  {32, 32}, {48, 48},
+                                                 {64, 32}, {64, 64}, {128, 64}, {128, 128}};
+struct DctCase {
+  int w, h, bits, pattern;
+  std::vector<std::uint16_t> pixels;
+  std::vector<double> reference;
+};
+std::vector<DctCase> make_cases() {
+  std::mt19937 rng(729);
+  std::vector<DctCase> cases;
+  for (auto [w, h] : shapes)
+    for (int bits : {8, 10, 12, 14, 16})
+      for (int pattern = 0; pattern < 16; ++pattern) {
+        DctCase c{w, h, bits, pattern, std::vector<std::uint16_t>(w * h), {}};
+        const int max = (1 << bits) - 1, mid = 1 << (bits - 1);
+        for (int y = 0; y < h; ++y)
+          for (int x = 0; x < w; ++x) {
+            int v;
+            switch (pattern) {
+              case 0:
+                v = 0;
+                break;
+              case 1:
+                v = max;
+                break;
+              case 2:
+                v = mid;
+                break;
+              case 3:
+                v = ((x + y) & 1) ? max : 0;
+                break;
+              case 4:
+                v = (x & 1) ? max : 0;
+                break;
+              case 5:
+                v = (y & 1) ? max : 0;
+                break;
+              case 6:
+                v = (x == 0 && y == 0) ? max : 0;
+                break;
+              case 7:
+                v = (x == w / 2 && y == h / 2) ? max : 0;
+                break;
+              case 8:
+                v = x < w / 2 ? max : 0;
+                break;
+              case 9:
+                v = int((x + y) * max / (w + h - 2));
+                break;
+              case 10:
+                v = mid + int(rng() % 3) - 1;
+                break;
+              case 11:
+                v = (x == 0 && y == 0) ? w * h / 4 : 0;
+                v = std::min(v, max);
+                break;
+              default:
+                v = int(rng() & max);
+                break;
+            }
+            c.pixels[y * w + x] = std::uint16_t(v);
+          }
+        c.reference = oracle(c.pixels, w, h);
+        cases.push_back(std::move(c));
+      }
+  return cases;
+}
+void coefficients(const std::vector<DctCase>& cases, bool simd) {
+  double worst = 0;
+  std::size_t different = 0, total = 0;
+  for (const auto& c : cases) {
+    const int w = c.w, h = c.h, stride = dct_detail::padded_stride(w);
+    const int size = stride * dct_detail::padded_stride(h), max = (1 << c.bits) - 1, mid = 1 << (c.bits - 1);
+    std::vector<float> input(size + 2, 123456.0f), rows = input, output = input;
+    // Unused padding must not leak into valid transform coefficients.
+    std::fill(input.begin() + 1, input.end() - 1, std::numeric_limits<float>::quiet_NaN());
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x)
+        input[1 + y * stride + x] = float(int(c.pixels[y * w + x]) - mid);
+    dct_detail::transform_block(w, h, input.data() + 1, rows.data() + 1, output.data() + 1, simd);
+    check(rows.front() == 123456 && rows.back() == 123456 && output.front() == 123456 && output.back() == 123456,
+          "DCT scratch overrun");
+    std::vector<int> q(w * h + 2, -12345);
+    dct_detail::quantize_ac(w, h, output.data() + 1, q.data() + 1, max, simd);
+    check(q.front() == -12345 && q[1] == -12345 && q.back() == -12345, "DCT quantization guard/DC overrun");
+    // A quality regression threshold, not a proven bound for every input.
+    // 16-bit permits ~0.013 coefficient units; smaller depths scale with range.
+    const double tolerance = 2e-7 * max + 1e-7;
+    for (int i = 1; i < w * h; ++i) {
+      const double actual = output[1 + (i / w) * stride + i % w], expected = c.reference[i];
+      const double error = std::abs(actual - expected);
+      worst = std::max(worst, error);
+      if (!(error <= tolerance)) {
+        std::cerr << "float DCT error " << w << 'x' << h << " bits=" << c.bits << " pattern=" << c.pattern
+                  << " coefficient=" << i << " actual=" << actual << " expected=" << expected << " error=" << error
+                  << " tolerance=" << tolerance << '\n';
+        throw std::runtime_error("float32 DCT exceeds double-reference tolerance");
+      }
+      const int reference = std::clamp(int(std::nearbyint(expected)) + mid, 0, max);
+      check(std::abs(q[i + 1] - reference) <= 1, "DCT integer coefficient differs by more than one");
+      different += q[i + 1] != reference;
+      ++total;
+    }
+  }
+  std::cout << "double reference: max error=" << worst << ", differing coefficients=" << different << '/' << total
+            << '\n';
 }
 auto view(const std::vector<std::uint16_t>& x, int w, int h) {
   return checked_plane<const std::uint16_t>(x.data(), w, h, w * sizeof(std::uint16_t),
                                             x.size() * sizeof(std::uint16_t));
-}
-void bounded_fft() {
-  struct RestoreRounding {
-    int mode = std::fegetround();
-    ~RestoreRounding() { std::fesetround(mode); }
-  } restore;
-  std::mt19937 random(625);
-  for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
-    check(std::fesetround(mode) == 0, "cannot set rounding mode for DCT test");
-    for (int n : {2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 128}) {
-      std::vector<double> input(3 * n, -17), output(3 * n, -19);
-      for (int pattern = 0; pattern < 4; ++pattern) {
-        for (int x = 0; x < n; ++x)
-          input[3 * x] = pattern == 0   ? 65535
-                         : pattern == 1 ? (x == 0 ? 65535 : 0)
-                         : pattern == 2 ? ((x & 1) ? 65535 : 0)
-                                        : double(random() & 65535);
-        const auto before = input;
-        dct_detail::dct_line(n, input.data(), 3, output.data(), 3);
-        int ell = 0;
-        for (int k = 2 * n; k > 1; k = (k + 1) / 2)
-          ++ell;
-        const double bound = 2 * n * 65535.0 * (64 * (ell + 1)) * 0x1p-52;
-        for (int k = 0; k < n; ++k) {
-          check(std::fesetround(FE_TONEAREST) == 0, "cannot set oracle rounding mode");
-          double expected = 0;
-          // Evaluate the independent cosine oracle in round-to-nearest: some
-          // libm implementations lose accuracy in directed rounding modes.
-          // The FFT under test was evaluated in the selected mode above.
-          // Independent direct cosine sum is a numerical cross-check; the
-          // constant generator and analytical bound supply the enclosure proof.
-          for (int x = 0; x < n; ++x)
-            expected += 2 * input[3 * x] * std::cos(std::acos(-1.0) * (2 * x + 1) * k / (2 * n));
-          check(std::fesetround(mode) == 0, "cannot restore FFT rounding mode");
-          if (!(std::abs(output[3 * k] - expected) < 4 * bound)) {
-            std::cerr << "FFT mismatch mode=" << mode << " n=" << n << " pattern=" << pattern << " k=" << k
-                      << " got=" << output[3 * k] << " expected=" << expected << " bound=" << bound << '\n';
-            throw std::runtime_error("bounded FFT cosine cross-check");
-          }
-          if (pattern == 0 && k > 0)
-            check(std::abs(output[3 * k]) <= bound, "bounded FFT constant has nonzero AC");
-          check(output[3 * k + 1] == -19 && output[3 * k + 2] == -19, "FFT output stride overrun");
-        }
-        check(input == before, "FFT modified input");
-      }
-    }
-  }
-  rejects([] { dct_detail::ac_error_bound(10, 10, 8); });
-  rejects([] { dct_detail::ac_error_bound(8, 8, 32); });
-  for (int w : {4, 6, 12, 24, 48, 128}) {
-    const auto bound = dct_detail::ac_error_bound(w, w, 16);
-    check(bound > 0 && bound < 1e-6, "unexpected DCT AC error enclosure");
-  }
-}
-void refinement() {
-  for (int sign : {-1, 1})
-    for (int odd : {1, 3, 5, 7}) {
-      std::array<std::uint16_t, 16> pixels{};
-      pixels[sign == 1 ? 0 : 1] = std::uint16_t(4 * odd);
-      const int expected = sign * (2 * ((odd + 1) / 4));
-      check(dct_detail::interval_round(pixels.data(), 4, 4, 2, 0) == expected,
-            "adaptive DCT ties must round to even for both signs");
-    }
-  for (auto size : {std::pair{4, 4},
-                    {6, 6},
-                    {8, 4},
-                    {8, 8},
-                    {12, 12},
-                    {16, 2},
-                    {16, 8},
-                    {16, 16},
-                    {24, 24},
-                    {32, 16},
-                    {32, 32},
-                    {48, 48},
-                    {64, 32},
-                    {64, 64},
-                    {128, 64},
-                    {128, 128}}) {
-    const auto [w, h] = size;
-    for (int sign : {-1, 1})
-      for (int delta : {-1, 0, 1}) {
-        std::vector<std::uint16_t> pixels(w * h);
-        pixels[sign == 1 ? 0 : 1] = std::uint16_t(w * h / 4 + delta);
-        const int expected = delta > 0 ? sign : 0;
-        check(dct_detail::interval_round(pixels.data(), w, h, w / 2, 0) == expected, "adaptive DCT interval");
-        check(dct_detail::fixed_round(pixels.data(), w, h, w / 2, 0, expected) == (delta != 0),
-              "fixed DCT interval must exclude exact ties");
-        check(!dct_detail::fixed_round(pixels.data(), w, h, w / 2, 0, expected + 1), "wrong upper cell");
-        check(!dct_detail::fixed_round(pixels.data(), w, h, w / 2, 0, expected - 1), "wrong lower cell");
-        check(dct_detail::refine_ac(pixels.data(), w, h, w / 2, 0, sign * 0.5000000001) == expected,
-              "DCT estimate dictated refinement result");
-      }
-  }
-  std::mt19937 random(936);
-  for (int n : {4, 6, 12, 24, 48, 128}) {
-    std::vector<std::uint16_t> pixels(n * n);
-    for (auto& p : pixels)
-      p = std::uint16_t(random());
-    const int u = n / 2 - 1, v = n / 2 + 1;
-    const int expected = dct_detail::interval_round(pixels.data(), n, n, u, v);
-    check(dct_detail::fixed_round(pixels.data(), n, n, u, v, expected), "random fixed interval");
-    check(dct_detail::refine_ac(pixels.data(), n, n, u, v, 0) == expected, "wrong estimate must refine");
-  }
-}
-void exact_boundaries() {
-  for (auto size : {std::pair{4, 4},
-                    {6, 6},
-                    {8, 4},
-                    {8, 8},
-                    {12, 12},
-                    {16, 2},
-                    {16, 8},
-                    {16, 16},
-                    {24, 24},
-                    {32, 16},
-                    {32, 32},
-                    {48, 48},
-                    {64, 32},
-                    {64, 64},
-                    {128, 64},
-                    {128, 128}}) {
-    const auto [w, h] = size;
-    // u=w/2, v=0 has AC=2*sum(sign[x]*pixel)/area, sign=+,-,-,+.
-    // Construct exact +/-1/2 and perturb by one unit on either side.
-    for (int sign : {-1, 1})
-      for (int delta : {-1, 0, 1}) {
-        std::vector<std::uint16_t> samples(w * h);
-        samples[sign == 1 ? 0 : 1] = std::uint16_t(w * h / 4 + delta);
-        const int k = sign == 1 ? 0 : -1;
-        check(dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k) == (delta == 0),
-              "exact DCT boundary predicate");
-        check(!dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k + 1), "wrong neighboring DCT boundary");
-        check(!dct_detail::exact_half(samples.data(), w, h, w / 2, 0, k - 1), "wrong neighboring DCT boundary");
-      }
-  }
-  // Mixed frequency: on 12x12, (u=6,v=8) at (x=0,y=1) has
-  // cos(x)=sqrt(2)/2 and cos(y)=-1. Pixel324 therefore yields -4.5.
-  std::array<std::uint16_t, 144> mixed{};
-  mixed[12] = 324;
-  check(dct_detail::exact_half(mixed.data(), 12, 12, 6, 8, -5), "mixed DCT frequency tie");
-  ++mixed[12];
-  check(!dct_detail::exact_half(mixed.data(), 12, 12, 6, 8, -5), "mixed DCT frequency non-tie");
-  std::array<std::uint8_t, 16> small{};
-  small[0] = 4;
-  check(dct_detail::exact_half(small.data(), 4, 4, 2, 0, 0), "8-bit exact DCT tie");
-  check(!dct_detail::exact_half(small.data(), 4, 4, 2, 0, INT64_MIN), "DCT lower boundary overflow");
-  check(!dct_detail::exact_half(small.data(), 4, 4, 2, 0, INT64_MAX), "DCT upper boundary overflow");
-  rejects([&] { dct_detail::exact_half(small.data(), 0, 4, 1, 0, 0); });
-  rejects([&] { dct_detail::exact_half(small.data(), 4, 4, 0, 0, 0); });
-  rejects([&] { dct_detail::exact_half(small.data(), 4, 4, 4, 0, 0); });
-  rejects([&] { dct_detail::exact_half(mixed.data(), 10, 10, 1, 0, 0); });
 }
 // A one-level impulse has |AC| <= 2*sqrt(2)/area < 0.5 here.
 // Consequently this pair differs only in DC, whose exact mean lies immediately
@@ -257,9 +196,9 @@ void dc_boundary() {
     for (int bits : {8, 10, 12, 14, 16}) {
       std::vector<std::uint16_t> a(w * h, (1 << bits) - 2), b = a;
       --a.back();
-      DctWorkspace dct(w, h, bits);
+      DctWorkspace dct(w, h, bits, true);
       dct.set_source(view(a, w, h));
-      const auto expected = 2LL * int(std::sqrt(float(w * h)) + 0.5f);
+      auto expected = 2LL * int(std::sqrt(float(w * h)) + 0.5f);
       check(dct.compare(view(b, w, h)) == expected, "DC lost a one-level impulse below integer boundary");
       dct.set_source(view(b, w, h));
       check(dct.compare(view(a, w, h)) == expected, "DC boundary symmetry");
@@ -267,70 +206,43 @@ void dc_boundary() {
   }
 }
 void numeric() {
-  std::mt19937 random(729);
-  for (auto size : {std::pair{4, 4},
-                    {6, 6},
-                    {8, 4},
-                    {8, 8},
-                    {12, 12},
-                    {16, 2},
-                    {16, 8},
-                    {16, 16},
-                    {24, 24},
-                    {32, 16},
-                    {32, 32},
-                    {48, 48},
-                    {64, 32},
-                    {64, 64},
-                    {128, 64},
-                    {128, 128}}) {
-    const int w = size.first, h = size.second, scale = int(std::sqrt(float(w * h)) + 0.5f);
-    for (int bits : {8, 10, 12, 14, 16}) {
-      std::vector<std::uint16_t> a(w * h, 32), b(w * h, 96);
-      DctWorkspace dct(w, h, bits);
-      dct.set_source(view(a, w, h));
-      check(dct.compare(view(a, w, h)) == 0, "identity DCT");
-      check(dct.compare(view(b, w, h)) == 64LL * scale, "constant DC normalization");
-      for (auto& x : a)
-        x = random() & ((1 << bits) - 1);
-      for (auto& x : b)
-        x = random() & ((1 << bits) - 1);
-      const auto before = a, other = b;
-      dct.set_source(view(a, w, h));
-      const auto actual = dct.compare(view(b, w, h));
-      const auto qa = oracle(a, w, h, bits), qb = oracle(b, w, h, bits);
-      std::int64_t expected = 3LL * std::abs(qa[0] - qb[0]);
-      for (std::size_t i = 0; i < qa.size(); ++i)
-        expected += std::abs(qa[i] - qb[i]);
-      expected = expected * scale / 2;
-      check(expected == actual, "exact cosine matrix oracle mismatch");
-      const int saved_mode = std::fegetround();
-      for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
-        check(std::fesetround(mode) == 0, "cannot set native DCT rounding mode");
-        DctWorkspace native(w, h, bits, true);
-        native.set_source(view(a, w, h));
-        check(native.compare(view(b, w, h)) == expected, "native DCT quantization mismatch");
+  std::mt19937 random(1931);
+  for (auto [w, h] : shapes)
+    for (int bits : {8, 10, 12, 14, 16})
+      for (bool simd : {false, true}) {
+        std::vector<std::uint16_t> a(w * h, 32), b(w * h, 96);
+        DctWorkspace dct(w, h, bits, simd);
+        dct.set_source(view(a, w, h));
+        check(dct.compare(view(a, w, h)) == 0, "DCT identity");
+        check(dct.compare(view(b, w, h)) == 64LL * int(std::sqrt(double(w * h)) + 0.5), "constant DC normalization");
+        for (auto& x : a)
+          x = std::uint16_t(random() & ((1 << bits) - 1));
+        for (auto& x : b)
+          x = std::uint16_t(random() & ((1 << bits) - 1));
+        const auto before = a, other = b;
+        dct.set_source(view(a, w, h));
+        const auto cost = dct.compare(view(b, w, h));
+        dct.set_source(view(b, w, h));
+        check(dct.compare(view(a, w, h)) == cost, "DCT symmetry");
+        check(a == before && b == other, "DCT changed input");
       }
-      check(std::fesetround(saved_mode) == 0, "cannot restore DCT rounding mode");
-      dct.set_source(view(b, w, h));
-      check(dct.compare(view(a, w, h)) == actual, "DCT symmetry");
-      check(a == before && b == other, "DCT changed input");
-      std::fill(a.begin(), a.end(), 0);
-      std::fill(b.begin(), b.end(), (1 << bits) - 1);
-      dct.set_source(view(a, w, h));
-      check(dct.compare(view(b, w, h)) > 0, "DCT extreme pixels");
-      b = a;
-      b[w * h / 2] = 1;
-      dct.set_source(view(b, w, h));
-      check(dct.compare(view(b, w, h)) == 0, "DCT impulse identity");
-    }
-  }
   rejects([] { DctWorkspace d(8, 8, 32); });
   rejects([] { DctWorkspace d(0, 8, 8); });
+  rejects([] { DctWorkspace d(10, 8, 8); });
   rejects([] { DctWorkspace d(129, 8, 8); });
   DctWorkspace d(8, 8, 10);
   std::vector<std::uint16_t> outside(64, 1024);
   rejects([&] { d.set_source(view(outside, 8, 8)); });
+  rejects([&] { d.set_source(view(outside, 16, 4)); });
+  std::vector<float> bad(64, std::numeric_limits<float>::quiet_NaN());
+  auto fp = [&] {
+    return checked_plane<const float>(bad.data(), 8, 8, 8 * sizeof(float), bad.size() * sizeof(float));
+  };
+  rejects([&] { d.set_source(fp()); });
+  bad[0] = 0.5f;
+  rejects([&] { d.set_source(fp()); });
+  bad[0] = -1;
+  rejects([&] { d.set_source(fp()); });
 }
 void sampling_and_search() {
   for (int pel : {1, 2, 4})
@@ -417,36 +329,34 @@ void backend_equivalence() {
 }
 #endif
 void quantization() {
-  const int saved_mode = std::fegetround();
-  std::mt19937 random(319);
+  const int saved = std::fegetround();
+  // Feed exact represented ties and their immediate neighbors directly to
+  // isolate quantization from the float32 transform's approximation error.
   for (int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
-    check(std::fesetround(mode) == 0, "cannot set quantization rounding mode");
-    for (auto size : {std::pair{4, 4}, {6, 6}, {8, 4}, {16, 2}, {12, 12}, {48, 48}, {128, 128}}) {
-      const auto [w, h] = size;
-      std::vector<std::uint16_t> samples(w * h);
-      std::vector<double> input(w * h), rows(w * h), transformed(w * h);
-      for (int pattern = 0; pattern < 4; ++pattern) {
-        for (int i = 0; i < w * h; ++i) {
-          samples[i] = pattern == 0   ? 65535
-                       : pattern == 1 ? (i == 0 ? w * h / 4 : 0)
-                       : pattern == 2 ? ((i & 1) ? 65535 : 0)
-                                      : std::uint16_t(random());
-          input[i] = samples[i];
+    check(std::fesetround(mode) == 0, "set rounding mode");
+    for (auto [w, h] : shapes) {
+      const int stride = dct_detail::padded_stride(w);
+      std::vector<float> v(stride * dct_detail::padded_stride(h));
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+          const int i = y * w + x;
+          const float tie = float(((i * 7919) % 131072) - 65536) + 0.5f;
+          v[y * stride + x] = i % 3 == 0 ? tie : std::nextafter(tie, i % 3 == 1 ? -INFINITY : INFINITY);
         }
-        dct_detail::transform_block(w, h, input.data(), rows.data(), transformed.data(), false);
-        // DC is left untouched. Extra sentinels guard the unaligned AC start
-        // and the scalar tail after the final full vector.
-        std::vector<int> scalar(w * h + 2, -12345), native = scalar;
-        const double error = dct_detail::ac_error_bound(w, h, 16);
-        dct_detail::quantize_ac(samples.data(), w, h, transformed.data(), scalar.data() + 1, 65535, error, false);
-        dct_detail::quantize_ac(samples.data(), w, h, transformed.data(), native.data() + 1, 65535, error, true);
-        check(native == scalar, "DCT per-coefficient SIMD quantization mismatch");
-        check(native.front() == -12345 && native[1] == -12345 && native.back() == -12345,
-              "DCT quantization overwrote DC or guard");
+      std::vector<int> a(w * h + 2, -12345), b = a;
+      dct_detail::quantize_ac(w, h, v.data(), a.data() + 1, 65535, false);
+      dct_detail::quantize_ac(w, h, v.data(), b.data() + 1, 65535, true);
+      check(a == b, "scalar/SIMD quantization mismatch");
+      check(a.front() == -12345 && a[1] == -12345 && a.back() == -12345, "quantization guard");
+      for (int i = 1; i < w * h; ++i) {
+        const double value = v[(i / w) * stride + i % w];
+        const double low = std::floor(value), fraction = value - low;
+        const int q = int(low) + int(fraction > 0.5 || (fraction == 0.5 && int(low) % 2 != 0));
+        check(a[i + 1] == std::clamp(q + 32768, 0, 65535), "ties-to-even quantization");
       }
     }
   }
-  check(std::fesetround(saved_mode) == 0, "cannot restore quantization rounding mode");
+  check(std::fesetround(saved) == 0, "restore rounding mode");
 }
 int main() {
   try {
@@ -455,21 +365,22 @@ int main() {
     backend_equivalence<std::uint8_t>();
     backend_equivalence<std::uint16_t>();
 #endif
-    refinement();
-    bounded_fft();
-    exact_boundaries();
+    const auto cases = make_cases();
+    coefficients(cases, false);
     dc_boundary();
 #if NEO_MV_DCT_TEST_HIGHWAY
     for (auto target : hwy::SupportedAndGeneratedTargets()) {
       hwy::SetSupportedTargetsForTest(target);
       numeric();
       quantization();
+      coefficients(cases, true);
       std::cout << "DCT target " << hwy::TargetName(target) << " passed\n";
     }
     hwy::SetSupportedTargetsForTest(0);
 #else
     numeric();
     quantization();
+    coefficients(cases, true);
 #endif
     sampling_and_search();
     std::vector<std::future<void>> workers;

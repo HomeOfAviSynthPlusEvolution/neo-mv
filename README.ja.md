@@ -28,7 +28,7 @@ neo-mv は動きの計算とホストのフレーム管理を分離していま�
 
 `Analyse`、`AnalyseMany`、`Recalculate` は `metric="sad"`（既定）、`"satd"`、`"dct"` で輝度の比較方法を選択します。SATD はブロックの幅と高さがともに 4 の倍数である必要があります。DCT は 6×6 と 16×2 を含むすべての有効なブロック形状に対応しますが、8–16 ビット整数のみ使用できます。色差は常に SAD です。この文字列パラメーターは従来の `satd` 真偽値を置き換えます。誤差のしきい値は既存のスケーリング規則を維持し、比較方法の間で自動換算しません。
 
-整数専用の混合モード `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local`、`sad_satd_global_half` は、フレーム対の適応的な重み、または局所的な `metric_weight` / `metric_threshold` を使用します。[API の移行表](docs/api/en/analyse.md#migrating-from-mvtools-dct)を参照してください。既存の純粋な SAD/SATD/DCT の数値定義は変わりません。
+整数専用の混合モード `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local`、`sad_satd_global_half` は、フレーム対の適応的な重み、または局所的な `metric_weight` / `metric_threshold` を使用します。[API の移行表](docs/api/en/analyse.md#migrating-from-mvtools-dct)を参照してください。
 
 動きデータはフレームプロパティに格納されます。既定のプロパティ接頭辞は `MVUtensils` で、プラグインの名前空間 `neo_mv` とは独立しています。Super の補助画像は生成した実装に属するため、neo-mv の関数で使用する Super は neo-mv で生成してください。
 
@@ -77,11 +77,11 @@ SIMD を有効にしたビルドは、実行中の CPU が対応し、かつビ�
 
 FFT の設定と許容される浮動小数点差分は結果に影響することがあります。広い SIMD が常に高いスループットを保証するわけではありません。[KernelInfo](docs/knowledge/en/kernel-info.md) と各関数の精度の節を参照してください。
 
-`fft` と `fft_lanes` は DePan 用 PocketFFT の情報で、ブロック DCT 変換の情報ではありません。DCT は選択されたバックエンドに従ってスカラーまたは Highway カーネルを使用し、係数の量子化規則は共通です。
+`fft` と `fft_lanes` は DePan 用 PocketFFT の情報で、ブロック DCT の情報ではありません。DCT は対応するすべての整数入力に float32 演算を使用します。8×8 は専用行列、12/16/24/32/48/64/128 の正方形は固定サイズ FFT、その他の形状は汎用経路を使います。AC は計算した float32 値を最近接偶数に丸め、DC は正確な整数和から求めます。double や従来の整数 DCT との微小な差は許容します。
 
 ## ビルドとテスト
 
-CMake 3.24 以降、Git、C++17 対応コンパイラーが必要です。CMake は固定バージョンの DualSynth2、PocketFFT、Boost.Multiprecision、Boost.Config を取得し、SIMD 有効時には Highway 1.4.0 も取得します。両ホストの SDK はローカルで検出するか、自動取得します。VapourSynth テストにはアーキテクチャが一致するランタイムと `vspipe`、AviSynth テストにはアーキテクチャが一致するランタイムライブラリが必要です。
+CMake 3.24 以降、Git、C++17 対応コンパイラーが必要です。CMake は固定バージョンの DualSynth2、PocketFFT を取得し、SIMD 有効時には Highway 1.4.0 も取得します。両ホストの SDK はローカルで検出するか、自動取得します。VapourSynth テストにはアーキテクチャが一致するランタイムと `vspipe`、AviSynth テストにはアーキテクチャが一致するランタイムライブラリが必要です。
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -156,7 +156,6 @@ neo-mv は以下の計算ライブラリも使用しています。
 
 - [Google Highway](https://github.com/google/highway)：クロスプラットフォームの SIMD を提供します。
 - [PocketFFT](https://github.com/mreineck/pocketfft)：`DepanEstimate` の FFT 相関に使用します。ブロック DCT 比較には neo-mv 独自の変換実装を使用します。
-- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) と [Boost.Config](https://github.com/boostorg/config)：DCT の丸め境界における整数区間演算と移植可能な多倍長整数を支えるヘッダーのみの依存です。ライセンスは BSL-1.0 で、Boost のランタイムライブラリは不要です。
 
 テスト、問題報告、改善に協力する開発者とユーザーの皆様に感謝します。
 

@@ -28,7 +28,7 @@ neo-mv 将运动计算与宿主帧管理分离。核心处理图像平面、运�
 
 `Analyse`、`AnalyseMany` 和 `Recalculate` 通过 `metric="sad"`（默认）、`"satd"` 或 `"dct"` 选择亮度匹配度量。SATD 要求块宽、高均能被 4 整除；DCT 支持全部合法块尺寸，包括 6×6 和 16×2，但仅接受 8–16 位整数。色度始终使用 SAD。该字符串参数替代旧的 `satd` 布尔参数。误差阈值保留原有缩放规则，不在不同度量之间自动换算。
 
-仅整数的混合模式 `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local` 和 `sad_satd_global_half` 支持帧对自适应权重，或可调的局部 `metric_weight` / `metric_threshold`。参见 [API 迁移表](docs/api/zh-CN/analyse.md#从-mvtools-的-dct-参数迁移)。既有纯模式的数值定义不变。
+仅整数的混合模式 `sad_dct_global`、`sad_dct_local`、`sad_satd_global`、`sad_satd_local` 和 `sad_satd_global_half` 支持帧对自适应权重，或可调的局部 `metric_weight` / `metric_threshold`。参见 [API 迁移表](docs/api/zh-CN/analyse.md#从-mvtools-的-dct-参数迁移)。
 
 运动数据保存在帧属性中。默认属性前缀为 `MVUtensils`，与插件命名空间 `neo_mv` 相互独立。Super 的辅助图像属于生成它的实现，供 neo-mv 使用的 Super 应由 neo-mv 生成。
 
@@ -77,11 +77,11 @@ return neo_mv_Degrain1(clip, super_clip, vectors)
 
 FFT 配置和允许的浮点差异可能影响结果，更宽的 SIMD 不保证吞吐量更高。详见 [KernelInfo](docs/knowledge/zh-CN/kernel-info.md) 及各函数的精度章节。
 
-`fft` 和 `fft_lanes` 描述 DePan 使用的 PocketFFT，不代表块 DCT 变换。DCT 随选定后端使用标量或 Highway 内核，系数量化规则相同。
+`fft` 和 `fft_lanes` 描述 DePan 使用的 PocketFFT，不代表块 DCT。DCT 对全部受支持的整数输入统一使用 float32 运算：8×8 专用矩阵、12/16/24/32/48/64/128 正方形的固定尺寸 FFT，以及其他形状的通用路径。AC 对算出的 float32 值做最近偶数舍入，DC 使用精确整数和；与 double 或历史整数 DCT 的结果可能有微小差异。
 
 ## 构建与测试
 
-需要 CMake 3.24 或更新版本、Git 及支持 C++17 的编译器。CMake 获取固定版本的 DualSynth2、PocketFFT、Boost.Multiprecision 和 Boost.Config，启用 SIMD 时还会获取 Highway 1.4.0。两个宿主的 SDK 均可从本地发现或自动下载。VapourSynth 测试需要架构匹配的运行时和 `vspipe`；AviSynth 测试需要架构匹配的运行时库。
+需要 CMake 3.24 或更新版本、Git 及支持 C++17 的编译器。CMake 获取固定版本的 DualSynth2 和 PocketFFT，启用 SIMD 时还会获取 Highway 1.4.0。两个宿主的 SDK 均可从本地发现或自动下载。VapourSynth 测试需要架构匹配的运行时和 `vspipe`；AviSynth 测试需要架构匹配的运行时库。
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -156,7 +156,6 @@ neo-mv 还使用了以下计算库：
 
 - [Google Highway](https://github.com/google/highway)：提供跨平台 SIMD 支持。
 - [PocketFFT](https://github.com/mreineck/pocketfft)：用于 `DepanEstimate` 的 FFT 相关计算；块 DCT 匹配使用 neo-mv 自身的变换实现。
-- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) 和 [Boost.Config](https://github.com/boostorg/config)：为 DCT 舍入边界的整数区间细化及可移植宽整数提供仅头文件支持，采用 BSL-1.0 许可证；不需要 Boost 运行时库。
 
 感谢参与测试、报告问题和改进的开发者与用户。
 

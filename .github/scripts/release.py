@@ -73,15 +73,10 @@ def package(args):
     shutil.copy2(binary, stage / binary.name)
     shutil.copy2(tests_path, stage / 'tests.xml')
     dependencies = {}
-    for dep in ('dualsynth2', 'highway', 'pocketfft', 'boost_multiprecision', 'boost_config'):
+    for dep in ('dualsynth2', 'highway', 'pocketfft'):
         dep_root = build / '_deps' / f'{dep}-src'
         licenses = sorted(p for p in dep_root.iterdir()
                           if p.is_file() and p.name.upper().startswith(('LICENSE', 'COPYING')))
-        if dep == 'boost_config' and not licenses:
-            # Config ships its BSL notice in this header, without a root license.
-            # Multiprecision supplies the same full Boost Software License text.
-            licenses = [build / '_deps' / 'boost_multiprecision-src' / 'LICENSE',
-                        dep_root / 'include' / 'boost' / 'config.hpp']
         if any(not p.is_file() for p in licenses):
             raise ValueError(f'Missing dependency notice file: {dep}')
         if not licenses:

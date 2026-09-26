@@ -53,14 +53,14 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `"satd"` | Absolute differences based on 4×4 Hadamard transforms. | 8–16-bit integer and float32; both dimensions must be divisible by 4, excluding 6×6 and 16×2. |
 | `"dct"` | DCT-II and coefficient quantization of each source/reference block, followed by coefficient absolute differences with DC weighting and block-size scaling. | 8–16-bit integer only; all valid block sizes, including 6×6 and 16×2. |
 
-With `chroma=true`, chroma uses SAD in all modes; `metric` changes only the luma metric. DCT AC coefficients use nearest-even rounding, while DC uses integer truncation. This is not the direct distance between unquantized DCT coefficients and does not promise to reproduce historical floating-point rounding differences.
+With `chroma=true`, chroma uses SAD in all modes; `metric` changes only the luma metric. DCT uses float32 arithmetic for all supported sizes and integer bit depths, including 8-bit 8×8. AC coefficients round the computed float32 value to the nearest even integer; DC is truncated from the exact integer sample sum. Small numerical differences from double or historical integer DCT implementations are accepted and can change a search decision between nearly tied candidates. This is not the direct distance between unquantized DCT coefficients.
 
 The output property remains named `AnalysisSAD`, but contains block error from the selected metric (including chroma SAD when enabled), not necessarily pixel SAD. Changing metrics changes the error distribution; error thresholds are not automatically converted to equivalent SAD thresholds.
 
 
 #### Mixed modes
 
-These five new modes accept only 8–16-bit integer samples. Every SATD-family mode requires both block dimensions divisible by 4, even at zero weight; the DCT family supports all valid block shapes. Existing `sad`, `satd`, and `dct` numerical definitions and defaults remain unchanged.
+These five new modes accept only 8–16-bit integer samples. Every SATD-family mode requires both block dimensions divisible by 4, even at zero weight; the DCT family supports all valid block shapes. The base distances follow the definitions above.
 
 | `metric` | Luma error policy |
 | --- | --- |

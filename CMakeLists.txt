@@ -81,25 +81,10 @@ FetchContent_Declare(pocketfft
   SOURCE_SUBDIR neo_mv_header_only)
 FetchContent_MakeAvailable(pocketfft)
 
-# Header-only exact DCT refinement. Standalone Multiprecision needs only Config.
-FetchContent_Declare(boost_multiprecision
-  URL https://codeload.github.com/boostorg/multiprecision/tar.gz/529dfac199191a7eb8a5eb7f47256eff6d0db993
-  URL_HASH SHA256=fa3e6dc3fb06984b11a1e9cba90b15c59db047c514b38bde908a898b92eea380
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  SOURCE_SUBDIR neo_mv_headers_only)
-FetchContent_Declare(boost_config
-  URL https://codeload.github.com/boostorg/config/tar.gz/a7d5a9b05d70c9cfea980dc3539ca3d3461411b3
-  URL_HASH SHA256=a093b5e93e8923df955a88f5cd186d9516513e50cd0d0ddbb91ccd8d4ce92e85
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  SOURCE_SUBDIR neo_mv_headers_only)
-FetchContent_MakeAvailable(boost_multiprecision boost_config)
-
-add_library(neo_mv_dct STATIC src/core/motion/dct.cpp src/core/motion/dct_refine.cpp src/core/motion/dct_transform.cpp)
+add_library(neo_mv_dct STATIC src/core/motion/dct.cpp src/core/motion/dct_transform.cpp)
 target_compile_features(neo_mv_dct PRIVATE cxx_std_17)
 target_include_directories(neo_mv_dct PRIVATE src)
-target_include_directories(neo_mv_dct SYSTEM PRIVATE "${dualsynth2_SOURCE_DIR}/include"
-  "${boost_multiprecision_SOURCE_DIR}/include" "${boost_config_SOURCE_DIR}/include")
-target_compile_definitions(neo_mv_dct PRIVATE BOOST_MP_STANDALONE)
+target_include_directories(neo_mv_dct SYSTEM PRIVATE "${dualsynth2_SOURCE_DIR}/include")
 if(NEO_MV_ENABLE_SIMD)
   target_link_libraries(neo_mv_dct PRIVATE hwy)
   target_compile_definitions(neo_mv_dct PRIVATE NEO_MV_DCT_SIMD=1 HWY_COMPILE_ALL_ATTAINABLE)

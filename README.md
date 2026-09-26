@@ -28,7 +28,7 @@ Block-motion and Flow operations support planar GRAY/YUV with 8–16-bit integer
 
 `Analyse`, `AnalyseMany`, and `Recalculate` select the luma matching metric with `metric="sad"` (default), `"satd"`, or `"dct"`. SATD requires both block dimensions to be divisible by 4. DCT supports every valid block shape, including 6×6 and 16×2, but only 8–16-bit integer samples. Chroma always uses SAD. The string parameter replaces the former `satd` Boolean. Error thresholds retain their existing scaling and are not converted between metrics.
 
-The integer-only mixed modes `sad_dct_global`, `sad_dct_local`, `sad_satd_global`, `sad_satd_local`, and `sad_satd_global_half` add adaptive frame-pair weights or configurable local `metric_weight` / `metric_threshold`. See the [API migration table](docs/api/en/analyse.md#migrating-from-mvtools-dct). Existing pure metrics retain their numerical definitions.
+The integer-only mixed modes `sad_dct_global`, `sad_dct_local`, `sad_satd_global`, `sad_satd_local`, and `sad_satd_global_half` add adaptive frame-pair weights or configurable local `metric_weight` / `metric_threshold`. See the [API migration table](docs/api/en/analyse.md#migrating-from-mvtools-dct).
 
 Motion data is carried in frame properties. The default property prefix is `MVUtensils`, independently of the `neo_mv` plugin namespace. Super's auxiliary images belong to the implementation that created them; generate Super with neo-mv for use by neo-mv consumers.
 
@@ -77,11 +77,11 @@ Selection is cached after the first successful initialization. Changing the envi
 
 FFT profiles and permitted floating-point differences can affect results. Wider SIMD does not guarantee higher throughput. See [KernelInfo](docs/knowledge/en/kernel-info.md) and each function's precision section.
 
-The `fft` and `fft_lanes` fields describe PocketFFT used by DePan, not the block DCT transform. DCT uses scalar or Highway kernels according to the selected backend, with the same coefficient quantization rules.
+The `fft` and `fft_lanes` fields describe PocketFFT used by DePan, not block DCT. DCT uses float32 arithmetic for all supported integer inputs: a dedicated 8×8 matrix, fixed-size FFT kernels for 12/16/24/32/48/64/128 squares, and a general path for other shapes. AC coefficients use nearest-even rounding of the computed float32 values; DC uses exact integer sums. Small differences from double or historical integer DCT results are expected.
 
 ## Building and testing
 
-Requires CMake 3.24 or later, Git, and a C++17 compiler. CMake retrieves pinned DualSynth2, PocketFFT, Boost.Multiprecision, and Boost.Config sources, plus Highway 1.4.0 when SIMD is enabled. Both host SDKs are discovered locally or fetched automatically. Running VapourSynth tests requires a matching runtime and `vspipe`; AviSynth tests require a matching runtime library.
+Requires CMake 3.24 or later, Git, and a C++17 compiler. CMake retrieves pinned DualSynth2 and PocketFFT sources, plus Highway 1.4.0 when SIMD is enabled. Both host SDKs are discovered locally or fetched automatically. Running VapourSynth tests requires a matching runtime and `vspipe`; AviSynth tests require a matching runtime library.
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -156,7 +156,6 @@ neo-mv also uses the following computation libraries:
 
 - [Google Highway](https://github.com/google/highway): cross-platform SIMD support.
 - [PocketFFT](https://github.com/mreineck/pocketfft): FFT correlation for `DepanEstimate`. Block DCT matching uses neo-mv's own transform implementation.
-- [Boost.Multiprecision](https://github.com/boostorg/multiprecision) and [Boost.Config](https://github.com/boostorg/config): header-only support for integer interval refinement at DCT rounding boundaries and portable wide integers; licensed under BSL-1.0. No Boost runtime library is required.
 
 Thanks to the developers and users who contribute tests, reports, and improvements.
 

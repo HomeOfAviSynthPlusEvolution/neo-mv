@@ -1,31 +1,29 @@
 #include "core/motion/dct.hpp"
 #include "core/motion/dct_fft.hpp"
-#include "core/motion/dct_refine.hpp"
-#include <algorithm>
 
 namespace neo_mv {
-DctWorkspace::DctWorkspace(int width, int height, int bits, bool simd)
-    : width_(width), height_(height), simd_(simd), error_(dct_detail::ac_error_bound(width, height, bits)) {
+DctWorkspace::DctWorkspace(int width, int height, int bits, bool simd) : width_(width), height_(height), simd_(simd) {
+  // Validate before shifts, products, or allocating buffers.
+  dct_detail::cosine_table(width);
+  dct_detail::cosine_table(height);
+  if (bits < 8 || bits > 16)
+    throw std::invalid_argument("DCT requires 8-16 bit integer samples");
   maximum_ = (1 << bits) - 1;
   midpoint_ = 1 << (bits - 1);
   scale_ = int(std::sqrt(double(width * height)) + 0.5);
-  const auto size = std::size_t(width) * height;
-  samples_.resize(size);
-  input_.resize(size);
-  rows_.resize(size);
-  transformed_.resize(size);
-  source_.resize(size);
-  reference_.resize(size);
+  stride_ = dct_detail::padded_stride(width);
+  const auto scratch = stride_ * dct_detail::padded_stride(height);
+  input_.resize(scratch);
+  rows_.resize(scratch);
+  transformed_.resize(scratch);
+  source_.resize(width * height);
+  reference_.resize(width * height);
 }
 
 void DctWorkspace::transform(std::vector<int>& output) {
   dct_detail::transform_block(width_, height_, input_.data(), rows_.data(), transformed_.data(), simd_);
-  // Unnormalized DC is 4*sum(samples); its quantizer truncates sum/(2*area).
-  std::int64_t sum = 0;
-  for (auto sample : samples_)
-    sum += sample;
-  output[0] = std::clamp(int(sum / (2 * width_ * height_)) + midpoint_, 0, maximum_);
-  dct_detail::quantize_ac(samples_.data(), width_, height_, transformed_.data(), output.data(), maximum_, error_,
-                          simd_);
+  dct_detail::quantize_ac(width_, height_, transformed_.data(), output.data(), maximum_, simd_);
+  // Preserve exact DC even when a large block's sum cannot fit in binary32.
+  output[0] = midpoint_ + int(sum_ / (2 * width_ * height_));
 }
 } // namespace neo_mv
