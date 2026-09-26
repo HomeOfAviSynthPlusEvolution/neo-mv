@@ -24,7 +24,9 @@ struct VectorOps {
   V neg(V a) const { return hn::Neg(a); }
   HWY_INLINE void transpose(const float* in, int w, int h, int stride, float* out, int out_stride) const {
     int tile = 1;
-#if HWY_MAX_BYTES >= 32 && !HWY_HAVE_SCALABLE
+// Fixed-width SVE targets still use sizeless vector types, which cannot be
+// array elements. Keep this array-based tile on non-SVE fixed-width targets.
+#if HWY_MAX_BYTES >= 32 && !HWY_HAVE_SCALABLE && !(HWY_TARGET & HWY_ALL_SVE)
     tile = 8;
     const hn::Repartition<std::uint64_t, decltype(d)> d64;
     for (int y = 0; y < h; y += 8) {
