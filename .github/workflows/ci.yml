@@ -33,7 +33,6 @@ jobs:
             cxx: g++
             packages: ninja-build g++
             build_type: Release
-            plugin: 'ON'
             cxx_flags: ''
           - name: Linux x64 / Clang 22 / ASan + UBSan
             os: ubuntu-26.04
@@ -42,7 +41,7 @@ jobs:
             cxx: clang++-22
             packages: ninja-build clang-22 libclang-rt-22-dev
             build_type: RelWithDebInfo
-            plugin: 'OFF'
+            cmake_args: -DNEO_MV_BUILD_VAPOURSYNTH=OFF -DNEO_MV_BUILD_AVISYNTH=OFF
             cxx_flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           - name: macOS ARM64 / Apple Clang
             os: macos-15
@@ -50,7 +49,6 @@ jobs:
             cc: /usr/bin/clang
             cxx: /usr/bin/clang++
             build_type: Release
-            plugin: 'ON'
             cxx_flags: ''
 
     steps:
@@ -104,9 +102,6 @@ jobs:
         shell: pwsh
         run: >-
           cmake -S . -B build/ci -G "Visual Studio 18 2026" -A x64 -T ClangCL
-          -DBUILD_TESTING=ON
-          -DNEO_MV_ENABLE_HIGHWAY=ON -DNEO_MV_HWY_SCALAR_ONLY=OFF
-          -DNEO_MV_BUILD_VAPOURSYNTH=ON -DNEO_MV_BUILD_AVISYNTH=ON -DNEO_MV_TEST_VAPOURSYNTH=ON
           -DNEO_MV_TEST_BLACKBOX=OFF -DNEO_MV_BUILD_BENCHMARKS=OFF
           "-DPython3_EXECUTABLE=${{ steps.python.outputs.python-path }}"
 
@@ -121,9 +116,7 @@ jobs:
           cmake -S . -B build/ci -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           "-DCMAKE_CXX_FLAGS=$NEO_CXX_FLAGS"
-          -DBUILD_TESTING=ON
-          -DNEO_MV_ENABLE_HIGHWAY=ON -DNEO_MV_HWY_SCALAR_ONLY=OFF
-          -DNEO_MV_BUILD_VAPOURSYNTH=${{ matrix.plugin }} -DNEO_MV_BUILD_AVISYNTH=${{ matrix.plugin }}
+          ${{ matrix.cmake_args }}
           -DNEO_MV_TEST_VAPOURSYNTH=OFF
           -DNEO_MV_TEST_BLACKBOX=OFF -DNEO_MV_BUILD_BENCHMARKS=OFF
           "-DPython3_EXECUTABLE=$NEO_PYTHON"

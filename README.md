@@ -71,7 +71,7 @@ Function names and parameter order follow the API reference, with the `neo_mv_` 
 
 ## SIMD and CPU selection
 
-SIMD builds select a compiled Highway target supported by the running CPU. Scalar fallback remains available. Set `NEO_MV_KERNEL=scalar` before the first backend initialization to use scalar kernels and scalar FFT; `NEO_MV_KERNEL=highway` explicitly requires a SIMD-enabled build. With the variable unset, the build selects its default backend.
+CMake checks the target toolchain for a hardware SIMD baseline using Highway's architecture detection. If none is available, the kernels, DCT, and FFT use their pure C++ implementations without building or linking Highway. SIMD builds select a compiled hardware Highway target supported by the running CPU; Highway SCALAR and EMU128 targets are excluded. Set `NEO_MV_KERNEL=scalar` before the first backend initialization to use the project's scalar kernels and scalar FFT; `NEO_MV_KERNEL=highway` explicitly requires a SIMD-enabled build. With the variable unset, the build selects its default backend.
 
 Selection is cached after the first successful initialization. Changing the environment afterward does not switch existing or new filter instances to another backend. `core.neo_mv.KernelInfo()` reports `backend`, `target`, `fft`, and `fft_lanes`; the FFT target can differ from the general-kernel target. Lane count is not a thread count or a speedup estimate.
 

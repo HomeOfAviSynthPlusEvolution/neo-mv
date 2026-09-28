@@ -71,7 +71,7 @@ return neo_mv_Degrain1(clip, super_clip, vectors)
 
 ## SIMD 与 CPU 选择
 
-启用 SIMD 的构建会选择当前 CPU 支持且已编译的 Highway 目标，并保留标量回退。在首次初始化后端之前设置 `NEO_MV_KERNEL=scalar`，可使用标量内核和标量 FFT；`NEO_MV_KERNEL=highway` 显式要求启用 SIMD 的构建。不设置该变量时使用构建的默认后端。
+CMake 使用 Highway 的架构检测，检查目标工具链是否具有硬件 SIMD 基线。没有可用基线时，内核、DCT 和 FFT 使用各自的纯 C++ 实现，不构建或链接 Highway。启用 SIMD 的构建会选择当前 CPU 支持且已编译的 Highway 硬件目标，不生成 Highway SCALAR 和 EMU128 目标。在首次初始化后端之前设置 `NEO_MV_KERNEL=scalar`，可使用项目自身的标量内核和标量 FFT；`NEO_MV_KERNEL=highway` 显式要求启用 SIMD 的构建。不设置该变量时使用构建的默认后端。
 
 首次成功初始化后会缓存选择结果，此后修改环境变量不会为已有或新建滤镜切换后端。`core.neo_mv.KernelInfo()` 返回 `backend`、`target`、`fft` 和 `fft_lanes`；FFT 目标可能与通用内核目标不同。通道数不是线程数，也不是加速倍数。
 

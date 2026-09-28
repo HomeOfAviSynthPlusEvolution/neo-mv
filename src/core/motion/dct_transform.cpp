@@ -1,4 +1,5 @@
 #include "core/motion/dct_fft.hpp"
+#include <cstdint>
 
 #if NEO_MV_DCT_SIMD
 #undef HWY_TARGET_INCLUDE
