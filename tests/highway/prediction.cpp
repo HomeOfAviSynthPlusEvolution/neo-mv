@@ -60,6 +60,30 @@ void run() {
                   compare(parent, g, 2 * width + dx, 2 * height + 1);
               }
     }
+  // Overlap blksize/8 gives divisors 49, 196, 784, 3136 and 12544, whose
+  // binary64 reciprocals satisfy n*fl(1/n) < 1. Uniform motion must divide
+  // exactly on both paths: a reciprocal product would give 2v-1, not 2v.
+  for (const auto size : {std::pair<int, int>{8, 8}, {16, 16}, {32, 32}, {64, 64}, {128, 128}})
+    for (int v : {1, 3, 100, -5}) {
+      MotionGrid uniform{5, 3, std::vector<MotionTriple>(15, {{v, -v}, std::int64_t(v < 0 ? -v : v)})};
+      MotionGrid mixed = uniform;
+      for (auto& t : mixed.values)
+        t = {{int(random() % 20001) - 10000, int(random() % 20001) - 10000}, std::int64_t(random())};
+      for (int pp : {1, 2})
+        for (int cp : {1, 2, 4}) {
+          const PredictionGeometry g{size.first, size.second, size.first / 8, size.second / 8, pp, cp};
+          compare(mixed, g, 10, 6);
+          compare(mixed, g, 9, 7);
+          MotionGrid child{10, 6, std::vector<MotionTriple>(60)};
+          neo_mv::simd::interpolate_predictions(uniform, g, child);
+          const int r = 3 - (cp == 4 ? 2 : cp == 2 ? 1 : 0) + (pp == 2 ? 1 : 0);
+          const int expected = r >= 0 ? (16 * v) >> r : (16 * v) << -r;
+          for (const auto& t : child.values)
+            if (t.vector.x != expected || t.vector.y != -expected || t.error != (v < 0 ? -v : v))
+              throw std::runtime_error("uniform overlap prediction is not exact");
+          compare(uniform, g, 10, 6);
+        }
+    }
   MotionGrid parent{17, 3, std::vector<MotionTriple>(51)};
   // Exercise binary64 rounding in the overlap path, including values near
   // the fast-path bound. Small SADs alone cannot detect conversion differences.

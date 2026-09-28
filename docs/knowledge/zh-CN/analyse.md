@@ -314,7 +314,7 @@ $$d_x=2(i\bmod2)-1,\quad d_y=2(t\bmod2)-1,\quad A=(\lfloor i/2\rfloor,\lfloor t/
 
 $$a_x=\begin{cases}3B_x-2O_x&d_x>0\\3B_x-4O_x&d_x<0\end{cases},\qquad b'_x=4s_x-a_x,$$
 
-Y 方向同理。四个权重为 `ax·ay,b'x·ay,ax·b'y,b'x·b'y`。对每个分量，包括旧误差，先做精确整数加权和，转换为 binary64，再乘以单独舍入的 `1/(sx·sy)`，最后向零取整得到分子。这条路径不再给误差加 8。
+Y 方向同理。四个权重为 `ax·ay,b'x·ay,ax·b'y,b'x·b'y`。对每个分量，包括旧误差，先做精确整数加权和，再用向零取整的精确整数除法除以 `sx·sy` 得到分子。以 8×8 块、重叠 1 为例，父层 X 均为 `1,1,1,1` 时 U=16·49/49=16，`pP=p` 时预测 X 为 2；若改用 binary64 倒数相乘会截断成 15。这条路径不再给误差加 8。
 
 记父层与当前层的向量倍率为 `pP,p`，令 `r=3-log2(p)+log2(pP)`。每个预测坐标为：
 

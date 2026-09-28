@@ -1,5 +1,7 @@
 #include "core/motion/prediction.hpp"
 
+#include <array>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -82,6 +84,39 @@ void parent_interpolation() {
       const auto y = static_cast<int>(std::floor(double(ny) / 8));
       triple(interpolate_predictor(p, 1, 1, {8, 8, ox, oy, 1, 1}), x, y, ns / 16);
     }
+}
+
+void interpolation_exact_division() {
+  // Overlap divisors whose binary64 reciprocal satisfies n*fl(1/n) < 1 (49,
+  // 98, 196, 784, ...) cover the common blksize/8 overlap settings. A
+  // reciprocal product would truncate every exact multiple one unit low, so
+  // uniform parent motion v would predict 2v-1 instead of 2v.
+  for (const auto [bw, bh, ox, oy] : {std::array<int, 4>{8, 8, 1, 1},
+                                      {16, 8, 2, 1},
+                                      {16, 16, 2, 2},
+                                      {32, 32, 4, 4},
+                                      {64, 64, 8, 8},
+                                      {128, 128, 16, 16},
+                                      {24, 24, 10, 10}}) {
+    const std::int64_t n = std::int64_t(bw - ox) * (bh - oy);
+    CHECK(n * (1.0 / double(n)) < 1.0);
+    for (int v : {1, 2, 3, 5, 7, 100, -1, -7}) {
+      const MotionGrid uniform{3, 3, std::vector<MotionTriple>(9, {{v, -v}, std::int64_t(std::abs(v))})};
+      for (int pel : {1, 2, 4}) {
+        const PredictionInterpolationPlan plan(uniform, {bw, bh, ox, oy, 1, pel});
+        for (int y = 0; y < 6; ++y)
+          for (int x = 0; x < 6; ++x)
+            triple(plan(x, y), 2 * pel * v, -2 * pel * v, std::abs(v));
+      }
+    }
+  }
+  // Non-multiples still truncate toward zero, matching the spec example.
+  const MotionGrid mixed{2, 2, {{{1, -1}, 1}, {{2, -2}, 2}, {{3, -3}, 3}, {{4, -4}, 4}}};
+  const PredictionInterpolationPlan plan(mixed, {8, 8, 1, 1, 1, 1});
+  // Weights at parity (dx>0,dy>0): ax=ay=22, bx=by=6, so the X sum is
+  // 484*1+132*2+132*3+36*4=1288 and 1288/49=26.29 truncates to 26. Then
+  // floor(26/8)=3, floor(-26/8)=-4 and the error is floor(26/16)=1.
+  triple(plan(1, 1), 3, -4, 1);
 }
 
 void interpolation_parity() {
@@ -215,6 +250,7 @@ void invalid_and_overflow() {
 int main() {
   try {
     parent_interpolation();
+    interpolation_exact_division();
     interpolation_parity();
     interpolation_error_bounds();
     global_modes();

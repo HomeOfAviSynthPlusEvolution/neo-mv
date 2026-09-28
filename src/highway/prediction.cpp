@@ -72,7 +72,7 @@ void InterpolatePredictions(const MotionGrid& parent, PredictionGeometry geometr
       LoadTriples(d, b + p, cx, cy, ce);
       LoadTriples(d, b + p + 1, dx, dy, de);
       const auto valid_error = [&](auto v) {
-        return hn::And(hn::Ge(v, hn::Zero(d)), hn::Le(v, hn::Set(d, plan.error_limit())));
+        return hn::And(hn::Ge(v, hn::Zero(d)), hn::Le(v, hn::Set(d, plan.binary64_error_limit())));
       };
       bool safe =
           hn::AllTrue(d, hn::And(hn::And(valid_error(ae), valid_error(be)), hn::And(valid_error(ce), valid_error(de))));
@@ -86,7 +86,8 @@ void InterpolatePredictions(const MotionGrid& parent, PredictionGeometry geometr
           sum = hn::Add(sum, hn::Mul(vc, hn::Set(d, w[left + 2])));
           sum = hn::Add(sum, hn::Mul(vd, hn::Set(d, w[right + 2])));
           if (plan.overlap())
-            sum = hn::ConvertTo(d, hn::Mul(hn::ConvertTo(df, sum), hn::Set(df, plan.reciprocal())));
+            // Exact: the admitted sums are below 2^53 (see binary64_error_limit).
+            sum = hn::ConvertTo(d, hn::Div(hn::ConvertTo(df, sum), hn::Set(df, double(plan.divisor()))));
           else if (error)
             sum = hn::Add(sum, hn::Set(d, 8));
           sum = hn::ShiftRightSame(sum, error ? 4 : plan.shift());
