@@ -19,7 +19,7 @@ Here A+offset denotes a grid lookup, not adding to vector components. NxP,NyP mu
 
 With zero overlap, form each vector numerator U=9V1+3V2+3V3+V4. Form the SAD numerator with the same weights, then add 8.
 
-With overlap on either axis, let sx=Bx-Ox,sy=By-Oy, ax=3Bx-2Ox if dx>0 else 3Bx-4Ox, ay similarly, bx'=4sx-ax,by'=4sy-ay. Weights are ax*ay,bx'*ay,ax*by',bx'*by'. For each component, form the exact integer weighted sum; convert it to binary64, multiply by the separately rounded binary64 reciprocal 1/(sx*sy), and truncate toward zero to obtain its numerator. No extra 8 is added to SAD in this case.
+With overlap on either axis, let sx=Bx-Ox,sy=By-Oy, ax=3Bx-2Ox if dx>0 else 3Bx-4Ox, ay similarly, bx'=4sx-ax,by'=4sy-ay. Weights are ax*ay,bx'*ay,ax*by',bx'*by'. For each component, form the exact integer weighted sum and divide it by sx*sy with exact integer division truncating toward zero to obtain its numerator. Multiplying by a separately rounded binary64 reciprocal is not equivalent: when the sum is a multiple of sx*sy and fl(1/(sx*sy))*(sx*sy) rounds below one, as for sx*sy=49 or 196, the product truncates one unit low. No extra 8 is added to SAD in this case.
 
 Let r=3-log2(p)+log2(pP). Each child vector component is
 

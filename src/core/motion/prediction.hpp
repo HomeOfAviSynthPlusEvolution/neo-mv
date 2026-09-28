@@ -76,8 +76,9 @@ class PredictionInterpolationPlan {
   const MotionGrid& parent_;
   int shift_;
   bool overlap_;
-  double reciprocal_ = 1;
+  std::int64_t divisor_ = 1;
   std::int64_t error_limit_;
+  std::int64_t binary64_error_limit_;
   std::array<std::array<std::int64_t, 4>, 4> weights_{};
 public:
   PredictionInterpolationPlan(const MotionGrid& parent, PredictionGeometry g) : parent_(parent) {
@@ -90,10 +91,17 @@ public:
     overlap_ = g.overlap_x != 0 || g.overlap_y != 0;
     const std::int64_t sx = g.block_width - g.overlap_x, sy = g.block_height - g.overlap_y;
     if (overlap_)
-      reciprocal_ = 1.0 / double(sx * sy);
+      divisor_ = sx * sy;
     // All parities have the same total nonnegative weight. This bound also
     // reserves the no-overlap rounding bias, proving every partial sum safe.
     error_limit_ = (INT64_MAX - 8) / (overlap_ ? 16 * sx * sy : 16);
+    // A weighted sum below 2^53 converts to binary64 exactly, and truncating
+    // its correctly rounded quotient then equals integer division: a
+    // non-multiple lies at least 1/(sx*sy) from the next integer k while
+    // the quotient error is below k*2^-53 <= |sum|*2^-53/(sx*sy). Vector
+    // sums are at most 2^31*16*128*128 = 2^49, so only errors need this.
+    binary64_error_limit_ = overlap_ ? std::min(error_limit_, ((std::int64_t{1} << 53) - 1) / (16 * sx * sy))
+                                     : error_limit_;
     for (int y = 0; y < 2; ++y)
       for (int x = 0; x < 2; ++x) {
         auto& weights = weights_[2 * y + x];
@@ -108,8 +116,10 @@ public:
   }
   int shift() const { return shift_; }
   bool overlap() const { return overlap_; }
-  double reciprocal() const { return reciprocal_; }
+  std::int64_t divisor() const { return divisor_; }
   std::int64_t error_limit() const { return error_limit_; }
+  // Errors up to this bound may be divided in binary64 with the same result.
+  std::int64_t binary64_error_limit() const { return binary64_error_limit_; }
   const std::array<std::int64_t, 4>& weights(int parity) const { return weights_[parity]; }
   MotionTriple operator()(std::int32_t child_x, std::int32_t child_y) const {
     using namespace prediction_detail;
@@ -147,8 +157,11 @@ public:
         else
           sum = add(sum, weight(value, weights[n]));
       }
+      // Exact integer division truncates toward zero. A binary64 reciprocal
+      // product would lose one unit whenever sum is a multiple of sx*sy and
+      // fl(1/(sx*sy))*(sx*sy) rounds below one, which uniform motion hits.
       if (overlap_)
-        return truncate(double(sum) * reciprocal_);
+        return sum / divisor_;
       return component == 2 ? (safe_errors ? sum + 8 : add(sum, 8)) : sum;
     };
     // Supported pel ratios make the shift range from 1 through 5.

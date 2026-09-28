@@ -289,7 +289,7 @@ With overlap on either axis, derive weights from block spacing:
 
 $$a_x=\begin{cases}3B_x-2O_x&d_x>0\\3B_x-4O_x&d_x<0\end{cases},\qquad b'_x=4s_x-a_x.$$
 
-Define Y similarly. Weights are `ax·ay,b'x·ay,ax·b'y,b'x·b'y`. For each component, including inherited error, form the exact integer weighted sum, convert to binary64, multiply by separately rounded `1/(sx·sy)`, then truncate to obtain the numerator. This path does not add 8 to error.
+Define Y similarly. Weights are `ax·ay,b'x·ay,ax·b'y,b'x·b'y`. For each component, including inherited error, form the exact integer weighted sum, then divide by `sx·sy` with exact integer division truncating toward zero to obtain the numerator. With 8×8 blocks and overlap 1, uniform parent X `1,1,1,1` gives U=16·49/49=16 exactly, so predicted X is 2 with `pP=p`; a binary64 reciprocal product would truncate this to 15. This path does not add 8 to error.
 
 For parent/current pel factors pP, p, set `r=3-log2(p)+log2(pP)`. Each predicted coordinate becomes:
 
