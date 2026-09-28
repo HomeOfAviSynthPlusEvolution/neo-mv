@@ -1,6 +1,7 @@
 #include "plugin/bridges.hpp"
 #include "neo_mv_version.hpp"
 #include <dualsynth/vapoursynth/video_bridge.hpp>
+#include <climits>
 
 namespace neo_mv::ds2 {
 namespace {
@@ -60,7 +61,9 @@ void VS_CC many(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* a
   try {
     check_prefix(in, api);
     const int radius = integer(in, "radius", 1, api), step = integer(in, "delta", 1, api);
-    require(radius > 0 && step > 0 && radius <= INT32_MAX / 2 && std::int64_t(radius) * step <= INT32_MAX,
+    // Match the AviSynth entry: reject absurd radii before building 2*radius
+    // argument maps, which would otherwise stall or exhaust memory first.
+    require(radius > 0 && step > 0 && radius <= SHRT_MAX / 2 && std::int64_t(radius) * step <= INT32_MAX,
             "invalid AnalyseMany radius or delta product");
     std::vector<MapOwner> owners;
     std::vector<const VSMap*> calls;

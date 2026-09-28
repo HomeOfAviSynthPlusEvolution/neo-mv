@@ -39,7 +39,7 @@ Brackets here mark optional arguments, not a literal array. Use named optional a
 | `fields` | Boolean | `false` | Enable field-aware calculations. This does not separate interlaced frames into fields. |
 | `tff` | Boolean | Omitted | Explicit first-frame top-field flag; parity alternates with frame index. Omitted: read required `_Field` properties. |
 | `metric` | String | `"sad"` | Luma matching metric: pure SAD/SATD/DCT or local/global mixtures; chroma remains SAD. See restrictions below. |
-| `radius` | Integer | `1` | AnalyseMany only: positive pair count. delta must also be positive and radius×delta must fit signed int32. |
+| `radius` | Integer | `1` | AnalyseMany only: positive pair count, at most 16383. delta must also be positive and radius×delta must fit signed int32. |
 | `prefix` | String | `"MVUtensils"` | Property-name prefix. Match all producers and consumers. Empty is allowed; NUL is not. |
 | `metric_weight` | Float | `0.5` | Transform contribution after a local trigger; [0,1], precision 1/65536. |
 | `metric_threshold` | Float | `0.03125` | Local relative luma-sum change threshold; [0,1], precision 1/65536. |
@@ -106,7 +106,7 @@ return result[0]
 
 ## Restrictions and common errors
 
-radius and delta must be positive and their product must fit int32. The array must fit the host; the AviSynth entry additionally limits radius to 16383. Any member creation failure fails the entire call. Member frame boundaries are handled independently.
+radius and delta must be positive, radius must not exceed 16383, and their product must fit int32. The array must fit the host. Any member creation failure fails the entire call. Member frame boundaries are handled independently.
 
 ## Computation
 
