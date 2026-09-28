@@ -149,7 +149,7 @@ return result
 
 ## Restrictions and common errors
 
-Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires pel>1 and required parity; SATD rejects 6×6 and 16×2; DCT and mixed modes reject float32, and unknown or wrongly cased metric strings are errors. Changed frame metadata or nonfinite calculations fail at evaluation.
+Missing Super data, invalid block geometry/enums, delta=0, nonpositive pelsearch, or no usable levels fail at creation. The complete search sampling domain must fit valid Super support. Field mode requires readable parity (explicit `tff` or `_Field`) and accepts any pel; the vertical half-pixel shift only applies with pel>1 and odd delta, otherwise the shift is zero. SATD rejects 6×6 and 16×2; DCT and mixed modes reject float32, and unknown or wrongly cased metric strings are errors. Changed frame metadata or nonfinite calculations fail at evaluation.
 
 ## Computation
 
