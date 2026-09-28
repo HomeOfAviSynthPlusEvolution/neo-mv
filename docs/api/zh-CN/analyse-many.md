@@ -39,7 +39,7 @@ AnalyseMany(super [, blksize, levels, search, searchparam, pelsearch, mvlambda, 
 | `fields` | 布尔 | `false` | 启用场模式计算；不会自动将交错帧分离成场。 |
 | `tff` | 布尔 | 省略 | 显式指定第 0 帧是否为顶场，随后按帧号交替；省略时读取所需帧的 `_Field` 属性。 |
 | `metric` | 字符串 | `"sad"` | 亮度匹配度量：纯 SAD/SATD/DCT 或局部/全局混合模式；色度仍使用 SAD。限制见下文。 |
-| `radius` | 整数 | `1` | 仅 AnalyseMany：正的矢量对数；delta 也必须为正，radius×delta 须可由有符号 int32 表示。 |
+| `radius` | 整数 | `1` | 仅 AnalyseMany：正的矢量对数，最大 16383；delta 也必须为正，radius×delta 须可由有符号 int32 表示。 |
 | `prefix` | 字符串 | `"MVUtensils"` | 属性名前缀，生成和读取数据时须一致。允许空字符串，不允许 NUL。 |
 | `metric_weight` | 浮点数 | `0.5` | local 触发后变换误差所占比例，[0,1]，精度 1/65536。 |
 | `metric_threshold` | 浮点数 | `0.03125` | local 相对亮度和变化门限，[0,1]，精度 1/65536。 |
@@ -106,7 +106,7 @@ return result[0]
 
 ## 限制与常见错误
 
-radius、delta 必须为正，其乘积须能由 int32 表示，数组长度须可由宿主表示；AviSynth 入口另限制 radius 不超过 16383。任一成员创建失败会使整次调用失败，各成员独立处理参考越界。
+radius、delta 必须为正，radius 不超过 16383，其乘积须能由 int32 表示，数组长度须可由宿主表示。任一成员创建失败会使整次调用失败，各成员独立处理参考越界。
 
 ## 计算原理
 

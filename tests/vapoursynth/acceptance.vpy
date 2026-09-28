@@ -174,6 +174,7 @@ for node, n, future in futures:
     assert analysis(future.result()) == analysis(node.get_frame(n))
 fails(lambda: mv.AnalyseMany(s, radius=0))
 fails(lambda: mv.AnalyseMany(s, radius=2**31 - 1, delta=2))
+fails(lambda: mv.AnalyseMany(s, radius=16384))
 
 # Recalculate clamped references, metadata-only input and saved delta.
 old = mv.Analyse(s, delta=-1)

@@ -35,7 +35,7 @@ At frame 0, positive members still analyze frames 2, 4, 6. Negative references a
 
 | Parameter | Default and constraints | Role |
 | --- | --- | --- |
-| `radius` | 1; positive after int32 saturation | Creates `2R` members; precedes `prefix` in the interface |
+| `radius` | 1; positive and at most 16383 after int32 saturation | Creates `2R` members; precedes `prefix` in the interface |
 | `delta` | 1; positive after int32 saturation | Distance increment |
 | Other parameters | Same as [Analyse](analyse.md) | Passed unchanged, including omission state |
 
