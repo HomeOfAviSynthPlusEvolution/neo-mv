@@ -80,6 +80,8 @@ inline ds::FilterDescriptor descriptor(Operation op) {
     add("metric_weight", P::Float);
     add("metric_threshold", P::Float);
   }
+  if (op == Operation::Recalculate)
+    add("multipredict", P::Boolean);
   return d;
 }
 inline constexpr char super_signature[] =
@@ -98,7 +100,7 @@ inline constexpr char many_signature[] = NEO_MV_ANALYSE_PARAMETERS "radius:int:o
 inline constexpr char recalculate_signature[] =
     "super:vnode;vectors:vnode[];thsad:int:opt;smooth:int:opt;blksize:int[]:opt:empty;search:int:opt;searchparam:int:"
     "opt;mvlambda:int:opt;chroma:int:opt;pnew:int:opt;overlap:int[]:opt:empty;meander:int:opt;fields:int:opt;tff:int:"
-    "opt;metric:data:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
+    "opt;metric:data:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;multipredict:int:opt;";
 inline constexpr char scene_signature[] = "clip:vnode;vectors:vnode;thscd1:int:opt;thscd2:float:opt;prefix:data:opt;";
 template <Operation Op>
 struct Bridge {

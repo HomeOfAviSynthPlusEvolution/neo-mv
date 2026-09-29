@@ -9,6 +9,7 @@ struct RecalculateControls {
   std::int32_t thsad = 200, mvlambda = 1000, search = 2, searchparam = 2, pnew = 25;
   bool smooth = true, meander = true;
   MetricConfig metric{};
+  bool multipredict = false;
 };
 
 namespace recalculate_detail {
@@ -90,14 +91,25 @@ MotionGrid recalculate_vectors(const AnalysisField& old, const AnalysisMetadata&
       const auto omega = analysis_domain(target, block);
       const auto u = recalculate_detail::map(old, target, bx, by, omega, controls.smooth);
       const auto search = [&](auto& evaluate) {
-        const auto error = evaluate(u);
-        SearchResult result{u, error.raw, error.raw};
+        auto predictor = u;
+        auto error = evaluate(predictor);
+        if (controls.multipredict) {
+          const auto alternate = recalculate_detail::map(old, target, bx, by, omega, !controls.smooth);
+          if (alternate.x != predictor.x || alternate.y != predictor.y) {
+            const auto candidate = evaluate(alternate);
+            if (candidate.raw < error.raw) {
+              predictor = alternate;
+              error = candidate;
+            }
+          }
+        }
+        SearchResult result{predictor, error.raw, error.raw};
         if (error.raw > threshold) {
           const auto lambda = by == 0 ? 0 : lambda0 / (target.pel * target.pel);
           // Recalculate's short searches use the full metric path; bounded
           // metric dispatch costs more than it saves here.
           result = refine_motion(
-              result, {u, lambda, controls.pnew, omega, controls.search, std::max(1, controls.searchparam), {}},
+              result, {predictor, lambda, controls.pnew, omega, controls.search, std::max(1, controls.searchparam), {}},
               [&](MotionVector vector) { return evaluate(vector); });
         }
         return result;

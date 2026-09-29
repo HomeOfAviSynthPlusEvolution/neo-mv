@@ -191,6 +191,7 @@ struct RecalculateRuntime final : Runtime {
     controls.searchparam = args.integer("searchparam", 2);
     controls.pnew = args.integer("pnew", 25);
     controls.smooth = args.boolean("smooth", true);
+    controls.multipredict = args.boolean("multipredict", false);
     controls.metric = motion_metric(args);
     controls.meander = args.boolean("meander", true);
     require(controls.mvlambda >= 0 && controls.search >= 0 && controls.search <= 5 && controls.pnew >= 0 &&

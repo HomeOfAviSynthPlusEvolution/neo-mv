@@ -121,12 +121,51 @@ void metrics_and_admission() {
   mismatch.grid.values.back().error = -1;
   rejects<std::invalid_argument>([&] { recalculate_vectors(mismatch, f.metadata, f.geometry, f.frames, controls); });
 }
+
+template <class T>
+void multiple_predictions() {
+  MotionFixture<T> input(32, 8, 8, 8, 8), target(32, 8, 16, 8, 8);
+  auto old = input.old_field();
+  old.grid.values[1].vector.x = 4; // first target: linear=2, nearest=4
+  const auto extent = target.geometry.planes[0].current;
+  for (int shift : {2, 4}) {
+    for (int y = 0; y < extent.height; ++y)
+      for (int x = 0; x < extent.width; ++x) {
+        const auto i = std::size_t(y) * (extent.width + 1) + x;
+        target.source[0][i] = T(x * 3);
+        target.reference[0][0][i] = T(std::max(0, x - shift) * 3);
+      }
+    for (bool smooth : {false, true}) {
+      RecalculateControls controls;
+      controls.smooth = smooth;
+      controls.thsad = INT32_MAX; // selection must also happen below thsad
+      auto run = [&] { return recalculate_vectors(old, target.metadata, target.geometry, target.frames, controls); };
+      CHECK(run().values[0].vector.x == (smooth ? 2 : 4));
+      controls.multipredict = true;
+      auto result = run();
+      CHECK(result.values[0].vector.x == shift && result.values[0].error == 0);
+      controls.thsad = 0;
+      CHECK(run().values[0].vector.x == shift);
+    }
+  }
+  std::fill(target.source[0].begin(), target.source[0].end(), T(0));
+  std::fill(target.reference[0][0].begin(), target.reference[0][0].end(), T(0));
+  RecalculateControls controls;
+  controls.multipredict = true;
+  for (bool smooth : {false, true}) {
+    controls.smooth = smooth;
+    const auto result = recalculate_vectors(old, target.metadata, target.geometry, target.frames, controls);
+    CHECK(result.values[0].vector.x == (smooth ? 2 : 4)); // tie preserves smooth
+  }
+}
 } // namespace
 int main() {
   try {
     mapping();
     actual_pixels();
     metrics_and_admission();
+    multiple_predictions<std::uint8_t>();
+    multiple_predictions<std::uint16_t>();
     std::cout << "Scalar Recalculate checks passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
