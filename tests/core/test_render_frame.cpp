@@ -254,6 +254,76 @@ void chroma_and_precision(int bits) {
   for (int k = 0; k < 3; ++k)
     constant(shifted, k, T(41)); // Negative odd chroma vectors use floor, not truncation.
 }
+template <class T>
+void refined_chroma(int bits) {
+  for (int pel : {1, 2, 4})
+    for (int ry : {1, 2}) {
+      SuperPlan<T> super({16, 16, 8, 8, 0, 0, 4, 4, 2, ry, pel, true}, bits);
+      RenderVideo video{16, 16, bits, true, 2, ry, 3};
+      auto a = super_analysis_metadata(super, -1, false), b = super_analysis_metadata(super, 1, false);
+      a.bits = b.bits = 8;
+      Image<T> centre(super, T(20)), reference(super, T(0));
+      for (std::size_t n = 0; n < reference.storage.size(); ++n) {
+        const int phase = int(n % (pel * pel));
+        auto view = reference.storage[n].view();
+        for (int y = 0; y < view.height(); ++y)
+          for (int x = 0; x < view.width(); ++x)
+            view.row(y)[x] = T(4 * x + 4 * y + 4 * (phase % pel + phase / pel) / pel);
+      }
+      for (int delta : {-1, 1, 2}) {
+        auto vectors = field(b);
+        for (auto& v : vectors.grid.values)
+          v.vector = {delta, delta};
+        CompensateParameters cp;
+        cp.chroma_subpel = true;
+        TestCompensate<T> plan(video, super, 3, b, 3, cp);
+        auto ref = reference.view();
+        auto result = plan.render(0, vectors, centre.pixels(), centre.view(), &ref);
+        const double exact = 4 * (2 + 4 / ry) + 4.0 * delta / pel * (0.5 + 1.0 / ry);
+        const T expected = std::is_floating_point_v<T> ? T(exact) : T(std::floor(exact + 0.5));
+        CHECK(result[1].view().row(0)[0] == expected);
+        CHECK(result[2].view().row(0)[0] == expected);
+        // Normalization retains 1/256 centre weight even with a zero centre coefficient.
+        DegrainParameters dp;
+        dp.chroma_subpel = true;
+        dp.weights = {0, 0, 1};
+        TestDegrain<T> degrain(video, super, 3, {a, b}, {3, 3}, dp);
+        auto denoised = degrain.render(1, {field(a), vectors}, centre.pixels(), centre.view(), {ref, ref});
+        const T blended = std::is_floating_point_v<T> ? T((20 + 255.0 * expected) / 256)
+                                                       : T((20 + 255 * int(expected) + 128) / 256);
+        CHECK(denoised[1].view().row(0)[0] == blended);
+        CHECK(denoised[2].view().row(0)[0] == blended);
+        // Plane selection must also reach the unpaired preparation path.
+        dp.planes = {false, true, false};
+        TestDegrain<T> u_only(video, super, 3, {a, b}, {3, 3}, dp);
+        auto u = u_only.render(1, {field(a), vectors}, centre.pixels(), centre.view(), {ref, ref});
+        CHECK(u[1].view().row(0)[0] == blended);
+        constant(u, 2, T(20));
+      }
+    }
+}
+void refined_chroma_edges() {
+  // A pel=4 phase at the last logical sample must not read into padding
+  // when refinement crosses back to phase zero on the next integer pixel.
+  RenderPhaseGeometry g{4, 2, 2, 0, 0};
+  SubpixelPhases<std::uint8_t> image;
+  image.pel = 4;
+  std::array<std::uint8_t, 16> samples{};
+  for (int phase = 0; phase < 16; ++phase) {
+    g.phases[phase] = {1, 1};
+    samples[phase] = std::uint8_t(phase * 4);
+    image.planes[phase] = span2d::Plane<const std::uint8_t>(&samples[phase], 1, 1, 1);
+  }
+  SampledRenderBlock<std::uint8_t> block{&samples[15], 1, nullptr};
+  std::vector<std::vector<std::uint8_t>> owned;
+  refine_chroma_block(block, owned, g, {0, 0, 2, 2}, {7, 7}, image);
+  CHECK(block.data[0] == 30); // Mean of phases 15, 12, 3, 0, all edge-clamped.
+  const auto* borrowed = &samples[15];
+  block.data = borrowed;
+  refine_chroma_block(block, owned, g, {0, 0, 2, 2}, {6, 6}, image);
+  CHECK(block.data == borrowed); // Aligned vectors allocate nothing and retain exact samples.
+  CHECK(owned.size() == 1);
+}
 struct CountingKernels : TestKernels<std::uint8_t> {
   inline static int calls = 0;
   static std::int64_t scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
@@ -292,6 +362,10 @@ int main() {
     admission_and_fields();
     degrain();
     scene_dispatch();
+    refined_chroma_edges();
+    refined_chroma<std::uint8_t>(8);
+    refined_chroma<std::uint16_t>(16);
+    refined_chroma<float>(32);
     chroma_and_precision<std::uint8_t>(8);
     chroma_and_precision<std::uint16_t>(16);
     chroma_and_precision<float>(32);

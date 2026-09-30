@@ -125,11 +125,11 @@ struct Bridge {
 
 inline constexpr char compensate_signature[] =
     "clip:vnode;super:vnode;vectors:vnode;thsad:int:opt;fields:int:opt;time:float:opt;thscd1:int:opt;"
-    "thscd2:float:opt;tff:int:opt;prefix:data:opt;";
+    "thscd2:float:opt;tff:int:opt;prefix:data:opt;chroma_subpel:int:opt;";
 inline constexpr char degrain_signature[] =
     "clip:vnode;super:vnode;vectors:vnode[];thsad:int[]:opt:empty;thsad2:int[]:opt:empty;"
     "planes:int[]:opt:empty;limit:float[]:opt:empty;thscd1:int:opt;thscd2:float:opt;weights:int[]:opt:empty;prefix:"
-    "data:opt;";
+    "data:opt;chroma_subpel:int:opt;";
 template <bool Degrain>
 struct RenderBridge : Bridge<Operation::Super> {
   using Core = RenderFilter<Degrain>;
@@ -161,6 +161,7 @@ struct RenderBridge : Bridge<Operation::Super> {
     else
       add("tff", P::Boolean);
     add("prefix", P::String);
+    add("chroma_subpel", P::Boolean);
     return d;
   }
 };

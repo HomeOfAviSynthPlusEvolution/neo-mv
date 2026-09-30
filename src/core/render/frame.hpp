@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kernels/render_scalar.hpp"
+#include "core/render/chroma_subpel.hpp"
 #include <cstring>
 #include <utility>
 
@@ -138,18 +139,21 @@ struct CompensateParameters {
   double time = 100, thscd2 = 51;
   bool fields = false;
   std::optional<bool> tff;
+  bool chroma_subpel = false;
 };
 template <class T, class Kernels = ScalarRenderKernels<T>>
 class CompensateFramePlan {
   RenderFramePlan<T> grid_;
   ReferenceAvailability availability_;
   CompensationRule rule_;
+  bool chroma_subpel_;
 
 public:
   CompensateFramePlan(RenderVideo clip, const SuperPlan<T>& super, std::int64_t super_frames, const AnalysisMetadata& m,
                       std::int64_t vector_frames, CompensateParameters p = {})
       : grid_(clip, super, super_frames, m, vector_frames, {true, true, true}),
-        availability_(m, clip.frames, p.thscd1, p.thscd2), rule_(m, p.thsad, p.time, p.fields, p.tff) {
+        availability_(m, clip.frames, p.thscd1, p.thscd2), rule_(m, p.thsad, p.time, p.fields, p.tff),
+        chroma_subpel_(p.chroma_subpel) {
     grid_.each_block([&](BlockRegion b, CandidateDomain domain, std::size_t) {
       for (int k = 0; k < grid_.plane_count(); ++k)
         rule_.admit(grid_.phase_geometry(k), b, domain);
@@ -207,6 +211,14 @@ public:
                                                                  field.grid, shift, current.planes[k],
                                                                  reference_image->planes[k], &decisions);
     }
+    std::vector<std::vector<T>> refined;
+    if (chroma_subpel_)
+      grid_.each_block([&](BlockRegion b, CandidateDomain, std::size_t index) {
+        const auto& chosen = decisions[index].selected;
+        for (int k = 1; k < grid_.plane_count(); ++k)
+          refine_chroma_block(blocks[k][index], refined, grid_.phase_geometry(k), b, chosen.displacement,
+                              chosen.reference ? reference_image->planes[k] : current.planes[k]);
+      });
     for (int k = 0; k < grid_.plane_count(); ++k)
       Kernels::compose_compensated(grid_.composition(k), blocks[k], output[k].view(), grid_.bits());
     return output;
@@ -220,6 +232,7 @@ struct DegrainParameters {
   std::vector<std::int64_t> weights; // Empty means omitted at this core boundary.
   std::int64_t thscd1 = 400;
   double thscd2 = 51;
+  bool chroma_subpel = false;
 };
 template <class T, class Kernels = ScalarRenderKernels<T>>
 class DegrainFramePlan {
@@ -227,6 +240,7 @@ class DegrainFramePlan {
   std::vector<ReferenceAvailability> availability_;
   DegrainWeightPlan weights_;
   std::array<ChangeLimit<T>, 2> limits_;
+  bool chroma_subpel_;
 
   static const AnalysisMetadata& first(const std::vector<AnalysisMetadata>& members) {
     validate_degrain_pairs(members);
@@ -240,7 +254,7 @@ public:
       : grid_(clip, super, super_frames, first(members), clip.frames, p.planes),
         weights_(members.front(), static_cast<int>(members.size() / 2), p.near, p.far,
                  p.weights.empty() ? std::vector<std::int64_t>(members.size() + 1, 1) : p.weights),
-        limits_{ChangeLimit<T>(p.limit[0], clip.bits), ChangeLimit<T>(p.limit[1], clip.bits)} {
+        limits_{ChangeLimit<T>(p.limit[0], clip.bits), ChangeLimit<T>(p.limit[1], clip.bits)}, chroma_subpel_(p.chroma_subpel) {
     if (vector_frames.size() != members.size())
       throw std::invalid_argument("Degrain member frame count mismatch");
     for (std::size_t i = 0; i < members.size(); ++i) {
@@ -292,6 +306,18 @@ public:
                                                       current.planes[k], images, weights_, k, nullptr);
       }
     }
+    std::vector<std::vector<T>> refined;
+    if (chroma_subpel_)
+      grid_.each_block([&](BlockRegion b, CandidateDomain, std::size_t index) {
+        for (int k = 1; k < grid_.plane_count(); ++k)
+          if (grid_.processed(k))
+            for (std::size_t r = 0; r < selected.size(); ++r)
+              if (selected[r]) {
+                const auto v = fields[r].grid.values[index].vector;
+                refine_chroma_block(prepared[k].sources[index * (selected.size() + 1) + r + 1], refined,
+                                    grid_.phase_geometry(k), b, {v.x, v.y}, images[r].planes[k]);
+              }
+      });
     for (int k = 0; k < grid_.plane_count(); ++k)
       if (grid_.processed(k)) {
         const auto g = grid_.phase_geometry(k);

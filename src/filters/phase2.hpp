@@ -24,7 +24,8 @@ inline CompensateParameters compensate_parameters(const ds::ParamValues& values)
           unwrap(values.get_double("time", 100)),
           unwrap(values.get_double("thscd2", 51)),
           p.boolean("fields", false),
-          p.tff()};
+          p.tff(),
+          p.boolean("chroma_subpel", false)};
 }
 template <class T>
 std::array<T, 2> render_pair(const std::vector<T>& values, std::array<T, 2> fallback) {
@@ -49,6 +50,7 @@ inline DegrainParameters degrain_parameters(const ds::ParamValues& values, std::
   require(p.weights.size() == members + 1, "Degrain weights requires 2R+1 elements");
   p.thscd1 = unwrap(values.get_int64("thscd1", 400));
   p.thscd2 = unwrap(values.get_double("thscd2", 51));
+  p.chroma_subpel = Params{values}.boolean("chroma_subpel", false);
   return p;
 }
 inline RenderVideo render_video(const ds::VideoInputInfo& in) {
