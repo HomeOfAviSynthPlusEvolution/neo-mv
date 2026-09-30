@@ -30,8 +30,9 @@ template <class Resampler = GridResamplingPlan>
 class DenseInterpolationPlan {
   std::array<AnalysisMetadata, 2> metadata_;
   DenseFlowPlan<Resampler> backward_, forward_;
-  Resampler masks_;
+  std::optional<Resampler> masks_;
   float f_;
+  int ratio_x_, ratio_y_;
   struct CachedMotion {
     std::array<std::vector<MotionVector>, 4> key;
     std::shared_ptr<const InterpolationMotionFields> fields;
@@ -99,24 +100,53 @@ class DenseInterpolationPlan {
       field_detail::vector(m, grid.values[i], static_cast<int>(i % m.blocks_x), static_cast<int>(i / m.blocks_x));
   }
   OverwriteVector<std::uint8_t> mask(const MotionGrid& grid, std::size_t direction, int time256) const {
+    const auto& m = metadata_[direction];
+    if (m.layout) {
+      // Compression of the triangular motion surface. Use physical luma
+      // coordinates for both chroma and luma; translation has zero response.
+      const auto& g = backward_.geometry();
+      OverwriteVector<std::uint8_t> output(dense_detail::count(g.width, g.height));
+      const auto motion = [&](double x, double y, int component) {
+        return staggered::triangle(m, x, y).sample([&](std::size_t i) {
+          return double(component ? grid.values[i].vector.y : grid.values[i].vector.x) / m.pel;
+        });
+      };
+      for (int y = 0; y < g.height; ++y)
+        for (int x = 0; x < g.width; ++x) {
+          const double px = (x + 0.5) * ratio_x_, py = (y + 0.5) * ratio_y_;
+          const double a = (motion(px + 0.5, py, 0) - motion(px - 0.5, py, 0));
+          const double d = (motion(px, py + 0.5, 1) - motion(px, py - 0.5, 1));
+          const double b = 0.5 * (motion(px, py + 0.5, 0) - motion(px, py - 0.5, 0) + motion(px + 0.5, py, 1) -
+                                  motion(px - 0.5, py, 1));
+          const double compression = std::max(0.0, (std::hypot(a - d, 2 * b) - a - d) * 0.5);
+          output[std::size_t(y) * g.width + x] = static_cast<std::uint8_t>(
+              std::lround(std::clamp(255.0 * 80 * f_ * compression * time256 / 256, 0.0, 255.0)));
+        }
+      return output;
+    }
     const auto small = OcclusionMaskPlan<std::uint8_t>(mask_metadata(metadata_[direction]), f_, 1, time256)
                            .template generate<true>(grid);
     const auto& g = backward_.geometry();
     OverwriteVector<std::uint8_t> output(dense_detail::count(g.width, g.height));
-    masks_.template resize<std::uint8_t, true>(dense_detail::plane(small.data(), g.blocks_x, g.blocks_y, small.size()),
-                                               dense_detail::plane(output.data(), g.width, g.height, output.size()), 8);
+    masks_->template resize<std::uint8_t, true>(dense_detail::plane(small.data(), g.blocks_x, g.blocks_y, small.size()),
+                                                dense_detail::plane(output.data(), g.width, g.height, output.size()),
+                                                8);
     return output;
   }
 
 public:
   DenseInterpolationPlan(AnalysisMetadata backward, AnalysisMetadata forward, int ratio_x, int ratio_y, double ml = 100)
       : metadata_{backward, forward}, backward_(backward, ratio_x, ratio_y), forward_(forward, ratio_x, ratio_y),
-        masks_(backward_.geometry()), f_(normalization(ml)) {
+        f_(normalization(ml)), ratio_x_(ratio_x), ratio_y_(ratio_y) {
     interpolation_detail::validate_pair_metadata(backward, forward);
+    if (!backward.layout)
+      masks_.emplace(backward_.geometry());
     // Validate all required constants at creation, including paths whose
     // eventual output falls back or whose interpolation time is an endpoint.
-    OcclusionMaskPlan<std::uint8_t>(mask_metadata(backward), f_, 1, 0);
-    OcclusionMaskPlan<std::uint8_t>(mask_metadata(forward), f_, 1, 0);
+    if (!backward.layout) {
+      OcclusionMaskPlan<std::uint8_t>(mask_metadata(backward), f_, 1, 0);
+      OcclusionMaskPlan<std::uint8_t>(mask_metadata(forward), f_, 1, 0);
+    }
   }
   const GridResamplingGeometry& geometry() const { return backward_.geometry(); }
   float normalization() const { return f_; }

@@ -36,7 +36,7 @@ class TypedTemporalRuntime final : public TemporalRuntime {
   static Plan make_plan(ds::VideoInitContext& ctx, const FrameSuper<T>& super, const std::string& prefix) {
     std::array<AnalysisMetadata, 2> descriptors;
     for (int k = 0; k < 2; ++k) {
-      const auto f = read_field(frame(*ctx.frames, k + 2, 0), prefix, false);
+      const auto f = read_field(frame(*ctx.frames, k + 2, 0), prefix, false, Kind == TemporalKind::FPS);
       require(f.state != FieldState::invalid_metadata, "invalid temporal creation analysis metadata");
       descriptors[k] = f.metadata;
     }
@@ -137,8 +137,8 @@ public:
     if (r.stage == 1) {
       if (r.endpoint || !plan_.input().in_range(r.left, r.right))
         return request_fallback(ctx, r);
-      r.B = read_field(frame(ctx.frames, 2, static_cast<int>(r.left)), prefix_);
-      r.F = read_field(frame(ctx.frames, 3, static_cast<int>(r.right)), prefix_);
+      r.B = read_field(frame(ctx.frames, 2, static_cast<int>(r.left)), prefix_, true, Kind == TemporalKind::FPS);
+      r.F = read_field(frame(ctx.frames, 3, static_cast<int>(r.right)), prefix_, true, Kind == TemporalKind::FPS);
       r.motion = plan_.main_eligible(r.B, r.F);
       if (!r.motion)
         return request_fallback(ctx, r);
@@ -151,8 +151,8 @@ public:
       return request_images(ctx, r);
     }
     if (r.stage == 2) {
-      r.BB = read_field(frame(ctx.frames, 2, static_cast<int>(r.right)), prefix_);
-      r.FF = read_field(frame(ctx.frames, 3, static_cast<int>(r.left)), prefix_);
+      r.BB = read_field(frame(ctx.frames, 2, static_cast<int>(r.right)), prefix_, true, Kind == TemporalKind::FPS);
+      r.FF = read_field(frame(ctx.frames, 3, static_cast<int>(r.left)), prefix_, true, Kind == TemporalKind::FPS);
       r.extra = plan_.extra_eligible(r.BB, r.FF);
       return request_images(ctx, r);
     }

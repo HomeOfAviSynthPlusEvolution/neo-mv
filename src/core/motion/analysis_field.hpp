@@ -12,6 +12,7 @@ struct AnalysisMetadata {
   bool chroma = false;
   std::int32_t ratio_x = 0, ratio_y = 0, block_width = 0, block_height = 0;
   std::int32_t overlap_x = 0, overlap_y = 0, blocks_x = 0, blocks_y = 0, delta = 0, bits = 0;
+  std::int32_t layout = 0; // 0: rectangular, 1: staggered rectangle, 2: staggered hexagon
 };
 enum class FieldState { invalid_metadata, metadata_only, complete };
 struct AnalysisField {
@@ -53,7 +54,8 @@ inline constexpr Scalar scalars[] = {{"AnalysisWidth", &AnalysisMetadata::width}
                                      {"AnalysisNBlkX", &AnalysisMetadata::blocks_x},
                                      {"AnalysisNBlkY", &AnalysisMetadata::blocks_y},
                                      {"AnalysisDeltaFrame", &AnalysisMetadata::delta},
-                                     {"AnalysisBitsPerSample", &AnalysisMetadata::bits}};
+                                     {"AnalysisBitsPerSample", &AnalysisMetadata::bits},
+                                     {"AnalysisLayout", &AnalysisMetadata::layout}};
 inline std::int64_t scalar(IntegerPropertyView view) {
   if (!view.integer || view.count == 0)
     return 0;
@@ -65,7 +67,8 @@ inline std::uint64_t count(const AnalysisMetadata& m) {
   return std::uint64_t(m.blocks_x) * m.blocks_y;
 }
 inline CandidateDomain bounds(const AnalysisMetadata& m, int bx, int by) {
-  const auto x = std::int64_t(m.pad_x) + std::int64_t(bx) * (m.block_width - m.overlap_x);
+  const auto x = std::int64_t(m.pad_x) + std::int64_t(bx) * (m.block_width - m.overlap_x) +
+                 (m.layout && (by & 1) ? m.block_width / 2 : 0);
   const auto y = std::int64_t(m.pad_y) + std::int64_t(by) * (m.block_height - m.overlap_y);
   return {prediction_detail::weight(-x, m.pel), prediction_detail::weight(-y, m.pel),
           prediction_detail::weight(std::int64_t(m.width) + 2 * std::int64_t(m.pad_x) - x - m.block_width, m.pel),
@@ -88,6 +91,12 @@ inline bool valid_analysis_metadata(const AnalysisMetadata& m) {
       m.block_height < 2 || m.overlap_x < 0 || m.overlap_y < 0 || m.overlap_x > m.block_width / 2 ||
       m.overlap_y > m.block_height / 2 || m.blocks_x <= 0 || m.blocks_y <= 0 ||
       !((m.bits >= 8 && m.bits <= 16) || m.bits == 32))
+    return false;
+  if (m.layout < 0 || m.layout > 2)
+    return false;
+  if (m.layout && (m.block_width % 4 || m.block_height % 8 || m.overlap_x != 0 || m.overlap_y != m.block_height / 4 ||
+                   std::int64_t(m.blocks_x) * m.block_width + m.block_width / 2 > m.width ||
+                   std::int64_t(m.blocks_y - 1) * (m.block_height - m.overlap_y) + m.block_height > m.height))
     return false;
   // All endpoint expressions are monotone in the block indices. Check both
   // extremes before inspecting arrays, even for a metadata-only read.

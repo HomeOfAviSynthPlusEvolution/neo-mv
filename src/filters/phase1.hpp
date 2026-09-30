@@ -79,6 +79,7 @@ struct SuperRuntime final : Runtime {
 };
 inline AnalyseControls analyse_controls(Params p, int pel) {
   AnalyseControls c;
+  c.layout = p.integer("layout", 0);
   c.levels = p.integer("levels", 0);
   c.search = p.integer("search", 2);
   c.searchparam = p.integer("searchparam", 2);

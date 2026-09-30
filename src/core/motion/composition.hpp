@@ -44,7 +44,8 @@ inline void validate_owned_field(const AnalysisField& field) {
 inline BlockRegion analysis_block(const AnalysisMetadata& m, int bx, int by) {
   if (bx < 0 || bx >= m.blocks_x || by < 0 || by >= m.blocks_y)
     throw std::invalid_argument("analysis block index outside grid");
-  return {prediction_detail::coordinate(std::int64_t(bx) * (m.block_width - m.overlap_x)),
+  return {prediction_detail::coordinate(std::int64_t(bx) * (m.block_width - m.overlap_x) +
+                                        (m.layout && (by & 1) ? m.block_width / 2 : 0)),
           prediction_detail::coordinate(std::int64_t(by) * (m.block_height - m.overlap_y)), m.block_width,
           m.block_height};
 }
@@ -71,9 +72,9 @@ inline void validate_motion_layer(const AnalysisMetadata& m, const SamplingGeome
   const auto sx = m.block_width - m.overlap_x, sy = m.block_height - m.overlap_y;
   const auto cover_x = std::int64_t(m.blocks_x) * sx + m.overlap_x;
   const auto cover_y = std::int64_t(m.blocks_y) * sy + m.overlap_y;
-  if (cover_x > m.width || cover_y > m.height ||
-      (finest && (m.blocks_x != (std::int64_t(m.real_width) - m.overlap_x + sx - 1) / sx ||
-                  m.blocks_y != (std::int64_t(m.real_height) - m.overlap_y + sy - 1) / sy)))
+  if (!m.layout && (cover_x > m.width || cover_y > m.height ||
+                    (finest && (m.blocks_x != (std::int64_t(m.real_width) - m.overlap_x + sx - 1) / sx ||
+                                m.blocks_y != (std::int64_t(m.real_height) - m.overlap_y + sy - 1) / sy))))
     throw std::invalid_argument("motion grid does not fit working geometry");
   if (field_detail::count(m) > std::vector<MotionTriple>{}.max_size())
     throw std::overflow_error("motion grid allocation size is unrepresentable");

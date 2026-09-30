@@ -2,10 +2,12 @@
 
 #include "core/motion/composition.hpp"
 #include "core/motion/metric_evaluator.hpp"
+#include "core/motion/staggered.hpp"
 
 namespace neo_mv {
 
 struct AnalyseControls {
+  std::int32_t layout = 0;
   std::int32_t levels = 0, search = 2, searchparam = 2, pelsearch = 1;
   std::int32_t mvlambda = 1000, lsad = 400, plevel = 1;
   std::int32_t pnew = 25, pzero = 25, pglobal = 0, badsad = 10000, badrange = 24, trymany = 0;
@@ -19,6 +21,10 @@ struct AnalysisLayer {
 };
 
 inline void validate_analyse_controls(AnalyseControls c, int block_width, int block_height) {
+  if (c.layout < 0 || c.layout > 2 ||
+      (c.layout && (block_width % 4 || block_height % 8 || c.metric.mode != MotionMetric::sad || c.fields)))
+    throw std::invalid_argument(
+        "staggered layout requires width divisible by 4, height by 8, SAD and progressive frames");
   if (c.search < 0 || c.search > 5 || c.pelsearch <= 0 || c.mvlambda < 0 || c.plevel < 0 || c.plevel > 2 ||
       c.pnew < 0 || c.pnew > 256 || c.pzero < 0 || c.pzero > 256 || c.pglobal < 0 || c.pglobal > 256 || c.trymany < 0 ||
       c.trymany > 2)
@@ -37,9 +43,20 @@ inline std::vector<AnalysisLayer> plan_analysis(AnalysisMetadata finest, const s
       finest.overlap_y < 0 || finest.overlap_x > finest.block_width / 2 || finest.overlap_y > finest.block_height / 2 ||
       super.empty() || super.size() > INT32_MAX || finest.delta == 0)
     throw std::invalid_argument("invalid analysis planning inputs");
+  finest.layout = controls.layout;
+  if (finest.layout) {
+    if (finest.width < finest.block_width + finest.block_width / 2 || finest.height < finest.block_height)
+      throw std::invalid_argument("working image is too small for staggered blocks");
+    finest.overlap_x = 0;
+    finest.overlap_y = finest.block_height / 4;
+  }
   const int sx = finest.block_width - finest.overlap_x, sy = finest.block_height - finest.overlap_y;
   finest.blocks_x = geometry_detail::dimension((std::int64_t(finest.real_width) - finest.overlap_x + sx - 1) / sx);
   finest.blocks_y = geometry_detail::dimension((std::int64_t(finest.real_height) - finest.overlap_y + sy - 1) / sy);
+  if (finest.layout) {
+    finest.blocks_x = (finest.width - finest.block_width / 2) / finest.block_width;
+    finest.blocks_y = finest.height < finest.block_height ? 0 : (finest.height - finest.block_height) / sy + 1;
+  }
   finest.levels = 1;
   if (!valid_analysis_metadata(finest))
     throw std::invalid_argument("invalid finest analysis geometry");
@@ -48,7 +65,7 @@ inline std::vector<AnalysisLayer> plan_analysis(AnalysisMetadata finest, const s
   for (;;) {
     w = geometry_detail::reduced(w, finest.ratio_x, finest.pad_x);
     h = geometry_detail::reduced(h, finest.ratio_y, finest.pad_y);
-    if (w < finest.block_width || h < finest.block_height)
+    if (w < finest.block_width + (finest.layout ? finest.block_width / 2 : 0) || h < finest.block_height)
       break;
     ++reductions;
   }
@@ -76,8 +93,15 @@ inline std::vector<AnalysisLayer> plan_analysis(AnalysisMetadata finest, const s
       m.real_width = m.width;
       m.real_height = m.height;
     }
-    m.blocks_x = geometry_detail::dimension((covered_x - m.overlap_x) / sx);
-    m.blocks_y = geometry_detail::dimension((covered_y - m.overlap_y) / sy);
+    if (m.layout) {
+      if (m.width < m.block_width + m.block_width / 2 || m.height < m.block_height)
+        break;
+      m.blocks_x = (m.width - m.block_width / 2) / m.block_width;
+      m.blocks_y = (m.height - m.block_height) / sy + 1;
+    } else {
+      m.blocks_x = geometry_detail::dimension((covered_x - m.overlap_x) / sx);
+      m.blocks_y = geometry_detail::dimension((covered_y - m.overlap_y) / sy);
+    }
     if (l == 0 && controls.fields && m.pel > 1 && m.delta % 2 != 0)
       validate_motion_layer(m, g, true, {{0, 0}, {0, -m.pel / 2}, {0, m.pel / 2}}, hp, vp);
     else
@@ -88,6 +112,9 @@ inline std::vector<AnalysisLayer> plan_analysis(AnalysisMetadata finest, const s
     hp /= 2;
     vp /= 2;
   }
+  if (finest.layout)
+    for (auto& layer : result)
+      layer.metadata.levels = static_cast<int>(result.size());
   return result;
 }
 
@@ -167,7 +194,22 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
     const int f = index == 0 ? field_shift : 0;
     MotionGrid current{m.blocks_x, m.blocks_y, {}};
     current.values.resize(static_cast<std::size_t>(field_detail::count(m)));
-    if (!coarsest) {
+    if (!coarsest && m.layout) {
+      const auto& pm = layers[index + 1].metadata;
+      for (int y = 0; y < m.blocks_y; ++y)
+        for (int x = 0; x < m.blocks_x; ++x) {
+          const auto b = analysis_block(m, x, y);
+          const auto t = staggered::triangle(pm, (b.x + m.block_width / 2.0) / 2, (b.y + m.block_height / 2.0) / 2);
+          auto& v = current.values[std::size_t(y) * m.blocks_x + x];
+          const double scale = 2.0 * m.pel / parent_pel;
+          v.vector = {prediction_detail::coordinate(
+                          std::llround(t.sample([&](std::size_t i) { return parent.values[i].vector.x; }) * scale)),
+                      prediction_detail::coordinate(
+                          std::llround(t.sample([&](std::size_t i) { return parent.values[i].vector.y; }) * scale))};
+          v.error =
+              prediction_detail::truncate(t.sample([&](std::size_t i) { return double(parent.values[i].error); }));
+        }
+    } else if (!coarsest) {
       Kernels::interpolate_predictions(
           parent, {m.block_width, m.block_height, m.overlap_x, m.overlap_y, parent_pel, m.pel}, current);
     }
@@ -186,14 +228,25 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         const int x = direction == 1 ? i : m.blocks_x - 1 - i;
         const auto block = analysis_block(m, x, y);
         const auto omega = analysis_domain(m, block, layer.bound_pad_x, layer.bound_pad_y);
-        const auto spatial = prediction_detail::spatial<true>(current, x, y, direction, f, global, omega);
+        const auto spatial = m.layout ? staggered::spatial(current, x, y, direction, f, global, omega)
+                                      : prediction_detail::spatial<true>(current, x, y, direction, f, global, omega);
         auto u = current.values[std::size_t(y) * m.blocks_x + x];
         u.vector = prediction_detail::clamp(u.vector, omega);
         if (coarsest)
           u = spatial.p[0];
         const auto lambda = adaptive_lambda(base, lsad, u.error);
-        const auto result = with_motion_evaluator<T, Kernels>(metric_plan, layer.sampling, block, frames[index],
-            prepared_frames, metric_scratch, m.bits, [&](auto& evaluate) {
+        if (m.layout) {
+          auto evaluate = [&](MotionVector v) {
+            return staggered::error(layer.sampling, block, frames[index], v, m.layout == 2);
+          };
+          const auto result = analyse_detail::block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
+                                                    badsad, controls, evaluate);
+          current.values[std::size_t(y) * m.blocks_x + x] = {result.vector, result.raw};
+          continue;
+        }
+        const auto result = with_motion_evaluator<T, Kernels>(
+            metric_plan, layer.sampling, block, frames[index], prepared_frames, metric_scratch, m.bits,
+            [&](auto& evaluate) {
               return analyse_detail::execute_block(u, spatial, {0, f}, omega, static_cast<int>(index), m.pel, lambda,
                                                    badsad, controls, evaluate, 0);
             });

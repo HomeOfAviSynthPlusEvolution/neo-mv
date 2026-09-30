@@ -58,6 +58,8 @@ RenderCoverage validate_render_geometry(const RenderVideo& clip, const SuperPlan
     throw std::invalid_argument("render blocks or overlap are not chroma aligned");
   const auto width = std::int64_t(m.blocks_x) * (m.block_width - m.overlap_x) + m.overlap_x;
   const auto height = std::int64_t(m.blocks_y) * (m.block_height - m.overlap_y) + m.overlap_y;
+  if (m.layout)
+    return {clip.width, clip.height};
   if (width < clip.width || width > m.width || height < clip.height || height > m.height)
     throw std::invalid_argument("render grid does not cover visible video within the working image");
   return {static_cast<std::int32_t>(width), static_cast<std::int32_t>(height)};

@@ -2,6 +2,7 @@
 
 #include "core/mask/grid_resampling.hpp"
 #include "core/motion/analysis_field.hpp"
+#include "core/motion/staggered.hpp"
 
 #include <vector>
 #include <optional>
@@ -32,7 +33,7 @@ inline GridResamplingGeometry geometry(const AnalysisMetadata& m, int ratio_x, i
     throw std::invalid_argument("dense flow geometry is not aligned to plane ratios");
   const auto width = std::int64_t(m.blocks_x) * (m.block_width - m.overlap_x) + m.overlap_x;
   const auto height = std::int64_t(m.blocks_y) * (m.block_height - m.overlap_y) + m.overlap_y;
-  if (width < m.real_width || width > m.width || height < m.real_height || height > m.height)
+  if (!m.layout && (width < m.real_width || width > m.width || height < m.real_height || height > m.height))
     throw std::invalid_argument("dense flow grid does not cover visible image within working image");
   return {m.blocks_x,
           m.blocks_y,
@@ -74,12 +75,15 @@ class DenseFlowPlan {
   AnalysisMetadata metadata_;
   int ratio_x_, ratio_y_;
   GridResamplingGeometry geometry_;
-  Resampler resampling_;
+  std::optional<Resampler> resampling_;
 
 public:
   DenseFlowPlan(AnalysisMetadata metadata, int ratio_x, int ratio_y)
       : metadata_(metadata), ratio_x_(ratio_x), ratio_y_(ratio_y),
-        geometry_(dense_detail::geometry(metadata, ratio_x, ratio_y)), resampling_(geometry_) {}
+        geometry_(dense_detail::geometry(metadata, ratio_x, ratio_y)) {
+    if (!metadata.layout)
+      resampling_.emplace(geometry_);
+  }
 
   const AnalysisMetadata& metadata() const { return metadata_; }
   const GridResamplingGeometry& geometry() const { return geometry_; }
@@ -121,9 +125,16 @@ public:
         dense_detail::plane(static_cast<const std::int16_t*>(small_x.data()), m.blocks_x, m.blocks_y, small_x.size());
     const auto y_input =
         dense_detail::plane(static_cast<const std::int16_t*>(small_y.data()), m.blocks_x, m.blocks_y, small_y.size());
-    resampling_.template resize<std::int16_t, true>(
+    if (m.layout) {
+      staggered::resize(m, x_input, dense_detail::plane(output.x.data(), output.width, output.height, output.x.size()),
+                        ratio_x_, ratio_y_);
+      staggered::resize(m, y_input, dense_detail::plane(output.y.data(), output.width, output.height, output.y.size()),
+                        ratio_x_, ratio_y_);
+      return output;
+    }
+    resampling_->template resize<std::int16_t, true>(
         x_input, dense_detail::plane(output.x.data(), output.width, output.height, output.x.size()), 16);
-    resampling_.template resize<std::int16_t, true>(
+    resampling_->template resize<std::int16_t, true>(
         y_input, dense_detail::plane(output.y.data(), output.width, output.height, output.y.size()), 16);
     return output;
   }

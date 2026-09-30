@@ -128,7 +128,8 @@ span2d::Plane<T> plane(const ds::MutablePlaneView& p) {
   return checked_plane(static_cast<T*>(p.data), p.width, p.height, p.stride_bytes,
                        std::numeric_limits<std::size_t>::max());
 }
-inline AnalysisField read_field(const ds::RequestedVideoFrame& frame, const std::string& prefix, bool vectors = true) {
+inline AnalysisField read_field(const ds::RequestedVideoFrame& frame, const std::string& prefix, bool vectors = true,
+                                bool staggered = false) {
   const auto& props = properties(frame.frame);
   std::map<std::string, std::vector<std::int64_t>> storage;
   auto read = [&](const std::string& key) -> IntegerPropertyView {
@@ -146,6 +147,7 @@ inline AnalysisField read_field(const ds::RequestedVideoFrame& frame, const std:
     return {true, info->count, found->second.data()};
   };
   auto metadata = read_analysis_field(read, false, prefix);
+  require(staggered || metadata.metadata.layout == 0, "staggered vectors currently require FlowFPS");
   if (!vectors || metadata.state == FieldState::invalid_metadata)
     return metadata;
   // Inspect both lengths before materializing either array, including arrays

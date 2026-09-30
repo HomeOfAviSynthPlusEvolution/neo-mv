@@ -80,6 +80,8 @@ inline ds::FilterDescriptor descriptor(Operation op) {
     add("metric_weight", P::Float);
     add("metric_threshold", P::Float);
   }
+  if (op == Operation::Analyse)
+    add("layout");
   return d;
 }
 inline constexpr char super_signature[] =
@@ -92,8 +94,10 @@ inline constexpr char super_signature[] =
   "opt;"                                                                                                               \
   "overlap:int[]:opt:empty;badsad:int:opt;badrange:int:opt;meander:int:opt;trymany:int:opt;fields:int:opt;tff:int:"    \
   "opt;metric:data:opt;"
-inline constexpr char analyse_signature[] = NEO_MV_ANALYSE_PARAMETERS "prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
-inline constexpr char many_signature[] = NEO_MV_ANALYSE_PARAMETERS "radius:int:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;";
+inline constexpr char analyse_signature[] =
+    NEO_MV_ANALYSE_PARAMETERS "prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;layout:int:opt;";
+inline constexpr char many_signature[] =
+    NEO_MV_ANALYSE_PARAMETERS "radius:int:opt;prefix:data:opt;metric_weight:float:opt;metric_threshold:float:opt;layout:int:opt;";
 #undef NEO_MV_ANALYSE_PARAMETERS
 inline constexpr char recalculate_signature[] =
     "super:vnode;vectors:vnode[];thsad:int:opt;smooth:int:opt;blksize:int[]:opt:empty;search:int:opt;searchparam:int:"
