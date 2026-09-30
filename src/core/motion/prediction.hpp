@@ -25,6 +25,8 @@ struct PredictionGeometry {
 struct SpatialPredictors {
   std::array<MotionTriple, 4> p;
   MotionVector global;
+  std::array<MotionVector, 4> parent{};
+  bool has_parent = false;
 };
 
 namespace prediction_detail {
@@ -80,6 +82,32 @@ class PredictionInterpolationPlan {
   std::int64_t error_limit_;
   std::int64_t binary64_error_limit_;
   std::array<std::array<std::int64_t, 4>, 4> weights_{};
+  struct Stencil {
+    std::array<MotionTriple, 4> values;
+    int parity;
+  };
+  Stencil stencil(std::int32_t child_x, std::int32_t child_y) const {
+    using namespace prediction_detail;
+    const auto xmax = 2 * std::int64_t(parent_.width) - 1, ymax = 2 * std::int64_t(parent_.height) - 1;
+    const auto i = std::clamp(std::int64_t(child_x), std::int64_t{0}, xmax);
+    const auto t = std::clamp(std::int64_t(child_y), std::int64_t{0}, ymax);
+    const int x = static_cast<int>(i / 2), y = static_cast<int>(t / 2);
+    const int dx = 2 * int(i % 2) - 1, dy = 2 * int(t % 2) - 1;
+    const bool edge_x = i == 0 || i == xmax, edge_y = t == 0 || t == ymax;
+    const auto a = at(parent_, x, y);
+    std::array<MotionTriple, 4> values;
+    if (edge_x && edge_y)
+      values = {a, a, a, a};
+    else if (edge_x) {
+      const auto b = at(parent_, x, y + dy);
+      values = {a, a, b, b};
+    } else if (edge_y) {
+      const auto b = at(parent_, x + dx, y);
+      values = {a, a, b, b};
+    } else
+      values = {a, at(parent_, x + dx, y), at(parent_, x, y + dy), at(parent_, x + dx, y + dy)};
+    return {values, 2 * int(dy > 0) + int(dx > 0)};
+  }
 public:
   PredictionInterpolationPlan(const MotionGrid& parent, PredictionGeometry g) : parent_(parent) {
     using namespace prediction_detail;
@@ -121,27 +149,30 @@ public:
   // Errors up to this bound may be divided in binary64 with the same result.
   std::int64_t binary64_error_limit() const { return binary64_error_limit_; }
   const std::array<std::int64_t, 4>& weights(int parity) const { return weights_[parity]; }
+  // Keep the surrounding parent vectors distinct at motion boundaries.
+  // Scale in int64 and clip before narrowing: an unused parent may lie far
+  // outside the child domain even when the interpolated predictor is valid.
+  std::array<MotionVector, 4> parent_vectors(std::int32_t child_x, std::int32_t child_y,
+                                           CandidateDomain omega, int field_shift = 0) const {
+    if (omega.left < INT32_MIN || omega.top < INT32_MIN || omega.right > std::int64_t(INT32_MAX) + 1 ||
+        omega.bottom > std::int64_t(INT32_MAX) + 1 || omega.left >= omega.right || omega.top >= omega.bottom)
+      throw std::invalid_argument("invalid parent predictor domain");
+    const auto sources = stencil(child_x, child_y);
+    std::array<MotionVector, 4> result;
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      const auto v = sources.values[i].vector;
+      const auto x = sampling_detail::floor_div(std::int64_t(v.x) * 16, 1 << shift_);
+      const auto y = sampling_detail::floor_div(std::int64_t(v.y) * 16, 1 << shift_) + field_shift;
+      result[i] = {static_cast<std::int32_t>(std::clamp(x, omega.left, omega.right - 1)),
+                   static_cast<std::int32_t>(std::clamp(y, omega.top, omega.bottom - 1))};
+    }
+    return result;
+  }
   MotionTriple operator()(std::int32_t child_x, std::int32_t child_y) const {
     using namespace prediction_detail;
-    const auto xmax = 2 * std::int64_t(parent_.width) - 1, ymax = 2 * std::int64_t(parent_.height) - 1;
-    const auto i = std::clamp(std::int64_t(child_x), std::int64_t{0}, xmax);
-    const auto t = std::clamp(std::int64_t(child_y), std::int64_t{0}, ymax);
-    const int x = static_cast<int>(i / 2), y = static_cast<int>(t / 2);
-    const int dx = 2 * int(i % 2) - 1, dy = 2 * int(t % 2) - 1;
-    const bool edge_x = i == 0 || i == xmax, edge_y = t == 0 || t == ymax;
-    const auto a = at(parent_, x, y);
-    std::array<MotionTriple, 4> values;
-    if (edge_x && edge_y)
-      values = {a, a, a, a};
-    else if (edge_x) {
-      const auto b = at(parent_, x, y + dy);
-      values = {a, a, b, b};
-    } else if (edge_y) {
-      const auto b = at(parent_, x + dx, y);
-      values = {a, a, b, b};
-    } else
-      values = {a, at(parent_, x + dx, y), at(parent_, x, y + dy), at(parent_, x + dx, y + dy)};
-    const auto& weights = weights_[2 * int(dy > 0) + int(dx > 0)];
+    const auto sources = stencil(child_x, child_y);
+    const auto& values = sources.values;
+    const auto& weights = weights_[sources.parity];
     const bool safe_errors = std::max({values[0].error, values[1].error, values[2].error, values[3].error}) <=
                              error_limit_;
     const auto numerator = [&](int component) {

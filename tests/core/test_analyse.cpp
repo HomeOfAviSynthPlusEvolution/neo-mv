@@ -177,6 +177,100 @@ void selection_and_expansion() {
     CHECK(v.first > -3 && v.second > -3);
 }
 
+template <class T>
+void parent_pixel_boundary() {
+  for (int pel : {1, 2, 4}) {
+    MotionFixture<T> fine(32, 16, 8, 8, 16, pel), coarse(16, 8, 8, 8, 16);
+    const auto fill = [](auto& frame, int shift) {
+      const auto e = frame.geometry.planes[0].current;
+      const int stride = e.width + 1;
+      const auto pattern = [](int x, int y) { return (x * 37 + y * 17 + x * y * 13) & 255; };
+      for (int y = 0; y < e.height; ++y)
+        for (int x = 0; x < e.width; ++x) {
+          frame.source[0][std::size_t(y) * stride + x] = T(pattern(x + (x >= 24 ? shift : 0), y));
+          for (int a = 0; a < frame.geometry.pel * frame.geometry.pel; ++a)
+            frame.reference[0][a][std::size_t(y) * stride + x] = T(pattern(x, y));
+        }
+    };
+    fill(coarse, 4);
+    fill(fine, 8);
+    AnalyseControls c;
+    c.levels = 2;
+    c.search = 4;
+    c.searchparam = 4; // Coarse search reaches its exact four-pixel displacement.
+    c.pelsearch = 1;   // Fine search cannot reach eight pixels from an averaged seed.
+    c.mvlambda = c.pnew = c.pzero = c.pglobal = 0;
+    c.badsad = INT32_MAX;
+    const auto baseline = analyse_vectors<T>(fine.metadata, {fine.geometry, coarse.geometry},
+                                            {fine.frames, coarse.frames}, c);
+    c.parentpredict = true;
+    const auto refined = analyse_vectors<T>(fine.metadata, {fine.geometry, coarse.geometry},
+                                           {fine.frames, coarse.frames}, c);
+    CHECK(baseline.values[1].error > 0);
+    CHECK(refined.values[1].vector.x == 8 * pel && refined.values[1].vector.y == 0);
+    CHECK(refined.values[1].error == 0);
+    // A one-level analysis has no parent candidates, regardless of the option.
+    c.levels = 1;
+    const auto enabled = analyse_vectors<T>(fine.metadata, {fine.geometry}, {fine.frames}, c);
+    c.parentpredict = false;
+    const auto disabled = analyse_vectors<T>(fine.metadata, {fine.geometry}, {fine.frames}, c);
+    for (std::size_t i = 0; i < enabled.values.size(); ++i) {
+      CHECK(enabled.values[i].vector.x == disabled.values[i].vector.x);
+      CHECK(enabled.values[i].vector.y == disabled.values[i].vector.y);
+      CHECK(enabled.values[i].error == disabled.values[i].error);
+    }
+  }
+}
+
+void parent_seed_selection() {
+  SpatialPredictors spatial{};
+  spatial.has_parent = true;
+  spatial.parent = {{{12, 0}, {12, 0}, {6, 0}, {0, 0}}};
+  const CandidateDomain domain{-16, -4, 17, 5};
+  AnalyseControls c;
+  c.search = 4;
+  c.pnew = c.pzero = c.pglobal = 0;
+  // A narrow search around the interpolated midpoint cannot reach the
+  // disjoint motion's true match. A parent seed makes that match reachable.
+  const auto landscape = [](MotionVector v) {
+    const std::int64_t raw = v.x == 12 && v.y == 0 ? 0 : v.x == 6 && v.y == 0 ? 50 : 100;
+    return BlockError{raw, 0, raw};
+  };
+  auto best = analyse_detail::block({{6, 0}, 0}, spatial, {}, domain, 0, 1, 0, INT64_MAX, c, landscape);
+  CHECK(best.vector.x == 6 && best.raw == 50);
+  c.parentpredict = true;
+  best = analyse_detail::block({{6, 0}, 0}, spatial, {}, domain, 0, 1, 0, INT64_MAX, c, landscape);
+  CHECK(best.vector.x == 12 && best.raw == 0);
+  // Parent candidates retain the original predictor's distance penalty.
+  best = analyse_detail::block({{6, 0}, 0}, spatial, {}, domain, 0, 1, 512, INT64_MAX, c, landscape);
+  CHECK(best.vector.x == 6 && best.raw == 50);
+  const auto tied = [](MotionVector v) {
+    const std::int64_t raw = (v.x == 6 || v.x == 12) && v.y == 0 ? 50 : 100;
+    return BlockError{raw, 0, raw};
+  };
+  best = analyse_detail::block({{6, 0}, 0}, spatial, {}, domain, 0, 1, 0, INT64_MAX, c, tied);
+  CHECK(best.vector.x == 6); // Original seed wins ties.
+
+  struct Trace {
+    int evaluations = 0, refinements = 0;
+    BlockError operator()(MotionVector) { ++evaluations; return {100, 0, 100}; }
+    SearchResult refine(SearchResult initial, const SearchParams&) { ++refinements; return initial; }
+    bool improve_expansion(MotionVector, const SearchParams&, SearchResult&) { return false; }
+  };
+  for (int layer : {0, 1})
+    for (int trymany : {0, 1, 2}) {
+      c.trymany = trymany;
+      Trace trace;
+      analyse_detail::block_impl({{6, 0}, 0}, spatial, {}, domain, layer, 1, 0, INT64_MAX, c, trace);
+      CHECK(trace.evaluations == 3); // Zero, midpoint, unique parent; no duplicate samples.
+      CHECK(trace.refinements == ((trymany == 2 || (trymany == 1 && layer > 0)) ? 4 : 1));
+    }
+  spatial.has_parent = false; // The coarsest level has no parent stencil.
+  Trace trace;
+  analyse_detail::block_impl({{6, 0}, 0}, spatial, {}, domain, 0, 1, 0, INT64_MAX, c, trace);
+  CHECK(trace.evaluations == 2 && trace.refinements == 3);
+}
+
 void bounded_expansion() {
   struct Evaluator {
     int full_corner = 0, bounded_corner = 0;
@@ -211,6 +305,10 @@ int main() {
     pixels();
     duplicate_initial_seeds();
     selection_and_expansion();
+    parent_pixel_boundary<std::uint8_t>();
+    parent_pixel_boundary<std::uint16_t>();
+    parent_pixel_boundary<float>();
+    parent_seed_selection();
     bounded_expansion();
     std::cout << "Scalar Analyse checks passed\n";
   } catch (const std::exception& e) {

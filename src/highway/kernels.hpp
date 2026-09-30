@@ -461,6 +461,9 @@ public:
           controls.pzero >= 0 && controls.pzero <= 256 && controls.pglobal >= 0 && controls.pglobal <= 256;
       for (const auto& p : spatial.p)
         admitted = admitted && near(p.vector.x, p.vector.y);
+      if (controls.parentpredict && spatial.has_parent)
+        for (const auto& v : spatial.parent)
+          admitted = admitted && near(v.x, v.y);
       if (admitted) {
         if (gray) {
           const auto execute = detail::analyse_block_gray_function(static_cast<T*>(nullptr));

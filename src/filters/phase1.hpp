@@ -92,6 +92,7 @@ inline AnalyseControls analyse_controls(Params p, int pel) {
   c.badsad = p.integer("badsad", 10000);
   c.badrange = p.integer("badrange", 24);
   c.trymany = p.integer("trymany", 0);
+  c.parentpredict = p.boolean("parentpredict", false);
   c.globalmv = p.boolean("globalmv", true);
   c.meander = p.boolean("meander", true);
   c.fields = p.boolean("fields", false);

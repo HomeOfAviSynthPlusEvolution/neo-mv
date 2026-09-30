@@ -263,7 +263,9 @@ template <class T> void fused_analyse_block(int gray_width = 0, int chroma_width
     const CandidateDomain omega{-3, -3, 4, 4};
     const MotionTriple predictor{{1, -1}, 0};
     const MotionVector zero{-4, 0}; // Safe seed outside Omega remains eligible.
-    const SpatialPredictors spatial{{{{{-1, 0}, 0}, {{1, 0}, 0}, {{0, 1}, 0}, {{0, -1}, 0}}}, {2, -2}};
+    SpatialPredictors spatial{{{{{-1, 0}, 0}, {{1, 0}, 0}, {{0, 1}, 0}, {{0, -1}, 0}}}, {2, -2}};
+    spatial.has_parent = true;
+    spatial.parent = {{{3, 3}, {-3, -3}, {3, -3}, {-3, 3}}};
     validate_sampling_domain(f.geometry, region, omega, {zero});
     for (int pattern = 0; pattern < 3; ++pattern) {
       for (int k = 0; k < (gray ? 1 : 3); ++k) {
@@ -297,6 +299,7 @@ template <class T> void fused_analyse_block(int gray_width = 0, int chroma_width
           c.search = search;
           c.searchparam = c.pelsearch = 3;
           c.trymany = scenario % 3;
+          c.parentpredict = pattern != 0;
           c.badrange = scenario % 2 ? -3 : 3;
           c.pnew = scenario % 2 ? 256 : 0;
           c.pzero = pattern == 0 ? 0 : 25;

@@ -2,6 +2,7 @@
 
 #include "core/motion/composition.hpp"
 #include "core/motion/metric_evaluator.hpp"
+#include <optional>
 
 namespace neo_mv {
 
@@ -11,6 +12,7 @@ struct AnalyseControls {
   std::int32_t pnew = 25, pzero = 25, pglobal = 0, badsad = 10000, badrange = 24, trymany = 0;
   bool globalmv = true, meander = true, fields = false;
   MetricConfig metric{};
+  bool parentpredict = false;
 };
 struct AnalysisLayer {
   AnalysisMetadata metadata;
@@ -167,6 +169,10 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
     const int f = index == 0 ? field_shift : 0;
     MotionGrid current{m.blocks_x, m.blocks_y, {}};
     current.values.resize(static_cast<std::size_t>(field_detail::count(m)));
+    std::optional<PredictionInterpolationPlan> parent_predictions;
+    if (!coarsest && controls.parentpredict)
+      parent_predictions.emplace(parent, PredictionGeometry{m.block_width, m.block_height, m.overlap_x,
+                                                           m.overlap_y, parent_pel, m.pel});
     if (!coarsest) {
       Kernels::interpolate_predictions(
           parent, {m.block_width, m.block_height, m.overlap_x, m.overlap_y, parent_pel, m.pel}, current);
@@ -186,7 +192,11 @@ MotionGrid analyse_vectors_planned(const std::vector<AnalysisLayer>& layers,
         const int x = direction == 1 ? i : m.blocks_x - 1 - i;
         const auto block = analysis_block(m, x, y);
         const auto omega = analysis_domain(m, block, layer.bound_pad_x, layer.bound_pad_y);
-        const auto spatial = prediction_detail::spatial<true>(current, x, y, direction, f, global, omega);
+        auto spatial = prediction_detail::spatial<true>(current, x, y, direction, f, global, omega);
+        if (parent_predictions) {
+          spatial.parent = parent_predictions->parent_vectors(x, y, omega, f);
+          spatial.has_parent = true;
+        }
         auto u = current.values[std::size_t(y) * m.blocks_x + x];
         u.vector = prediction_detail::clamp(u.vector, omega);
         if (coarsest)

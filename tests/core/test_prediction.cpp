@@ -150,6 +150,39 @@ void interpolation_error_bounds() {
   });
 }
 
+void parent_candidates() {
+  const MotionGrid grid{2, 2, {{{-3, 1}, 0}, {{5, -7}, 0}, {{9, 11}, 0}, {{-13, -15}, 0}}};
+  const CandidateDomain wide{-1000, -1000, 1001, 1001};
+  for (int pel : {1, 2, 4}) {
+    const PredictionInterpolationPlan plan(grid, {8, 8, 0, 0, 1, pel});
+    const auto v = plan.parent_vectors(1, 1, wide, 1);
+    position(v[0], -6 * pel, 2 * pel + 1);
+    position(v[1], 10 * pel, -14 * pel + 1);
+    position(v[2], 18 * pel, 22 * pel + 1);
+    position(v[3], -26 * pel, -30 * pel + 1);
+    const auto reversed = plan.parent_vectors(2, 2, wide);
+    position(reversed[0], -26 * pel, -30 * pel);
+    position(reversed[3], -6 * pel, 2 * pel);
+    for (auto corner : plan.parent_vectors(0, 0, wide))
+      position(corner, -6 * pel, 2 * pel);
+    for (auto cropped : plan.parent_vectors(100, 100, wide))
+      position(cropped, -26 * pel, -30 * pel);
+  }
+  // Half-overlap still offers all surrounding parents, even zero-weight ones.
+  const PredictionInterpolationPlan overlap(grid, {8, 8, 4, 4, 1, 1});
+  const auto clipped = overlap.parent_vectors(1, 1, {-4, -5, 7, 8});
+  position(clipped[0], -4, 2);
+  position(clipped[1], 6, -5);
+  position(clipped[2], 6, 7);
+  position(clipped[3], -4, -5);
+  const MotionGrid extremes{1, 1, {{{INT32_MAX, INT32_MIN}, 0}}};
+  const PredictionInterpolationPlan large(extremes, {8, 8, 0, 0, 1, 4});
+  position(large.parent_vectors(0, 0, {-4, -5, 7, 8})[0], 6, -5);
+  const PredictionInterpolationPlan reduced(grid, {8, 8, 0, 0, 4, 1});
+  position(reduced.parent_vectors(0, 0, wide)[0], -2, 0); // Floor for negative half-units.
+  rejects<std::invalid_argument>([&] { overlap.parent_vectors(0, 0, {1, 0, 1, 1}); });
+}
+
 void global_modes() {
   MotionGrid grid{2, 1, {{{2, 0}, 0}, {{0, 0}, 0}}};
   position(global_predictor(grid), 2, 0);
@@ -253,6 +286,7 @@ int main() {
     interpolation_exact_division();
     interpolation_parity();
     interpolation_error_bounds();
+    parent_candidates();
     global_modes();
     spatial_neighbours();
     spatial_median_extremes();

@@ -22,7 +22,7 @@ template <class Evaluate>
 SearchResult block_impl(MotionTriple predictor, const SpatialPredictors& spatial, MotionVector zero, CandidateDomain omega,
                    int layer, int pel, std::int64_t lambda, std::int64_t bad_threshold, AnalyseControls controls,
                    Evaluate&& evaluate) {
-  std::array<SearchResult, 7> seeds{};
+  std::array<SearchResult, 11> seeds{};
   std::array<BlockError, 3> initial_errors{};
   std::size_t count = 0;
   const auto seed = [&](MotionVector v, int kind) NEO_MV_MOTION_ATTR {
@@ -51,6 +51,14 @@ SearchResult block_impl(MotionTriple predictor, const SpatialPredictors& spatial
     if (!duplicate)
       seed(p.vector, 3);
   }
+  if (controls.parentpredict && spatial.has_parent)
+    for (const auto& v : spatial.parent) {
+      bool duplicate = false;
+      for (std::size_t i = 0; i < count; ++i)
+        duplicate = duplicate || equal(v, seeds[i].vector);
+      if (!duplicate)
+        seed(v, 3); // Same lambda penalty as spatial seeds; anchor stays unchanged.
+    }
   const int type = layer == 0 || controls.search >= 4 ? controls.search : 1;
   const int range = layer == 0 ? controls.pelsearch : std::max(1, controls.searchparam);
   const SearchParams search{predictor.vector, lambda, controls.pnew, omega, type, range, {}};
