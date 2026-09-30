@@ -254,6 +254,110 @@ void chroma_and_precision(int bits) {
   for (int k = 0; k < 3; ++k)
     constant(shifted, k, T(41)); // Negative odd chroma vectors use floor, not truncation.
 }
+template <class T>
+void wiener_chroma(int bits) {
+  for (int pel : {1, 2, 4})
+    for (int ry : {1, 2}) {
+      SuperPlan<T> super({16, 16, 8, 8, 0, 0, 16, 16, 2, ry, pel, true}, bits);
+      RenderVideo video{16, 16, bits, true, 2, ry, 3};
+      auto a = super_analysis_metadata(super, -1, false), b = super_analysis_metadata(super, 1, false);
+      a.bits = b.bits = 8;
+      Image<T> centre(super, T(20)), reference(super, T(200));
+      for (std::size_t n = 0; n < reference.storage.size(); n += pel * pel) {
+        auto v = reference.storage[n].view();
+        for (int y = 0; y < v.height(); ++y)
+          for (int x = 0; x < v.width(); ++x)
+            v.row(y)[x] = T(8 + 2 * x + 2 * y);
+      }
+      for (int delta : {-3, -1, 1, 3, 8}) {
+        auto vectors = field(b);
+        for (auto& v : vectors.grid.values)
+          v.vector = {delta, delta};
+        CompensateParameters cp;
+        cp.chroma_wiener = true;
+        TestCompensate<T> plan(video, super, 3, b, 3, cp);
+        auto ref = reference.view();
+        auto result = plan.render(0, vectors, centre.pixels(), centre.view(), &ref);
+        const double exact = 8 + 2 * (8 + 16 / ry) + 2.0 * delta / pel * (0.5 + 1.0 / ry);
+        const T expected = std::is_floating_point_v<T> ? T(exact) : T(std::floor(exact + 0.5));
+        CHECK(result[1].view().row(0)[0] == expected);
+        CHECK(result[2].view().row(0)[0] == expected);
+        DegrainParameters dp;
+        dp.chroma_wiener = true;
+        dp.weights = {0, 0, 1};
+        TestDegrain<T> degrain(video, super, 3, {a, b}, {3, 3}, dp);
+        auto denoised = degrain.render(1, {field(a), vectors}, centre.pixels(), centre.view(), {ref, ref});
+        const T blended = std::is_floating_point_v<T> ? T((20 + 255.0 * expected) / 256)
+                                                       : T((20 + 255 * int(expected) + 128) / 256);
+        CHECK(denoised[1].view().row(0)[0] == blended);
+        CHECK(denoised[2].view().row(0)[0] == blended);
+        dp.planes = {false, true, false};
+        TestDegrain<T> u_only(video, super, 3, {a, b}, {3, 3}, dp);
+        auto u = u_only.render(1, {field(a), vectors}, centre.pixels(), centre.view(), {ref, ref});
+        CHECK(u[1].view().row(0)[0] == blended);
+        constant(u, 2, T(20));
+      }
+    }
+}
+
+template <class T>
+void wiener_kernel(int bits) {
+  RenderPhaseGeometry g{4, 2, 2, 2, 2};
+  for (auto& e : g.phases)
+    e = {6, 6};
+  std::array<T, 36> samples{};
+  SubpixelPhases<T> image{4, {}};
+  image.planes[0] = checked_plane<const T>(samples.data(), 6, 6, 6 * sizeof(T), sizeof(samples));
+  samples[14] = T(128);
+  const auto sample = [&](int x, int y) {
+    SampledRenderBlock<T> block{samples.data() + 14, 6, nullptr};
+    std::vector<std::vector<T>> owned;
+    sample_chroma_wiener(block, owned, g, {0, 0, 2, 2}, {x, y}, image, bits);
+    return block.data[0];
+  };
+  // Impulse response at integer, eighth, quarter, and half positions.
+  const int expected[] = {128, 116, 104, 92, 80, 60, 40, 20};
+  for (int phase = 0; phase < 8; ++phase) {
+    CHECK(sample(phase, 0) == T(expected[phase]));
+    CHECK(sample(0, phase) == T(expected[phase]));
+    for (int other = 0; other < 8; ++other) {
+      const double exact = double(expected[phase]) * expected[other] / 128;
+      const T diagonal = std::is_floating_point_v<T> ? T(exact) : T(std::floor(exact + 0.5));
+      const T actual = sample(phase, other);
+      if (actual != diagonal)
+        throw std::runtime_error("Wiener impulse bits=" + std::to_string(bits) + " phase=" +
+                                 std::to_string(phase) + "," + std::to_string(other) + " actual=" +
+                                 std::to_string(actual) + " expected=" + std::to_string(diagonal));
+    }
+  }
+  CHECK(sample(-1, 0) == T(116));
+  samples[14] = T(1);
+  CHECK(sample(4, 4) == (std::is_floating_point_v<T> ? T(0.390625) : T(0)));
+  // Rounding after each axis would give 1 here for integer samples.
+  // Negative lobes survive internally; clip integer output to its bit depth.
+  const T maximum = std::is_floating_point_v<T> ? T(1) : T((1 << bits) - 1);
+  samples.fill(T(0));
+  for (int x : {0, 2, 3, 5})
+    samples[12 + x] = maximum;
+  CHECK(sample(4, 0) == (std::is_floating_point_v<T> ? T(1.3125) : maximum));
+  samples.fill(T(0));
+  samples[13] = samples[16] = maximum;
+  CHECK(sample(4, 0) == (std::is_floating_point_v<T> ? T(-0.3125) : T(0)));
+  // Every tap clamps at a one-pixel logical edge; no padding is assumed.
+  T edge = T(37);
+  image.planes[0] = checked_plane<const T>(&edge, 1, 1, sizeof(T), sizeof(T));
+  g.pad_x = g.pad_y = 0;
+  for (auto& e : g.phases)
+    e = {1, 1};
+  SampledRenderBlock<T> block{&edge, 1, nullptr};
+  std::vector<std::vector<T>> owned;
+  sample_chroma_wiener(block, owned, g, {0, 0, 2, 2}, {7, 7}, image, bits);
+  CHECK(block.data[0] == edge);
+  block.data = &edge;
+  sample_chroma_wiener(block, owned, g, {0, 0, 2, 2}, {0, 0}, image, bits);
+  CHECK(block.data == &edge && owned.size() == 1);
+}
+
 struct CountingKernels : TestKernels<std::uint8_t> {
   inline static int calls = 0;
   static std::int64_t scene_count(const AnalysisMetadata& m, const MotionGrid& grid, std::int64_t threshold) {
@@ -292,6 +396,12 @@ int main() {
     admission_and_fields();
     degrain();
     scene_dispatch();
+    wiener_chroma<std::uint8_t>(8);
+    wiener_chroma<std::uint16_t>(16);
+    wiener_chroma<float>(32);
+    wiener_kernel<std::uint8_t>(8);
+    wiener_kernel<std::uint16_t>(10);
+    wiener_kernel<float>(32);
     chroma_and_precision<std::uint8_t>(8);
     chroma_and_precision<std::uint16_t>(16);
     chroma_and_precision<float>(32);
